@@ -7,7 +7,7 @@ import { Card, Table, Button, Space, Tag, Spin, Alert, message, Tooltip, Modal, 
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
 import type { UploadFile } from 'antd/es/upload/interface';
-import { PlusOutlined, EyeOutlined, SendOutlined, MailOutlined, EditOutlined, SearchOutlined, CopyOutlined, PlusCircleOutlined, ExclamationCircleOutlined, FileTextOutlined, DeleteOutlined, FilterOutlined, CameraOutlined, PictureOutlined, UploadOutlined, PaperClipOutlined, LeftOutlined, RightOutlined, ShoppingCartOutlined, HistoryOutlined, WarningOutlined, PrinterOutlined, UserSwitchOutlined, FolderAddOutlined } from '@ant-design/icons';
+import { PlusOutlined, EyeOutlined, SendOutlined, MailOutlined, EditOutlined, SearchOutlined, CopyOutlined, PlusCircleOutlined, ExclamationCircleOutlined, FileTextOutlined, DeleteOutlined, FilterOutlined, CameraOutlined, PictureOutlined, UploadOutlined, PaperClipOutlined, LeftOutlined, RightOutlined, ShoppingCartOutlined, HistoryOutlined, WarningOutlined, PrinterOutlined, UserSwitchOutlined, FolderAddOutlined, RocketOutlined, CarOutlined } from '@ant-design/icons';
 import { isPdf, openPdfPreview } from '../../utils/pdfPreview';
 import { useNavigate, useSearchParams } from 'react-router-dom'; // Add useSearchParams
 import './RFQs.css';
@@ -2897,26 +2897,37 @@ const RFQs: React.FC = () => {
                 <Select.Option key={o.value} value={o.value}>{o.label}</Select.Option>
               ))}
             </Select>
-            <Button size="small" loading={bulkSetOrderedLoading} onClick={handleBulkSetOrdered} style={{ background: '#f9f0ff', borderColor: '#d3adf7', color: '#722ed1' }}>Megrendelve</Button>
-            <Button icon={<ShoppingCartOutlined />} size="small" loading={createOrderLoading} onClick={() => {
-              const selectedItems = flattenedItems.filter((item: any) => bulkSelectedKeys.includes(item.uniqueId));
-              const rfqIds = Array.from(new Set(selectedItems.map((item: any) => item.rfq_id as number)));
-              if (rfqIds.length) handleCreateOrder(rfqIds, false);
-            }}>Megrendelés</Button>
-            <Button type="primary" size="small" loading={bulkOrderLoading} onClick={handleBulkOrder}>Gyártásba küld</Button>
+            <Tooltip title="Megrendelés létrehozása">
+              <Button icon={<ShoppingCartOutlined />} size="small" loading={createOrderLoading} onClick={() => {
+                const selectedItems = flattenedItems.filter((item: any) => bulkSelectedKeys.includes(item.uniqueId));
+                const rfqIds = Array.from(new Set(selectedItems.map((item: any) => item.rfq_id as number)));
+                if (rfqIds.length) handleCreateOrder(rfqIds, false);
+              }} style={{ background: '#f9f0ff', borderColor: '#d3adf7', color: '#722ed1' }} />
+            </Tooltip>
+            <Tooltip title="Gyártásba küldés">
+              <Button icon={<RocketOutlined />} size="small" loading={bulkOrderLoading} onClick={handleBulkOrder} style={{ background: '#e6f4ff', borderColor: '#91caff', color: '#1677ff' }} />
+            </Tooltip>
             <Tooltip title="Projekthez rendelés">
-              <Button icon={<FolderAddOutlined />} size="small" onClick={() => { setBulkProjectId(null); setBulkProjectModalOpen(true); }} />
+              <Button icon={<FolderAddOutlined />} size="small" onClick={() => { setBulkProjectId(null); setBulkProjectModalOpen(true); }} style={{ background: '#fff7e6', borderColor: '#ffd591', color: '#d46b08' }} />
             </Tooltip>
             <Tooltip title="Munkalap nyomtatása">
               <Button icon={<PrinterOutlined />} size="small" loading={rfqBulkPrinting} onClick={handleRfqBulkPrintWorksheets} />
             </Tooltip>
-            <Button size="small" onClick={handleBulkSendEmail}>Árajánlat küldés</Button>
-            <Button size="small" loading={bulkDeliveryLoading} onClick={handleBulkDelivery} style={{ background: '#e6f7ff', borderColor: '#91d5ff', color: '#096dd9' }}>Szállítás</Button>
-            <Button size="small" loading={bulkInvoiceLoading} onClick={handleBulkInvoice} style={{ background: '#f6ffed', borderColor: '#b7eb8f', color: '#389e0d' }}>Számlázás</Button>
+            <Tooltip title="Árajánlat kiküldése e-mailben">
+              <Button icon={<MailOutlined />} size="small" onClick={handleBulkSendEmail} style={{ background: '#fff0f6', borderColor: '#ffadd2', color: '#c41d7f' }} />
+            </Tooltip>
+            <Tooltip title="Szállítólevél">
+              <Button icon={<CarOutlined />} size="small" loading={bulkDeliveryLoading} onClick={handleBulkDelivery} style={{ background: '#e6f7ff', borderColor: '#91d5ff', color: '#096dd9' }} />
+            </Tooltip>
+            <Tooltip title="Számla generálása">
+              <Button icon={<FileTextOutlined />} size="small" loading={bulkInvoiceLoading} onClick={handleBulkInvoice} style={{ background: '#f6ffed', borderColor: '#b7eb8f', color: '#389e0d' }} />
+            </Tooltip>
             <Tooltip title="Ügyfél / kapcsolattartó csere">
               <Button icon={<UserSwitchOutlined />} size="small" onClick={openBulkCustomerModal} />
             </Tooltip>
-            <Button size="small" danger onClick={handleBulkDelete}>Kijelöltek törlése</Button>
+            <Tooltip title="Kijelölt tételek törlése">
+              <Button icon={<DeleteOutlined />} size="small" danger onClick={handleBulkDelete} />
+            </Tooltip>
           </div>
         )}
 
