@@ -1363,6 +1363,7 @@ class WorkLogSerializer(serializers.ModelSerializer):
     item_name = serializers.SerializerMethodField()
     sub_item_name = serializers.SerializerMethodField()
     department_names = serializers.SerializerMethodField()
+    quote_item_id = serializers.SerializerMethodField()
 
     class Meta:
         model = WorkLog
@@ -1408,6 +1409,14 @@ class WorkLogSerializer(serializers.ModelSerializer):
         try:
             if obj.sub_item:
                 return obj.sub_item.name
+        except Exception:
+            pass
+        return None
+
+    def get_quote_item_id(self, obj):
+        try:
+            if obj.item:
+                return obj.item.quote_item_id
         except Exception:
             pass
         return None

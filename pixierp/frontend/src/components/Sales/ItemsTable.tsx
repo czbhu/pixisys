@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useEffect, createContext, useContext } from 'react';
 import { Card, Table, Space, Button, Popconfirm, message, Modal, Tooltip, Image, Tag, Input, Upload } from 'antd';
-import { FileOutlined, MenuOutlined, RightOutlined, LeftOutlined, LinkOutlined, AppstoreOutlined, PaperClipOutlined, UploadOutlined, DeleteOutlined } from '@ant-design/icons';
+import { FileOutlined, MenuOutlined, RightOutlined, LeftOutlined, LinkOutlined, AppstoreOutlined, PaperClipOutlined, UploadOutlined, DeleteOutlined, ClockCircleOutlined } from '@ant-design/icons';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragOverlay, DragEndEvent } from '@dnd-kit/core';
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -70,8 +70,8 @@ interface ItemsTableProps {
   showInlineSubItems?: boolean;
   /** Ha meg van adva, az adott id-jű tétel sora automatikusan kinyílik és az edit panel megjelenik */
   inlineEditItemId?: number | null;
-  /** A szerkesztési panel tartalma — a szülő komponens állítja össze */
-  inlineEditContent?: React.ReactNode;
+  /** Ha megadva, minden sorhoz megjelenik egy munkaóra gomb */
+  onWorkHours?: (item: any) => void;
 }
 
 interface RowContextProps {
@@ -123,7 +123,7 @@ const DraggableRow = ({ children, ...props }: any) => {
   );
 };
 
-export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEditItem, quoteRequestId, onDeleteItem, onCopyItem, currency = 'HUF', hidePrices, currencySelector, showSubItemsTooltip = false, hideDetailLink = false, hideCopyButton = false, showInlineSubItems = false, inlineEditItemId, inlineEditContent }) => {
+export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEditItem, quoteRequestId, onDeleteItem, onCopyItem, currency = 'HUF', hidePrices, currencySelector, showSubItemsTooltip = false, hideDetailLink = false, hideCopyButton = false, showInlineSubItems = false, inlineEditItemId, inlineEditContent, onWorkHours }) => {
   const [attachmentsModalOpen, setAttachmentsModalOpen] = useState(false);
   const [selectedAttachments, setSelectedAttachments] = useState<any[]>([]);
   // Per-tétel impozíció editor cél tétel
@@ -567,6 +567,11 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
             />
           </Tooltip>
           {!hideCopyButton && <Button size="small" onClick={() => copyItem(record)}>Másolás</Button>}
+          {onWorkHours && (
+            <Tooltip title="Munkaórák">
+              <Button size="small" icon={<ClockCircleOutlined />} onClick={() => onWorkHours(record)} />
+            </Tooltip>
+          )}
           {record.attachments && record.attachments.length > 0 && (
             <Tooltip title={`Csatolmányok (${record.attachments.length})`}>
               <Button 

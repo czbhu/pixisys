@@ -57,6 +57,9 @@ const RFQDetail: React.FC = () => {
   const [workHoursOpen, setWorkHoursOpen] = useState(false);
   const [workLogs, setWorkLogs] = useState<any[]>([]);
   const [workHoursLoading, setWorkHoursLoading] = useState(false);
+  const [workHoursItemId, setWorkHoursItemId] = useState<number | null>(null);
+  const [workHoursItemName, setWorkHoursItemName] = useState<string>('');
+  const [checkedWorkLogKeys, setCheckedWorkLogKeys] = useState<React.Key[]>([]);
   const [addWorkLogOpen, setAddWorkLogOpen] = useState(false);
   const [addWorkLogSaving, setAddWorkLogSaving] = useState(false);
   const [addWorkLogForm] = Form.useForm();
@@ -1108,6 +1111,21 @@ const RFQDetail: React.FC = () => {
                 setEditContext({ item });
                 setSelectorType(item.item_type);
               }}
+              onWorkHours={async (item) => {
+                setWorkHoursItemId(item.id);
+                setWorkHoursItemName(item.product_name || item.manufacturing_product_name || item.service_name || `Tétel #${item.id}`);
+                setCheckedWorkLogKeys([]);
+                setWorkHoursOpen(true);
+                setWorkHoursLoading(true);
+                try {
+                  const data = await salesService.getWorkLogsByRfq(Number(id));
+                  const results = Array.isArray(data) ? data : (data?.results || []);
+                  setWorkLogs(results);
+                  const wfs = await salesService.getFrequentWorkflows();
+                  setFrequentWorkflows(Array.isArray(wfs) ? wfs : []);
+                } catch { message.error('Nem sikerült betölteni a munkaórákat'); }
+                finally { setWorkHoursLoading(false); }
+              }}
               currencySelector={
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   <span style={{ fontWeight: 500, whiteSpace: 'nowrap', fontSize: 13 }}>Pénznem:</span>
@@ -1736,20 +1754,35 @@ const RFQDetail: React.FC = () => {
 
       {/* Work Hours Modal */}
       <Modal
-        title={<Space><ClockCircleOutlined /> Munkaórák</Space>}
+        title={<Space><ClockCircleOutlined /> Munkaórák{workHoursItemName ? ` – ${workHoursItemName}` : ''}</Space>}
         open={workHoursOpen}
-        onCancel={() => setWorkHoursOpen(false)}
+        onCancel={() => { setWorkHoursOpen(false); setCheckedWorkLogKeys([]); }}
         footer={null}
-        width={700}
+        width={760}
       >
         {workHoursLoading ? <Spin style={{ display: 'block', textAlign: 'center' }} /> : (() => {
-          const totalSec = workLogs.reduce((s: number, l: any) => s + (l.duration_seconds || 0), 0);
-          const totalH = Math.floor(totalSec / 3600);
-          const totalM = Math.floor((totalSec % 3600) / 60);
+          const fmtTime = (sec: number) => {
+            const h = Math.floor(sec / 3600);
+            const m = Math.floor((sec % 3600) / 60);
+            const decH = (sec / 3600).toFixed(2).replace(/\.?0+$/, '');
+            return `${h}h ${m}p (${decH}h)`;
+          };
 
-          // Aggregate by user
+          // Filter logs to selected item
+          const visibleLogs = workHoursItemId != null
+            ? workLogs.filter((l: any) => l.quote_item_id === workHoursItemId)
+            : workLogs;
+
+          // Total of visible logs
+          const totalSec = visibleLogs.reduce((s: number, l: any) => s + (l.duration_seconds || 0), 0);
+
+          // Total of checked logs
+          const checkedLogs = visibleLogs.filter((l: any) => checkedWorkLogKeys.includes(l.id));
+          const checkedSec = checkedLogs.reduce((s: number, l: any) => s + (l.duration_seconds || 0), 0);
+
+          // Aggregate by user (from visible logs)
           const byUser: Record<string, { user_name: string; department: string; seconds: number }> = {};
-          workLogs.forEach((l: any) => {
+          visibleLogs.forEach((l: any) => {
             const key = String(l.user);
             if (!byUser[key]) {
               byUser[key] = {
@@ -1762,43 +1795,37 @@ const RFQDetail: React.FC = () => {
             }
             byUser[key].seconds += l.duration_seconds || 0;
           });
-          const rows = Object.values(byUser);
-
-          const summaryColumns = [
-            { title: 'HR osztály', dataIndex: 'department', key: 'department' },
-            { title: 'Felhasználó', dataIndex: 'user_name', key: 'user_name' },
-            {
-              title: 'Idő',
-              key: 'time',
-              render: (_: any, r: any) => {
-                const h = Math.floor(r.seconds / 3600);
-                const m = Math.floor((r.seconds % 3600) / 60);
-                return `${h}h ${m}m`;
-              },
-            },
-          ];
+          const summaryRows = Object.values(byUser);
 
           return (
             <>
-              <div style={{ textAlign: 'center', marginBottom: 16 }}>
-                <Statistic
-                  title="Összes munkaóra"
-                  value={`${totalH}h ${totalM}m`}
-                  style={{ display: 'inline-block' }}
-                />
+              <div style={{ display: 'flex', justifyContent: 'center', gap: 32, marginBottom: 16 }}>
+                <Statistic title="Összes idő" value={fmtTime(totalSec)} style={{ textAlign: 'center' }} />
+                {checkedWorkLogKeys.length > 0 && (
+                  <Statistic
+                    title={`Kijelölt (${checkedWorkLogKeys.length} sor)`}
+                    value={fmtTime(checkedSec)}
+                    valueStyle={{ color: '#1677ff' }}
+                    style={{ textAlign: 'center' }}
+                  />
+                )}
               </div>
 
-              <Divider orientation="left">Összesítés</Divider>
+              <Divider orientation="left">Összesítés (HR osztály / Felhasználó)</Divider>
               <Table
                 size="small"
-                dataSource={rows}
-                columns={summaryColumns}
+                dataSource={summaryRows}
                 pagination={false}
                 rowKey="user_name"
                 locale={{ emptyText: 'Nincs rögzített munkaóra' }}
+                columns={[
+                  { title: 'HR osztály', dataIndex: 'department', key: 'department' },
+                  { title: 'Felhasználó', dataIndex: 'user_name', key: 'user_name' },
+                  { title: 'Idő', key: 'time', render: (_: any, r: any) => fmtTime(r.seconds) },
+                ]}
               />
 
-              <Divider orientation="left">Tételek</Divider>
+              <Divider orientation="left">Bejegyzések</Divider>
               <div style={{ marginBottom: 8, textAlign: 'right' }}>
                 <Button
                   type="primary"
@@ -1815,10 +1842,15 @@ const RFQDetail: React.FC = () => {
               </div>
               <Table
                 size="small"
-                dataSource={workLogs}
+                dataSource={visibleLogs}
                 rowKey="id"
-                pagination={{ pageSize: 10, hideOnSinglePage: true }}
+                pagination={{ pageSize: 20, hideOnSinglePage: true }}
                 locale={{ emptyText: 'Nincs rögzített munkaóra' }}
+                rowSelection={{
+                  selectedRowKeys: checkedWorkLogKeys,
+                  onChange: (keys) => setCheckedWorkLogKeys(keys),
+                  columnWidth: 32,
+                }}
                 columns={[
                   {
                     title: 'Dátum',
@@ -1847,11 +1879,8 @@ const RFQDetail: React.FC = () => {
                   {
                     title: 'Idő',
                     key: 'duration',
-                    width: 80,
-                    render: (_: any, r: any) => {
-                      const s = r.duration_seconds || 0;
-                      return `${Math.floor(s/3600)}h ${Math.floor((s%3600)/60)}m`;
-                    },
+                    width: 110,
+                    render: (_: any, r: any) => fmtTime(r.duration_seconds || 0),
                   },
                 ]}
               />
