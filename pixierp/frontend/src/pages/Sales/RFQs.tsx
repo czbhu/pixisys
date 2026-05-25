@@ -86,6 +86,7 @@ const RFQs: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [rfqs, setRfqs] = useState<any[]>([]);
   const [costStatusOverrides, setCostStatusOverrides] = useState<Record<number, string>>({});
+  const [mfgProductReloadTriggers, setMfgProductReloadTriggers] = useState<Record<number, number>>({});
   const [filtered, setFiltered] = useState<any[]>([]);
   const [companies, setCompanies] = useState<any[]>([]);
   const [contacts, setContacts] = useState<any[]>([]);
@@ -933,6 +934,9 @@ const RFQs: React.FC = () => {
           message.success(`Státusz módosítva: ${COST_ITEM_STATUS_OPTIONS.find(o => o.value === newStatus)?.label}`);
           // Directly override the displayed status for this item (bypasses rfqs→filtered→flattenedItems chain)
           setCostStatusOverrides(prev => ({ ...prev, [r.id]: newStatus }));
+          if (r.manufacturing_product) {
+            setMfgProductReloadTriggers(prev => ({ ...prev, [r.manufacturing_product]: (prev[r.manufacturing_product] || 0) + 1 }));
+          }
         } catch {
           message.error('Hiba a státusz frissítésekor');
         }
@@ -1120,7 +1124,7 @@ const RFQs: React.FC = () => {
         )}
         {isMfg && (
           <>
-            <ProductSubItemsTable productId={Number(r.manufacturing_product)} showNotesAndAttachments />
+            <ProductSubItemsTable productId={Number(r.manufacturing_product)} showNotesAndAttachments reloadTrigger={mfgProductReloadTriggers[r.manufacturing_product] || 0} />
             <MaterialNeedsTree
               manufacturingProductId={Number(r.manufacturing_product)}
               quantity={Number(r.quantity || 1)}

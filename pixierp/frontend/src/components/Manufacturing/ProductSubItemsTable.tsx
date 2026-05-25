@@ -89,6 +89,8 @@ interface Props {
   defaultExpandAllRows?: boolean;
   /** Callback when any cost item's status changes (e.g. to refresh parent). */
   onStatusChange?: () => void;
+  /** Increment to force a fresh reload of cost items from the API (e.g. after external bulk status change). */
+  reloadTrigger?: number;
 }
 
 export const ProductSubItemsTable: React.FC<Props> = ({
@@ -101,6 +103,7 @@ export const ProductSubItemsTable: React.FC<Props> = ({
   showPrices = true,
   defaultExpandAllRows = false,
   onStatusChange,
+  reloadTrigger,
 }) => {
   const [loading, setLoading] = useState(!initialProduct);
   const [saving, setSaving] = useState(false);
@@ -258,7 +261,7 @@ export const ProductSubItemsTable: React.FC<Props> = ({
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [productId]);
+  }, [productId, reloadTrigger]);
 
   const persist = async (next: ProductSubItem[]) => {
     if (!productInfo) return;
