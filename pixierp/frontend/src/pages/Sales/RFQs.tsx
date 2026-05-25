@@ -2867,6 +2867,23 @@ const RFQs: React.FC = () => {
         {bulkSelectedKeys.length > 0 && (
           <div style={{ position: 'sticky', top: 0, zIndex: 20, background: '#fff', display: 'flex', alignItems: 'center', gap: 8, padding: '8px 8px 10px', flexWrap: 'wrap', borderBottom: '1px solid #f0f0f0', marginBottom: 2 }}>
             <span style={{ fontSize: 13, color: '#555' }}>{bulkSelectedKeys.length} tétel kijelölve</span>
+            {(() => {
+              const sel = flattenedItems.filter((item: any) => bulkSelectedKeys.includes(item.uniqueId));
+              const totals: Record<string, number> = {};
+              sel.forEach((item: any) => {
+                const cur = (item.currency_code || 'HUF').toUpperCase();
+                const net = Number(item.discounted_net_total || item.net_total || (Number(item.quantity || 0) * Number(item.net_unit_price || 0)));
+                totals[cur] = (totals[cur] || 0) + net;
+              });
+              const parts = Object.entries(totals).map(([cur, val]) =>
+                `${Math.round(val).toLocaleString('hu-HU')} ${cur}`
+              );
+              return parts.length > 0 ? (
+                <span style={{ fontSize: 13, fontWeight: 600, color: '#1677ff', background: '#e6f4ff', borderRadius: 4, padding: '1px 8px' }}>
+                  Σ {parts.join(' | ')}
+                </span>
+              ) : null;
+            })()}
             <Select
               size="small"
               placeholder="Státusz váltás…"
