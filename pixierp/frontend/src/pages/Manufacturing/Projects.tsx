@@ -136,30 +136,37 @@ const Projects: React.FC = () => {
     const showModal = async (project?: Project) => {
         if (project) {
             setEditingProject(project);
-            form.setFieldsValue({
-                name: project.name,
-                description: project.description,
-                deadline: dayjs(project.deadline),
-                company_id: (project as any).company?.id || ((project as any).contact_names?.length > 0 ? 'private' : undefined),
-                contacts: project.contact_names.map(name =>
-                    contacts.find(c => c.name === name)?.id
-                ).filter(Boolean),
-                project_manager: employees.find(emp => emp.full_name === project.project_manager_name)?.id,
-                status: project.status,
-            });
-            
-            // Betöltjük a kapcsolattartókat a céghez vagy magánszemélyeket
-            if ((project as any).company?.id) {
+            const companyId = (project as any).company || undefined;
+            const contactIds = (project as any).contacts || [];
+            const projectManagerId = (project as any).project_manager || undefined;
+
+            // Load contacts first so labels display correctly when form renders
+            if (companyId) {
                 try {
-                    const list = await crmService.getContactsByCompany((project as any).company.id);
+                    const list = await crmService.getContactsByCompany(companyId);
                     setContacts((list as any).results ?? list);
                 } catch {}
-            } else if ((project as any).contact_names?.length > 0) {
+                // Ensure the company is visible in the dropdown
+                if (!(companies as any[]).find((c: any) => c.id === companyId)) {
+                    const companyName = (project as any).company_name;
+                    if (companyName) setCompanies((prev: any[]) => [{ id: companyId, name: companyName }, ...prev]);
+                }
+            } else if (contactIds.length > 0) {
                 try {
                     const list = await crmService.getPrivateContacts();
                     setContacts((list as any).results ?? list);
                 } catch {}
             }
+
+            form.setFieldsValue({
+                name: project.name,
+                description: project.description,
+                deadline: dayjs(project.deadline),
+                company_id: companyId,
+                contacts: contactIds,
+                project_manager: projectManagerId,
+                status: project.status,
+            });
         } else {
             setEditingProject(null);
             form.resetFields();
@@ -527,8 +534,12 @@ const Projects: React.FC = () => {
                                     <Form.Item name="company_id" label="Cég">
                                         <Select
                                             showSearch
-                                            optionFilterProp="label"
                                             placeholder="Válassz céget"
+                                            filterOption={(input, option) => {
+                                                const text = String(option?.children || '');
+                                                const norm = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+                                                return norm(text).includes(norm(input));
+                                            }}
                                             onFocus={async () => {
                                                 // Frissítjük a cégek listáját amikor rákattintanak
                                                 const list = await crmService.getCompanies();
@@ -624,22 +635,10 @@ const Projects: React.FC = () => {
                                                 }
                                             }}
                                             filterOption={(input, option) => {
-                                                const children = option?.children as unknown as string;
-                                                if (!children || typeof children !== 'string') return false;
-
-                                                // Ékezetek eltávolítása és kisbetűsítés
-                                                const normalizeText = (text: string) => {
-                                                    return text
-                                                        .normalize('NFD')
-                                                        .replace(/[\u0300-\u036f]/g, '')
-                                                        .toLowerCase()
-                                                        .replace(/[^a-z0-9\s]/g, '');
-                                                };
-
-                                                const normalizedInput = normalizeText(input);
-                                                const normalizedChildren = normalizeText(children);
-
-                                                return normalizedChildren.includes(normalizedInput);
+                                                const raw = option?.children;
+                                                const text = Array.isArray(raw) ? (raw as any[]).join('') : String(raw || '');
+                                                const norm = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+                                                return norm(text).includes(norm(input));
                                             }}
                                         >
                                             {contacts.map(contact => (
