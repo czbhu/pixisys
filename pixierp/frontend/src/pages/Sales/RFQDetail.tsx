@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { Card, Tag, Table, Row, Col, Form, Select, Input, InputNumber, Button, message, Modal, Spin, Space, List, DatePicker, Checkbox, Alert, Popover } from 'antd';
+import { Card, Tag, Table, Row, Col, Form, Select, Input, InputNumber, Button, message, Modal, Spin, Space, List, DatePicker, Checkbox, Alert, Popover, Divider, Statistic, AutoComplete, Tooltip } from 'antd';
 // @ts-ignore
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
@@ -13,7 +13,7 @@ import { Upload, Popconfirm } from 'antd';
 import type { UploadFile } from 'antd/es/upload/interface';
 import { crmService } from '../../services/crmService';
 import dayjs from 'dayjs';
-import { LeftOutlined, DeleteOutlined, UserAddOutlined, UserSwitchOutlined, LogoutOutlined, TeamOutlined, PlusOutlined, MessageOutlined } from '@ant-design/icons';
+import { LeftOutlined, DeleteOutlined, UserAddOutlined, UserSwitchOutlined, LogoutOutlined, TeamOutlined, PlusOutlined, MessageOutlined, ClockCircleOutlined } from '@ant-design/icons';
 import { useAuth } from '../../contexts/AuthContext';
 import { postalCodeService } from '../../services/postalCodeService';
 import { getCountries } from '../../services/countryService';
@@ -53,6 +53,14 @@ const RFQDetail: React.FC = () => {
   const [logsOpen, setLogsOpen] = useState(false);
   const [logs, setLogs] = useState<any[]>([]);
   const [activityLogOpen, setActivityLogOpen] = useState(false);
+  // Work hours state
+  const [workHoursOpen, setWorkHoursOpen] = useState(false);
+  const [workLogs, setWorkLogs] = useState<any[]>([]);
+  const [workHoursLoading, setWorkHoursLoading] = useState(false);
+  const [addWorkLogOpen, setAddWorkLogOpen] = useState(false);
+  const [addWorkLogSaving, setAddWorkLogSaving] = useState(false);
+  const [addWorkLogForm] = Form.useForm();
+  const [frequentWorkflows, setFrequentWorkflows] = useState<string[]>([]);
   const [chatOpen, setChatOpen] = useState(false);
   const [selectorOpen, setSelectorOpen] = useState(false);
   const [selectorType, setSelectorType] = useState<'product' | 'manufacturing' | 'service'>('product');
@@ -569,6 +577,30 @@ const RFQDetail: React.FC = () => {
           }
         }}>Másol</Button>
   <Button onClick={() => setActivityLogOpen(true)}>Napló</Button>
+  <Tooltip title="Munkaórák">
+    <Button
+      icon={<ClockCircleOutlined />}
+      onClick={async () => {
+        setWorkHoursOpen(true);
+        setWorkHoursLoading(true);
+        try {
+          const data = await salesService.getWorkLogsByRfq(Number(id));
+          const results = Array.isArray(data) ? data : (data?.results || []);
+          setWorkLogs(results);
+          const wfs = await salesService.getFrequentWorkflows();
+          setFrequentWorkflows(Array.isArray(wfs) ? wfs : []);
+        } catch { message.error('Nem sikerült betölteni a munkaórákat'); }
+        finally { setWorkHoursLoading(false); }
+      }}
+    >
+      {(() => {
+        const totalSec = workLogs.reduce((s: number, l: any) => s + (l.duration_seconds || 0), 0);
+        const h = Math.floor(totalSec / 3600);
+        const m = Math.floor((totalSec % 3600) / 60);
+        return totalSec > 0 ? ` ${h}h ${m}m` : '';
+      })()}
+    </Button>
+  </Tooltip>
         {isDemandOpen && (
           <Button onClick={async () => { await salesService.setQuoteRequestStatus(Number(id), 'quoted'); message.success('Lezárva'); load(); }}>Lezár</Button>
         )}
@@ -1701,6 +1733,205 @@ const RFQDetail: React.FC = () => {
         objectId={Number(id)}
         objectTitle={rfq.number || rfq.request_number || ''}
       />
+
+      {/* Work Hours Modal */}
+      <Modal
+        title={<Space><ClockCircleOutlined /> Munkaórák</Space>}
+        open={workHoursOpen}
+        onCancel={() => setWorkHoursOpen(false)}
+        footer={null}
+        width={700}
+      >
+        {workHoursLoading ? <Spin style={{ display: 'block', textAlign: 'center' }} /> : (() => {
+          const totalSec = workLogs.reduce((s: number, l: any) => s + (l.duration_seconds || 0), 0);
+          const totalH = Math.floor(totalSec / 3600);
+          const totalM = Math.floor((totalSec % 3600) / 60);
+
+          // Aggregate by user
+          const byUser: Record<string, { user_name: string; department: string; seconds: number }> = {};
+          workLogs.forEach((l: any) => {
+            const key = String(l.user);
+            if (!byUser[key]) {
+              byUser[key] = {
+                user_name: l.user_name || `User ${l.user}`,
+                department: (l.department_names && l.department_names.length > 0)
+                  ? l.department_names.join(', ')
+                  : '-',
+                seconds: 0,
+              };
+            }
+            byUser[key].seconds += l.duration_seconds || 0;
+          });
+          const rows = Object.values(byUser);
+
+          const summaryColumns = [
+            { title: 'HR osztály', dataIndex: 'department', key: 'department' },
+            { title: 'Felhasználó', dataIndex: 'user_name', key: 'user_name' },
+            {
+              title: 'Idő',
+              key: 'time',
+              render: (_: any, r: any) => {
+                const h = Math.floor(r.seconds / 3600);
+                const m = Math.floor((r.seconds % 3600) / 60);
+                return `${h}h ${m}m`;
+              },
+            },
+          ];
+
+          return (
+            <>
+              <div style={{ textAlign: 'center', marginBottom: 16 }}>
+                <Statistic
+                  title="Összes munkaóra"
+                  value={`${totalH}h ${totalM}m`}
+                  style={{ display: 'inline-block' }}
+                />
+              </div>
+
+              <Divider orientation="left">Összesítés</Divider>
+              <Table
+                size="small"
+                dataSource={rows}
+                columns={summaryColumns}
+                pagination={false}
+                rowKey="user_name"
+                locale={{ emptyText: 'Nincs rögzített munkaóra' }}
+              />
+
+              <Divider orientation="left">Tételek</Divider>
+              <div style={{ marginBottom: 8, textAlign: 'right' }}>
+                <Button
+                  type="primary"
+                  icon={<PlusOutlined />}
+                  size="small"
+                  onClick={() => {
+                    addWorkLogForm.resetFields();
+                    addWorkLogForm.setFieldsValue({ date: dayjs(), time_h: 0, time_m: 0 });
+                    setAddWorkLogOpen(true);
+                  }}
+                >
+                  Munkaóra hozzáadása
+                </Button>
+              </div>
+              <Table
+                size="small"
+                dataSource={workLogs}
+                rowKey="id"
+                pagination={{ pageSize: 10, hideOnSinglePage: true }}
+                locale={{ emptyText: 'Nincs rögzített munkaóra' }}
+                columns={[
+                  {
+                    title: 'Dátum',
+                    dataIndex: 'started_at',
+                    key: 'started_at',
+                    render: (v: string) => v ? dayjs(v).format('YYYY-MM-DD') : '-',
+                    width: 100,
+                  },
+                  {
+                    title: 'Költség Tétel',
+                    dataIndex: 'sub_item_name',
+                    key: 'sub_item_name',
+                    render: (v: string, r: any) => v || r.order_label || '-',
+                  },
+                  {
+                    title: 'Munkafolyamat',
+                    dataIndex: 'workflow_name',
+                    key: 'workflow_name',
+                  },
+                  {
+                    title: 'Felhasználó',
+                    dataIndex: 'user_name',
+                    key: 'user_name',
+                    width: 120,
+                  },
+                  {
+                    title: 'Idő',
+                    key: 'duration',
+                    width: 80,
+                    render: (_: any, r: any) => {
+                      const s = r.duration_seconds || 0;
+                      return `${Math.floor(s/3600)}h ${Math.floor((s%3600)/60)}m`;
+                    },
+                  },
+                ]}
+              />
+            </>
+          );
+        })()}
+      </Modal>
+
+      {/* Add Work Log Modal */}
+      <Modal
+        title="Munkaóra hozzáadása"
+        open={addWorkLogOpen}
+        onCancel={() => setAddWorkLogOpen(false)}
+        onOk={() => addWorkLogForm.submit()}
+        okText="Mentés"
+        cancelText="Mégsem"
+        confirmLoading={addWorkLogSaving}
+      >
+        <Form
+          form={addWorkLogForm}
+          layout="vertical"
+          onFinish={async (vals) => {
+            if (!user?.id) { message.error('Nincs bejelentkezett felhasználó'); return; }
+            const h = vals.time_h || 0;
+            const m = vals.time_m || 0;
+            const totalSecs = h * 3600 + m * 60;
+            if (totalSecs <= 0) { message.error('Az idő nem lehet nulla'); return; }
+            const date = vals.date ? dayjs(vals.date).format('YYYY-MM-DD') : dayjs().format('YYYY-MM-DD');
+            const started = `${date}T08:00:00`;
+            const ended = dayjs(started).add(totalSecs, 'second').toISOString();
+            setAddWorkLogSaving(true);
+            try {
+              await salesService.createManualWorkLog({
+                user: user.id,
+                workflow_name: vals.workflow_name,
+                order_label: vals.cost_label || '',
+                started_at: started,
+                ended_at: ended,
+                duration_seconds: totalSecs,
+                customer_order: null,
+              });
+              message.success('Munkaóra rögzítve');
+              setAddWorkLogOpen(false);
+              // reload work logs
+              const data = await salesService.getWorkLogsByRfq(Number(id));
+              setWorkLogs(Array.isArray(data) ? data : (data?.results || []));
+            } catch (e: any) {
+              message.error(e?.response?.data?.detail || 'Nem sikerült rögzíteni');
+            } finally {
+              setAddWorkLogSaving(false);
+            }
+          }}
+        >
+          <Form.Item name="date" label="Dátum" rules={[{ required: true }]}>
+            <DatePicker style={{ width: '100%' }} format="YYYY-MM-DD" />
+          </Form.Item>
+          <Form.Item name="cost_label" label="Költség Tétel">
+            <Input placeholder="pl. Szortírozás, Médianyomtatás..." />
+          </Form.Item>
+          <Form.Item name="workflow_name" label="Munkafolyamat" rules={[{ required: true, message: 'Kötelező mező' }]}>
+            <AutoComplete
+              options={frequentWorkflows.map((w) => ({ value: w }))}
+              placeholder="Munkafolyamat neve..."
+              filterOption={(input, option) =>
+                (option?.value as string || '').toLowerCase().includes(input.toLowerCase())
+              }
+            />
+          </Form.Item>
+          <Form.Item label="Idő">
+            <Space>
+              <Form.Item name="time_h" noStyle>
+                <InputNumber min={0} max={99} addonAfter="h" style={{ width: 90 }} />
+              </Form.Item>
+              <Form.Item name="time_m" noStyle>
+                <InputNumber min={0} max={59} addonAfter="m" style={{ width: 90 }} />
+              </Form.Item>
+            </Space>
+          </Form.Item>
+        </Form>
+      </Modal>
     </div>
   );
 };

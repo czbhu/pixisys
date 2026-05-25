@@ -1362,6 +1362,7 @@ class WorkLogSerializer(serializers.ModelSerializer):
     customer_name = serializers.SerializerMethodField()
     item_name = serializers.SerializerMethodField()
     sub_item_name = serializers.SerializerMethodField()
+    department_names = serializers.SerializerMethodField()
 
     class Meta:
         model = WorkLog
@@ -1410,6 +1411,13 @@ class WorkLogSerializer(serializers.ModelSerializer):
         except Exception:
             pass
         return None
+
+    def get_department_names(self, obj):
+        try:
+            emp = obj.user.employee_profile
+            return [d.name for d in emp.departments.all()]
+        except Exception:
+            return []
 
 from .models import ChatThread, ChatMessage, ChatMessageAttachment
 

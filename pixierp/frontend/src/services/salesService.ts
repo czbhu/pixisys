@@ -558,6 +558,22 @@ export const salesService = {
         const response = await api.post(`/sales/work-logs/${id}/stop/`, {});
         return response.data;
     },
+    async getWorkLogsByRfq(rfqId: number) {
+        const response = await api.get('/sales/work-logs/', { params: { rfq_id: rfqId } });
+        return response.data;
+    },
+    async createManualWorkLog(data: {
+        user: number;
+        workflow_name: string;
+        started_at: string;
+        ended_at: string;
+        duration_seconds: number;
+        order_label?: string;
+        customer_order?: number | null;
+    }) {
+        const response = await api.post('/sales/work-logs/', data);
+        return response.data;
+    },
 
     // Extra Works
     async getExtraWorks(orderId: number) {
