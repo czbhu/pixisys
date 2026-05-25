@@ -858,7 +858,6 @@ const RFQs: React.FC = () => {
     { value: 'ready',        label: 'Kész' },
     { value: 'in_delivery',  label: 'Szállítás alatt' },
     { value: 'delivered',    label: 'Kiszállítva' },
-    { value: 'rejected',     label: 'Elutasítva' },
   ];
 
   const statusTag = (status: string, label?: string) => {
