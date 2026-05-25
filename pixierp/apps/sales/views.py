@@ -3062,7 +3062,7 @@ class QuoteRequestItemViewSet(viewsets.ModelViewSet):
         """Set all ManufacturingCostItems of this item's manufacturing product to the given status."""
         item = self.get_object()
         new_status = request.data.get('status')
-        VALID_STATUSES = ['new', 'sent', 'ordered', 'confirmed', 'in_production', 'ready', 'in_delivery', 'delivered']
+        VALID_STATUSES = ['new', 'sent', 'ordered', 'confirmed', 'in_production', 'ready', 'in_delivery', 'delivered', 'rejected']
         if new_status not in VALID_STATUSES:
             return Response({'error': 'Érvénytelen státusz'}, status=status.HTTP_400_BAD_REQUEST)
         mp = getattr(item, 'manufacturing_product', None)

@@ -353,6 +353,7 @@ class ManufacturingCostItem(models.Model):
         ('ready', 'Kész'),
         ('in_delivery', 'Szállítás alatt'),
         ('delivered', 'Kiszállítva'),
+        ('rejected', 'Elutasítva'),
         ('cancelled', 'Törölve'),
     ]
 
