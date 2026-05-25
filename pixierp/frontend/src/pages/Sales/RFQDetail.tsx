@@ -580,10 +580,13 @@ const RFQDetail: React.FC = () => {
           }
         }}>Másol</Button>
   <Button onClick={() => setActivityLogOpen(true)}>Napló</Button>
-  <Tooltip title="Munkaórák">
+  <Tooltip title="Munkaórák (összes)">
     <Button
       icon={<ClockCircleOutlined />}
       onClick={async () => {
+        setWorkHoursItemId(null);
+        setWorkHoursItemName('');
+        setCheckedWorkLogKeys([]);
         setWorkHoursOpen(true);
         setWorkHoursLoading(true);
         try {
