@@ -60,7 +60,7 @@ const STATUS_LABELS: Record<string, string> = {
   production_completed: 'Gyártás kész',
   finished_goods_warehouse: 'Késztermék raktáron',
   installation_in_progress: 'Telepítés folyamatban',
-  delivered: 'Leszállítva',
+  delivered: 'Kiszállítva',
   invoiced: 'Számlázva',
   paid: 'Fizetve',
   cancelled: 'Törölve',
@@ -89,7 +89,7 @@ const COST_ITEM_STATUS_OPTIONS: { value: string; label: string; color: string }[
   { value: 'in_production', label: 'Gyártásban', color: 'orange' },
   { value: 'ready', label: 'Kész', color: 'green' },
   { value: 'in_delivery', label: 'Száll. alatt', color: 'purple' },
-  { value: 'delivered', label: 'Leszállítva', color: 'success' },
+  { value: 'delivered', label: 'Kiszállítva', color: 'success' },
   { value: 'cancelled', label: 'Törölve', color: 'red' },
 ];
 

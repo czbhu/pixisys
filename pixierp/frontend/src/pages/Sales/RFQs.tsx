@@ -810,7 +810,7 @@ const RFQs: React.FC = () => {
     in_production: { color: 'orange', text: 'Gyártásban' },
     ready: { color: 'green', text: 'Kész' },
     in_delivery: { color: 'purple', text: 'Szállítás alatt' },
-    delivered: { color: 'geekblue', text: 'Leszállítva' },
+    delivered: { color: 'geekblue', text: 'Kiszállítva' },
     invoiced: { color: 'gold', text: 'Kiszámlázva' },
     in_progress: { color: 'orange', text: 'Folyamatban' },
     quoted: { color: 'cyan', text: 'Árazva' },
@@ -829,10 +829,7 @@ const RFQs: React.FC = () => {
     { value: 'in_production', label: 'Gyártásban' },
     { value: 'ready', label: 'Kész' },
     { value: 'in_delivery', label: 'Szállítás alatt' },
-    { value: 'delivered', label: 'Leszállítva' },
-    { value: 'invoiced', label: 'Kiszámlázva' },
-    { value: 'expired', label: 'Lejárt' },
-    { value: 'archived', label: 'Archív' },
+    { value: 'delivered', label: 'Kiszállítva' },
     { value: 'rejected', label: 'Elutasítva' },
   ];
 
@@ -2791,7 +2788,7 @@ const RFQs: React.FC = () => {
                       <Select.Option value="in_production">Gyártásban</Select.Option>
                       <Select.Option value="ready">Kész</Select.Option>
                       <Select.Option value="in_delivery">Szállítás alatt</Select.Option>
-                      <Select.Option value="delivered">Leszállítva</Select.Option>
+                      <Select.Option value="delivered">Kiszállítva</Select.Option>
                       <Select.Option value="invoiced">Kiszámlázva</Select.Option>
                       <Select.Option value="expired">Lejárt</Select.Option>
                       <Select.Option value="archived">Archív</Select.Option>
@@ -2860,7 +2857,7 @@ const RFQs: React.FC = () => {
                       <Select.Option value="in_production">Gyártásban</Select.Option>
                       <Select.Option value="ready">Kész</Select.Option>
                       <Select.Option value="in_delivery">Szállítás alatt</Select.Option>
-                      <Select.Option value="delivered">Leszállítva</Select.Option>
+                      <Select.Option value="delivered">Kiszállítva</Select.Option>
                       <Select.Option value="invoiced">Kiszámlázva</Select.Option>
                       <Select.Option value="expired">Lejárt</Select.Option>
                       <Select.Option value="archived">Archív</Select.Option>

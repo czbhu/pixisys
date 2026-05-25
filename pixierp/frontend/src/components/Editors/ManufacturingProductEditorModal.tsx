@@ -108,7 +108,7 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
     production_completed: 'Gyártás kész',
     finished_goods_warehouse: 'Késztermék raktáron',
     installation_in_progress: 'Telepítés folyamatban',
-    delivered: 'Leszállítva',
+    delivered: 'Kiszállítva',
     invoiced: 'Számlázva',
     paid: 'Fizetve',
     cancelled: 'Törölve',

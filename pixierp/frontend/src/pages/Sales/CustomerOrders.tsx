@@ -1349,7 +1349,7 @@ interface CustomerOrder {
       in_production: { color: 'orange', text: 'Gyártásban' },
       ready: { color: 'green', text: 'Kész' },
       in_delivery: { color: 'purple', text: 'Szállítás alatt' },
-      delivered: { color: 'success', text: 'Leszállítva' },
+      delivered: { color: 'success', text: 'Kiszállítva' },
       cancelled: { color: 'red', text: 'Törölve' },
     };
     const AT_OR_ABOVE_PROD_ORDER = ['in_production', 'ready', 'in_delivery', 'delivered'];
@@ -2483,7 +2483,7 @@ interface CustomerOrder {
             title={statusFilter.length > 0
               ? statusFilter.map(v => ({
                   new: 'Megrendelve', confirmed: 'Megerősítve', in_production: 'Gyártásban',
-                  ready: 'Kész', in_delivery: 'Szállítás alatt', delivered: 'Leszállítva',
+                  ready: 'Kész', in_delivery: 'Szállítás alatt', delivered: 'Kiszállítva',
                   invoiced: 'Kiszámlázva', cancelled: 'Törölve',
                 }[v] ?? v)).join(' · ')
               : null}
@@ -2502,7 +2502,7 @@ interface CustomerOrder {
               { value: 'in_production', label: 'Gyártásban' },
               { value: 'ready', label: 'Kész' },
               { value: 'in_delivery', label: 'Szállítás alatt' },
-              { value: 'delivered', label: 'Leszállítva' },
+              { value: 'delivered', label: 'Kiszállítva' },
               { value: 'invoiced', label: 'Kiszámlázva' },
               { value: 'cancelled', label: 'Törölve' },
             ]}
@@ -2670,7 +2670,7 @@ interface CustomerOrder {
       
       {/* Timestamp Modal */}
       <Modal
-        title={timestampAction === 'mark_ready' ? 'Készre jelentés dátuma' : 'Leszállítva dátuma'}
+        title={timestampAction === 'mark_ready' ? 'Készre jelentés dátuma' : 'Kiszállítva dátuma'}
         open={timestampModalOpen}
         onOk={async () => {
           if (!selectedOrder || !selectedTimestamp) return;
@@ -2679,7 +2679,7 @@ interface CustomerOrder {
               `/sales/customer-orders/${selectedOrder.id}/${timestampAction}/`,
               { timestamp: selectedTimestamp.format('YYYY-MM-DD HH:mm:ss') }
             );
-            message.success(timestampAction === 'mark_ready' ? 'Készre jelentve' : 'Leszállítva jelölve');
+            message.success(timestampAction === 'mark_ready' ? 'Készre jelentve' : 'Kiszállítva jelölve');
             setTimestampModalOpen(false);
             fetchOrders();
           } catch (error: any) {

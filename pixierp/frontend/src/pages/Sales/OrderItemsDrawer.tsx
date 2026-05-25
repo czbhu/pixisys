@@ -91,7 +91,7 @@ export const OrderItemsDrawer: React.FC<OrderItemsDrawerProps> = ({ open, onClos
     { value: 'in_production', label: 'Gyártásban', color: 'orange' },
     { value: 'ready', label: 'Kész', color: 'green' },
     { value: 'in_delivery', label: 'Száll. alatt', color: 'purple' },
-    { value: 'delivered', label: 'Leszállítva', color: 'success' },
+    { value: 'delivered', label: 'Kiszállítva', color: 'success' },
   ];
 
   const columns: any[] = [
