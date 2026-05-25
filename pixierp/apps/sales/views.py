@@ -5936,7 +5936,10 @@ class WorkLogViewSet(viewsets.ModelViewSet):
         search = self.request.query_params.get('search')
         start_date = self.request.query_params.get('start_date')
         end_date = self.request.query_params.get('end_date')
+        rfq_id = self.request.query_params.get('rfq_id')
 
+        if rfq_id:
+            qs = qs.filter(customer_order__quote_request_id=rfq_id)
         if order_id:
             qs = qs.filter(customer_order_id=order_id)
         if item_id:
