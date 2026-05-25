@@ -835,11 +835,12 @@ const RFQs: React.FC = () => {
 
   const getDisplayStatus = (record: any) => record?._costTopStatus || record?.effective_status || record?.status || 'new';
 
-  const COST_ITEM_STATUS_ORDER = ['new', 'confirmed', 'sent', 'in_production', 'ready', 'in_delivery', 'delivered', 'rejected'];
+  const COST_ITEM_STATUS_ORDER = ['new', 'sent', 'ordered', 'confirmed', 'in_production', 'ready', 'in_delivery', 'delivered', 'rejected'];
   const COST_STATUS_META: Record<string, { color: string; text: string }> = {
     new:          { color: 'blue',     text: 'Új' },
-    confirmed:    { color: 'cyan',     text: 'Megerősítve' },
     sent:         { color: 'gold',     text: 'Kiküldve' },
+    ordered:      { color: 'purple',   text: 'Megrendelve' },
+    confirmed:    { color: 'cyan',     text: 'Megerősítve' },
     in_production:{ color: 'orange',   text: 'Gyártásban' },
     ready:        { color: 'green',    text: 'Kész' },
     in_delivery:  { color: 'purple',   text: 'Szállítás alatt' },
@@ -848,8 +849,9 @@ const RFQs: React.FC = () => {
   };
   const COST_ITEM_STATUS_OPTIONS = [
     { value: 'new',          label: 'Új' },
-    { value: 'confirmed',    label: 'Megerősítve' },
     { value: 'sent',         label: 'Kiküldve' },
+    { value: 'ordered',      label: 'Megrendelve' },
+    { value: 'confirmed',    label: 'Megerősítve' },
     { value: 'in_production',label: 'Gyártásban' },
     { value: 'ready',        label: 'Kész' },
     { value: 'in_delivery',  label: 'Szállítás alatt' },

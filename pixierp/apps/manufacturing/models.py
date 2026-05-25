@@ -346,8 +346,9 @@ class ManufacturingCostItem(models.Model):
     """Gyártási termék költség elem"""
     STATUS_CHOICES = [
         ('new', 'Új'),
-        ('confirmed', 'Megerősítve'),
         ('sent', 'Kiküldve'),
+        ('ordered', 'Megrendelve'),
+        ('confirmed', 'Megerősítve'),
         ('in_production', 'Gyártásban'),
         ('ready', 'Kész'),
         ('in_delivery', 'Szállítás alatt'),
