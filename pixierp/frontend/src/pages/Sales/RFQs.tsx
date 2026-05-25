@@ -7,7 +7,7 @@ import { Card, Table, Button, Space, Tag, Spin, Alert, message, Tooltip, Modal, 
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
 import type { UploadFile } from 'antd/es/upload/interface';
-import { PlusOutlined, EyeOutlined, SendOutlined, MailOutlined, EditOutlined, SearchOutlined, CopyOutlined, PlusCircleOutlined, ExclamationCircleOutlined, FileTextOutlined, DeleteOutlined, FilterOutlined, CameraOutlined, PictureOutlined, UploadOutlined, PaperClipOutlined, LeftOutlined, RightOutlined, ShoppingCartOutlined, HistoryOutlined, WarningOutlined, PrinterOutlined, UserSwitchOutlined } from '@ant-design/icons';
+import { PlusOutlined, EyeOutlined, SendOutlined, MailOutlined, EditOutlined, SearchOutlined, CopyOutlined, PlusCircleOutlined, ExclamationCircleOutlined, FileTextOutlined, DeleteOutlined, FilterOutlined, CameraOutlined, PictureOutlined, UploadOutlined, PaperClipOutlined, LeftOutlined, RightOutlined, ShoppingCartOutlined, HistoryOutlined, WarningOutlined, PrinterOutlined, UserSwitchOutlined, FolderAddOutlined } from '@ant-design/icons';
 import { isPdf, openPdfPreview } from '../../utils/pdfPreview';
 import { useNavigate, useSearchParams } from 'react-router-dom'; // Add useSearchParams
 import './RFQs.css';
@@ -210,6 +210,9 @@ const RFQs: React.FC = () => {
   const [bulkCustomerContactIds, setBulkCustomerContactIds] = useState<number[]>([]);
   const [bulkCustomerContacts, setBulkCustomerContacts] = useState<any[]>([]);
   const [bulkCustomerContactsLoading, setBulkCustomerContactsLoading] = useState(false);
+  const [bulkProjectModalOpen, setBulkProjectModalOpen] = useState(false);
+  const [bulkProjectId, setBulkProjectId] = useState<number | null>(null);
+  const [bulkProjectLoading, setBulkProjectLoading] = useState(false);
   // Confirmation email flow after order creation
   const [confirmEmailAskOpen, setConfirmEmailAskOpen] = useState(false);
   const [confirmEmailOrders, setConfirmEmailOrders] = useState<{ primaryOrderId: number; orderIds: number[]; rfqId: number; rfqIds: number[] }[]>([]);
@@ -2883,6 +2886,9 @@ const RFQs: React.FC = () => {
               if (rfqIds.length) handleCreateOrder(rfqIds, false);
             }}>Megrendelés</Button>
             <Button type="primary" size="small" loading={bulkOrderLoading} onClick={handleBulkOrder}>Gyártásba küld</Button>
+            <Tooltip title="Projekthez rendelés">
+              <Button icon={<FolderAddOutlined />} size="small" onClick={() => { setBulkProjectId(null); setBulkProjectModalOpen(true); }} />
+            </Tooltip>
             <Tooltip title="Munkalap nyomtatása">
               <Button icon={<PrinterOutlined />} size="small" loading={rfqBulkPrinting} onClick={handleRfqBulkPrintWorksheets} />
             </Tooltip>
@@ -4929,6 +4935,54 @@ const RFQs: React.FC = () => {
             Minden munkalaphoz megnyílik a böngésző nyomtatási párbeszédablaka, ahol kiválaszthatod a nyomtatót és a beállításokat.
           </p>
         )}
+      </Modal>
+
+      {/* Bulk project assignment modal */}
+      <Modal
+        open={bulkProjectModalOpen}
+        title={<><FolderAddOutlined style={{ marginRight: 8 }} />Projekthez rendelés</>}
+        okText="Mentés"
+        cancelText="Mégsem"
+        confirmLoading={bulkProjectLoading}
+        onCancel={() => setBulkProjectModalOpen(false)}
+        onOk={async () => {
+          if (!bulkProjectId) { message.warning('Válassz projektet!'); return; }
+          const rfqIds = Array.from(new Set(
+            flattenedItems
+              .filter((item: any) => bulkSelectedKeys.includes(item.uniqueId))
+              .map((item: any) => item.rfq_id as number)
+          ));
+          if (rfqIds.length === 0) { message.warning('Nincs kijelölt tétel.'); return; }
+          setBulkProjectLoading(true);
+          try {
+            await Promise.all(rfqIds.map(rfqId => salesService.setRfqProject(rfqId, bulkProjectId!)));
+            message.success(`${rfqIds.length} ajánlat projekthez rendelve`);
+            setBulkProjectModalOpen(false);
+            loadData();
+          } catch {
+            message.error('Hiba a projekt hozzárendelés során');
+          } finally {
+            setBulkProjectLoading(false);
+          }
+        }}
+        width={400}
+      >
+        <p style={{ marginBottom: 12 }}>
+          <strong>{new Set(flattenedItems.filter((item: any) => bulkSelectedKeys.includes(item.uniqueId)).map((item: any) => item.rfq_id)).size}</strong> kijelölt ajánlatot rendeled projekthez.
+        </p>
+        <Select
+          showSearch
+          style={{ width: '100%' }}
+          placeholder="Válassz projektet…"
+          value={bulkProjectId}
+          onChange={(v) => setBulkProjectId(v)}
+          filterOption={(input, option) => {
+            const text = String(option?.label || '');
+            const norm = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+            return norm(text).includes(norm(input));
+          }}
+          options={(projects || []).filter((p: any) => p.status === 'open').map((p: any) => ({ value: p.id, label: p.name }))}
+        />
       </Modal>
 
     </div>
