@@ -500,13 +500,11 @@ const RFQDetail: React.FC = () => {
         setEditContext(null);
       }
       if (isDirectItemEditMode && !(payload as any).keepOpen) {
-        // Try to close if this tab was opened by script; otherwise navigate back to the list
         if (window.opener) {
           window.opener.postMessage({ type: 'pixi_rfq_item_updated' }, window.location.origin);
           window.close();
-        } else {
-          window.location.href = '/sales/rfqs';
         }
+        navigate('/sales/rfqs');
         return;
       }
       if (isDirectItemEditMode) {
@@ -696,11 +694,8 @@ const RFQDetail: React.FC = () => {
             message.success('Mentve');
             setLastSavedAt(dayjs());
             if (closeAfter) {
-              if (window.opener) {
-                window.close();
-              } else {
-                navigate('/sales/rfqs');
-              }
+              if (window.opener) window.close();
+              navigate('/sales/rfqs');
               return;
             }
             load();
