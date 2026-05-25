@@ -70,6 +70,8 @@ interface ItemsTableProps {
   showInlineSubItems?: boolean;
   /** Ha meg van adva, az adott id-jű tétel sora automatikusan kinyílik és az edit panel megjelenik */
   inlineEditItemId?: number | null;
+  /** Az inlineEditItemId sorban megjelenő egyedi tartalom */
+  inlineEditContent?: React.ReactNode;
   /** Ha megadva, minden sorhoz megjelenik egy munkaóra gomb */
   onWorkHours?: (item: any) => void;
 }
