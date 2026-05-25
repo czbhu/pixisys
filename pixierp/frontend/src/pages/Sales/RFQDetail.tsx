@@ -587,6 +587,7 @@ const RFQDetail: React.FC = () => {
         setWorkHoursItemId(null);
         setWorkHoursItemName('');
         setCheckedWorkLogKeys([]);
+        setWorkLogs([]);
         setWorkHoursOpen(true);
         setWorkHoursLoading(true);
         try {
@@ -1139,6 +1140,7 @@ const RFQDetail: React.FC = () => {
                 setWorkHoursItemId(item.id);
                 setWorkHoursItemName(item.product_name || item.manufacturing_product_name || item.service_name || `Tétel #${item.id}`);
                 setCheckedWorkLogKeys([]);
+                setWorkLogs([]);
                 setWorkHoursOpen(true);
                 setWorkHoursLoading(true);
                 try {
