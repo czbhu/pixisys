@@ -1869,6 +1869,24 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                 pass
             return item.description or ''
 
+        def _customer_name(order):
+            """Return company name or 'Magánszemély – <contact>' for private customers."""
+            if not order:
+                return ''
+            try:
+                qr = order.quote_request
+                if not qr:
+                    return ''
+                if qr.company:
+                    return qr.company.name
+                contacts = list(qr.contacts.all())
+                if contacts:
+                    names = ', '.join(c.name or f'{c.last_name} {c.first_name}'.strip() for c in contacts)
+                    return f'Magánszemély – {names}'
+            except Exception:
+                pass
+            return ''
+
         # Currently running work logs (all users)
         active_wls = WorkLog.objects.filter(
             ended_at__isnull=True
@@ -1880,7 +1898,7 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             'item__quote_item__manufacturing_product',
             'item__quote_item__service',
             'sub_item',
-        )
+        ).prefetch_related('customer_order__quote_request__contacts')
         active_wl_map = {wl.user_id: wl for wl in active_wls}
 
         # Today's work logs grouped by user
@@ -1894,7 +1912,7 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             'item__quote_item__manufacturing_product',
             'item__quote_item__service',
             'sub_item',
-        ).order_by('started_at')
+        ).prefetch_related('customer_order__quote_request__contacts').order_by('started_at')
         wl_by_user = {}
         for wl in today_wls:
             wl_by_user.setdefault(wl.user_id, []).append(wl)
@@ -1931,11 +1949,7 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             active_work = None
             if awl and awl.customer_order_id:
                 try:
-                    customer_name = (
-                        awl.customer_order.quote_request.company.name
-                        if awl.customer_order.quote_request and awl.customer_order.quote_request.company
-                        else ''
-                    )
+                    customer_name = _customer_name(awl.customer_order)
                     quote_title = awl.customer_order.quote_request.title if awl.customer_order.quote_request else ''
                 except Exception:
                     customer_name = ''
@@ -1960,11 +1974,7 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                 wl_dur = int((wl_end - wl.started_at).total_seconds())
                 active_seconds += wl_dur
                 try:
-                    c_name = (
-                        wl.customer_order.quote_request.company.name
-                        if wl.customer_order_id and wl.customer_order.quote_request and wl.customer_order.quote_request.company
-                        else ''
-                    )
+                    c_name = _customer_name(wl.customer_order) if wl.customer_order_id else ''
                     q_title = wl.customer_order.quote_request.title if wl.customer_order_id and wl.customer_order.quote_request else ''
                 except Exception:
                     c_name = ''
