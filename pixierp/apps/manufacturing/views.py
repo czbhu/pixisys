@@ -1249,7 +1249,7 @@ class ManufacturingCostItemViewSet(
 
         return Response({'results': results})
 
-    def _render_full_work_sheet_pdf_bytes(self, ci, highlight_id=None, *, _product=None, _rfq=None, _order=None):
+    def _render_full_work_sheet_pdf_bytes(self, ci, highlight_id=None, *, _product=None, _rfq=None, _order=None, _item_name=None):
         """Generate the full two-section (KÜLSŐ + BELSŐ) worksheet PDF for a
         cost item and return the raw bytes.  Raises ImportError if ReportLab /
         qrcode are not installed.
@@ -1353,7 +1353,7 @@ class ManufacturingCostItemViewSet(
             item_note = strip_html(coi.description or (coi.quote_item.description if coi.quote_item else '') or '')
 
         product_code = getattr(product, 'code', '') or ''
-        product_name = product.name or ''
+        product_name = (_item_name or product.name) if product else (_item_name or '')
         product_internal_desc = strip_html(getattr(product, 'internal_description', '') or '')
         product_desc = strip_html(getattr(product, 'description', '') or '')
 
@@ -1827,15 +1827,16 @@ class ManufacturingCostItemViewSet(
                 if not mp or mp.id in seen:
                     continue
                 seen.add(mp.id)
+                rfq_item_name = item.item_name or None
                 ci = (ManufacturingCostItem.objects
                       .filter(product_id=mp.id)
                       .order_by(F('queue_position').asc(nulls_last=True), 'id')
                       .first())
                 try:
                     if ci:
-                        pdf_bytes = self._render_full_work_sheet_pdf_bytes(ci, highlight_id=0)
+                        pdf_bytes = self._render_full_work_sheet_pdf_bytes(ci, highlight_id=0, _item_name=rfq_item_name)
                     else:
-                        pdf_bytes = self._render_full_work_sheet_pdf_bytes(None, highlight_id=0, _product=mp, _rfq=rfq)
+                        pdf_bytes = self._render_full_work_sheet_pdf_bytes(None, highlight_id=0, _product=mp, _rfq=rfq, _item_name=rfq_item_name)
                     if pdf_bytes:
                         all_pdf_pages.append(pdf_bytes)
                 except Exception:
