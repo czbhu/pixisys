@@ -116,6 +116,7 @@ class QuoteRequestItemSerializer(serializers.ModelSerializer):
     customer_order_id = serializers.SerializerMethodField()
     delivery_note_number = serializers.SerializerMethodField()
     delivery_note_id = serializers.SerializerMethodField()
+    delivery_note_date = serializers.SerializerMethodField()
     invoice_number = serializers.SerializerMethodField()
     def get_manufacturing_total_cost(self, obj):
         mp = getattr(obj, 'manufacturing_product', None)
@@ -251,6 +252,20 @@ class QuoteRequestItemSerializer(serializers.ModelSerializer):
         else:
             dni = coi.delivery_items.select_related('delivery_note').first()
         return dni.delivery_note.id if dni else None
+
+    def get_delivery_note_date(self, obj):
+        coi = self._get_first_active_coi(obj)
+        if not coi:
+            return None
+        delivery_items = getattr(coi, 'prefetched_delivery_items', None)
+        if delivery_items is not None:
+            dni = delivery_items[0] if delivery_items else None
+        else:
+            dni = coi.delivery_items.select_related('delivery_note').first()
+        if not dni:
+            return None
+        d = dni.delivery_note.delivery_date
+        return str(d) if d else None
 
     def get_invoice_number(self, obj):
         coi = self._get_first_active_coi(obj)
