@@ -3423,6 +3423,13 @@ const InvoiceForm = () => {
         console.log('[ERP] Setting notes:', draft.notes);
         setValue('notes', draft.notes);
       }
+
+      // Set delivery date (teljesítés dátuma) if provided — last delivery date from ERP
+      if (draft.delivery_date) {
+        console.log('[ERP] Setting delivery_date:', draft.delivery_date);
+        const [y, mo, d] = String(draft.delivery_date).split('-').map(Number);
+        setValue('delivery_date', new Date(y, mo - 1, d));
+      }
       
       // Store ERP order IDs for callback after invoice creation
       if (draft.erp_order_ids && Array.isArray(draft.erp_order_ids)) {

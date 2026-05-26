@@ -2611,11 +2611,20 @@ const RFQs: React.FC = () => {
           group.items.map((i: any) => i.customer_order_id).filter(Boolean)
         ));
 
+        // Find the latest delivery note date; fall back to today
+        const deliveryDates = group.items
+          .map((i: any) => i.delivery_note_date as string | null | undefined)
+          .filter(Boolean) as string[];
+        const deliveryDate = deliveryDates.length > 0
+          ? [...deliveryDates].sort().pop()!
+          : dayjs().format('YYYY-MM-DD');
+
         const invoiceData = {
           customer: customerData,
           items: invoiceItems,
           notes: `ERP árajánlat tételek: ${Array.from(new Set(group.items.map((i: any) => i.rfq_number))).join(', ')}`,
           erp_order_ids: orderIds,
+          delivery_date: deliveryDate,
         };
 
         const encodedData = btoa(encodeURIComponent(JSON.stringify(invoiceData)));
