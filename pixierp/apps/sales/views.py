@@ -3292,6 +3292,7 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
     queryset = CustomerOrder.objects.all()
     serializer_class = CustomerOrderSerializer
     permission_classes = [IsAuthenticated]
+    pagination_class = None  # Frontend does client-side pagination
 
     def get_serializer_class(self):
         if self.action == 'list':
