@@ -3927,7 +3927,7 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
                 'status': item.status,
                 'customer_name': resolve_customer_name(qr),
                 'manufacturing_product_id': mp.id,
-                'name': mp.name,
+                'name': item.quote_item.item_name or mp.name,
                 'code': mp.code or '',
                 'description': strip_html(item.description or mp.description or ''),
                 'internal_description': strip_html(mp.internal_description or ''),
