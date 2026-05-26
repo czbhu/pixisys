@@ -1276,7 +1276,42 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
       };
 
       if (isEdit && effectiveManuId! > 0) {
-        // ── Real product: PATCH (status unchanged) ───────────────────────
+        if (!rfqId) {
+          // ── Editing a history-loaded item in a new (unsaved) RFQ: defer ─────
+          // Do NOT patch the original product. Store the edited data as a pending
+          // payload so a brand-new independent product is created when the RFQ is saved.
+          const tempId = -Date.now();
+          setManuCreatedId(tempId);
+          const unit = translateUnit(v.quantity_unit || 'db');
+          form.setFieldsValue({ unit, net_unit_price: netUnitPriceForRfq, quantity: productQtyForPayload });
+          setSelected({ ...v, id: tempId, __type: 'manufacturing' });
+          const deferredPayload = {
+            ...payload,
+            _costItemsState: manuCostItems.map(ci => ({ ...ci, syncQty: syncQtyRows.has(ci.id) })),
+            _currency: { id: manuSellCurrencyId, code: manuSellCurrencyCode },
+            _costCurrency: { id: manuCostCurrencyId, code: manuCostCurrencyCode },
+          };
+          const pendingUpdatePayload = {
+            item_type: 'manufacturing' as const,
+            ref_id: tempId,
+            name: v.name,
+            code: v.code,
+            unit,
+            base_price: netUnitPriceForRfq,
+            quantity: productQtyForPayload,
+            net_unit_price: netUnitPriceForRfq,
+            vat_rate: Number(form.getFieldValue('vat_rate')) || defaultVat,
+            description: v.description || '',
+            discount_percent: Number(form.getFieldValue('discount_percent')) || 0,
+            discount_amount: Number(form.getFieldValue('discount_amount')) || 0,
+            pendingManuPayload: deferredPayload,
+            is_rate_locked: isRateLocked,
+            locked_exchange_rate: isRateLocked ? lockedExchangeRate : null,
+          };
+          await onAdd({ ...pendingUpdatePayload, keepOpen } as any);
+          message.success('Egyedi gyártás módosítva (az ajánlat mentésekor kerül a rendszerbe)');
+        } else {
+        // ── Real product in existing RFQ: PATCH (status unchanged) ───────────
         const { status: _s, ...patchPayload } = payload as any;
         if (quoteItemId) {
           delete patchPayload.name;
@@ -1315,6 +1350,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         setLastSavedAt(dayjs());
         setManuPendingFiles([]);
         setManuPendingFileRemarks({});
+        }
 
       } else if (isEdit && effectiveManuId! < 0) {
         // ── Pending item update — no API call yet, just update stored payload ─
