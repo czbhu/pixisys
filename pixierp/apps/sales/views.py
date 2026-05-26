@@ -4911,6 +4911,13 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
         order.invoice_number = invoice_number
         order.save()
 
+        # Update CustomerOrderItem statuses
+        if invoice_number:
+            order.items.exclude(status='cancelled').update(status='invoiced')
+        else:
+            # Storno: revert invoiced items back to in_delivery
+            order.items.filter(status='invoiced').update(status='in_delivery')
+
         # Update linked RFQ status: ordered when invoice set, accepted when cleared
         qr = getattr(order, 'quote_request', None)
         if qr:
