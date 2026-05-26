@@ -845,6 +845,7 @@ const RFQs: React.FC = () => {
     ready:        { color: 'green',    text: 'Kész' },
     in_delivery:  { color: 'purple',   text: 'Szállítás alatt' },
     delivered:    { color: 'geekblue', text: 'Kiszállítva' },
+    invoiced:     { color: 'green',    text: 'Kiszámlázva' },
     rejected:     { color: 'red',      text: 'Elutasítva' },
   };
   const COST_ITEM_STATUS_OPTIONS = [
@@ -917,8 +918,8 @@ const RFQs: React.FC = () => {
     if (!costStatuses.length) {
       return renderRfqStatusControl(r, r.rfq_id);
     }
-    const topStatus = r._costTopStatus ?? 'new';
-    const isPartial = r._costIsPartial;
+    const topStatus = (r.effective_status === 'invoiced') ? 'invoiced' : (r._costTopStatus ?? 'new');
+    const isPartial = r._costIsPartial && topStatus !== 'invoiced';
     const meta = COST_STATUS_META[topStatus] || { color: 'default', text: topStatus };
     const displayLabel = isPartial ? `${meta.text} (részben)` : meta.text;
 
@@ -976,7 +977,7 @@ const RFQs: React.FC = () => {
         <Popover content={popoverContent} title="Státusz váltás" trigger="click" styles={{ body: { padding: '6px 8px' } }} getPopupContainer={() => document.body} zIndex={9999}>
           <span style={{ cursor: 'pointer' }}><Tag color={meta.color}>{displayLabel}</Tag></span>
         </Popover>
-        {(deliveryNum && deliveryId && ['in_delivery', 'delivered'].includes(topStatus)) && (
+        {(deliveryNum && deliveryId && ['in_delivery', 'delivered', 'invoiced'].includes(topStatus)) && (
           <a href={`/sales/delivery-notes?id=${deliveryId}`} target="_blank" rel="noreferrer"
             style={{ fontSize: 11, color: '#1677ff', lineHeight: 1.2 }}
             onClick={e => e.stopPropagation()}>
