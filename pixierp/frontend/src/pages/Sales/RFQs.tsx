@@ -1410,7 +1410,7 @@ const RFQs: React.FC = () => {
           let manuRefId = it.ref_id;
           if ((it as any).pendingManuPayload && it.ref_id < 0) {
             try {
-              const { _costItemsState: _cs, _currency: _cur, ...manuPayload } = (it as any).pendingManuPayload;
+              const { _costItemsState: _cs, _currency: _cur, _costCurrency: _cc, ...manuPayload } = (it as any).pendingManuPayload;
               const createdProduct = await manufacturingService.createProduct(manuPayload);
               manuRefId = createdProduct.id;
             } catch {
