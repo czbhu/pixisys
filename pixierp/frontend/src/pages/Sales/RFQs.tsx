@@ -1422,6 +1422,11 @@ const RFQs: React.FC = () => {
             try {
               const dup = await manufacturingService.duplicateProduct(it.ref_id);
               manuRefId = dup.id;
+              // If the RFQ item has a custom name (e.g. set via item_name in a previous RFQ),
+              // rename the duplicate to match — the original product name may differ.
+              if (it.name && it.name !== dup.name) {
+                try { await manufacturingService.patchProduct(manuRefId, { name: it.name }); } catch {}
+              }
             } catch {
               message.error(`Egyedi gyártás másolása sikertelen: ${it.name}`);
               return;
@@ -1980,6 +1985,9 @@ const RFQs: React.FC = () => {
           try {
             const dup = await manufacturingService.duplicateProduct(p.ref_id!);
             manuRefId = dup.id;
+            if (p.name && p.name !== dup.name) {
+              try { await manufacturingService.patchProduct(manuRefId, { name: p.name }); } catch {}
+            }
           } catch {
             message.error(`Egyedi gyártás másolása sikertelen: ${p.name}`);
             return;
