@@ -1975,6 +1975,15 @@ const RFQs: React.FC = () => {
           const { _costItemsState: _cs, _currency: _cur, _costCurrency: _cc, ...manuPayload } = (p as any).pendingManuPayload;
           const createdProduct = await manufacturingService.createProduct(manuPayload);
           manuRefId = createdProduct.id;
+        } else if (p.ref_id! > 0) {
+          // Safety fallback: always duplicate the source product so the new item is fully independent
+          try {
+            const dup = await manufacturingService.duplicateProduct(p.ref_id!);
+            manuRefId = dup.id;
+          } catch {
+            message.error(`Egyedi gyártás másolása sikertelen: ${p.name}`);
+            return;
+          }
         }
         await salesService.addRfqManufacturingItem(rfq.id, manuRefId, p.name || '', p.quantity || 1, (p as any).description || '', p.unit || 'db', p.net_unit_price || 0, p.vat_rate || 27, (p as any).discount_percent, (p as any).discount_amount);
       } else {
