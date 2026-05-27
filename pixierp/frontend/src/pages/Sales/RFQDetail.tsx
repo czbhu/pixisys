@@ -475,6 +475,13 @@ const RFQDetail: React.FC = () => {
       }
       await salesService.updateQuoteRequestItem(editContext.item.id, patch);
 
+      // If item sell currency differs from RFQ currency, update the RFQ currency to match.
+      const newCurrCode: string | undefined = (payload as any)._sellCurrencyCode;
+      if (newCurrCode && newCurrCode !== activeCurrency) {
+        formBasic.setFieldsValue({ currency_code: newCurrCode });
+        await salesService.updateQuoteRequestBasic(Number(id), { currency_code: newCurrCode });
+      }
+
       if (isDirectItemEditMode) {
         await saveBasicFromCurrentForm();
       }
