@@ -2605,6 +2605,8 @@ def public_order_view(request, token: str):
         'status': qr.status,
         'issue_date': qr.issue_date,
         'partial_order_allowed': qr.partial_order_allowed,
+        'currency_code': qr.currency.code if qr.currency else 'HUF',
+        'currency_symbol': qr.currency.symbol if qr.currency else 'Ft',
         'valid_until': qr.valid_until,
         'is_expired': (qr.valid_until is not None and qr.valid_until < timezone.now().date()),
         'customer': customer_data,
