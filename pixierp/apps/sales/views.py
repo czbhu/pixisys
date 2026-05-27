@@ -6624,23 +6624,34 @@ class DeliveryNoteViewSet(viewsets.ModelViewSet):
              p.setFont(font_name, 10)
              p.drawRightString(18*cm, y, f"Összesen (Nettó): {total_net:,.2f}")
              
-        # Contacts Footer
+        # Contacts Footer — only contacts from the RFQs linked to this delivery note
         y = 3*cm
         p.line(2*cm, y, width-2*cm, y)
         y -= 0.5*cm
         p.setFont(font_name, 8)
         p.drawString(2*cm, y, "Kapcsolattartók:")
         y -= 0.4*cm
-        contacts_str = ""
-        if dn.customer:
-             contacts = dn.customer.contact_set.all()[:3] 
-             c_list = []
-             for c in contacts:
-                 c_text = c.name
-                 if c.phone: c_text += f" ({c.phone})"
-                 c_list.append(c_text)
-             contacts_str = ", ".join(c_list)
-        p.drawString(2*cm, y, contacts_str)
+        # Collect unique contacts from the quote_requests of each item
+        seen_contact_ids = set()
+        rfq_contacts = []
+        if dn.contact:
+            seen_contact_ids.add(dn.contact.id)
+            rfq_contacts.append(dn.contact)
+        for dn_item in dn.items.all():
+            try:
+                qr = dn_item.customer_order_item.customer_order.quote_request
+                for c in qr.contacts.all():
+                    if c.id not in seen_contact_ids:
+                        seen_contact_ids.add(c.id)
+                        rfq_contacts.append(c)
+            except Exception:
+                pass
+        c_list = []
+        for c in rfq_contacts:
+            c_text = c.name
+            if c.phone: c_text += f" ({c.phone})"
+            c_list.append(c_text)
+        p.drawString(2*cm, y, ", ".join(c_list))
         
         p.save()
         pdf = buffer.getvalue()
