@@ -1329,8 +1329,13 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         // Sync the RFQ line item with the updated manufacturing product values
         const updatedQty = Number(updated.quantity) > 0 ? Number(updated.quantity) : (productQtyForPayload || 1);
         const updatedUnitPrice = isFinite(Number(updated.net_unit_price)) ? Number(updated.net_unit_price) : netUnitPriceForPayload;
-        // Convert updated price to RFQ currency
-        const updatedUnitPriceForRfq = parseFloat((updatedUnitPrice * _sellCurrRate / _rfqCurrRate).toFixed(4));
+        // If sell currency differs from RFQ currency, we're about to change the RFQ currency to match
+        // the sell currency — so store the price in sell currency directly (no conversion).
+        // If they're already the same, the formula is a no-op (rate/rate = 1) but kept for precision.
+        const _sellAndRfqMatch = manuSellCurrencyCode.toUpperCase() === (rfqCurrency || 'HUF').toUpperCase();
+        const updatedUnitPriceForRfq = _sellAndRfqMatch
+          ? parseFloat((updatedUnitPrice * _sellCurrRate / _rfqCurrRate).toFixed(4))
+          : parseFloat(updatedUnitPrice.toFixed(4));
         form.setFieldsValue({ unit, net_unit_price: updatedUnitPriceForRfq, quantity: updated.quantity || 1 });
         const rfqUpdatePayload: SelectedItemPayload = {
           item_type: 'manufacturing',
