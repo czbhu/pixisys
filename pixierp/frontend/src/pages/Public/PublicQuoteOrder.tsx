@@ -59,6 +59,8 @@ interface QuoteData {
   status: string;
   issue_date: string;
   partial_order_allowed: boolean;
+  currency_code?: string;
+  currency_symbol?: string;
   valid_until?: string | null;
   is_expired?: boolean;
   customer: {
@@ -331,6 +333,8 @@ const PublicQuoteOrder: React.FC = () => {
     item.product_name || item.material_name || item.service_name ||
     item.manufacturing_product_name || item.description || 'Megnevezés nélküli tétel';
 
+  const currencySymbol = data?.currency_symbol || data?.currency_code || 'Ft';
+
   const getItemCode = (item: QuoteItem) => {
     const real = item.product_code || item.material_code || item.manufacturing_product_code;
     if (real) return real;
@@ -426,10 +430,13 @@ const PublicQuoteOrder: React.FC = () => {
       title: 'Mennyiség', dataIndex: 'quantity', key: 'quantity', width: 110,
       render: (qty: number, record: QuoteItem) => `${qty} ${record.unit || 'db'}`
     },
-    {
-      title: 'Egységár (nettó)', dataIndex: 'net_unit_price', key: 'net_unit_price',
-      width: 130, align: 'right' as const,
-      render: (price: number) => `${price?.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} Ft`
+    { 
+      title: 'Egységár (nettó)', 
+      dataIndex: 'net_unit_price', 
+      key: 'net_unit_price',
+      width: 130,
+      align: 'right' as const,
+      render: (price: number) => `${price?.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} ${currencySymbol}`
     },
     {
       title: 'ÁFA', dataIndex: 'vat_rate', key: 'vat_rate',
@@ -446,7 +453,7 @@ const PublicQuoteOrder: React.FC = () => {
       width: 150, align: 'right' as const,
       render: (_: any, record: QuoteItem) => {
         const total = record.discount_percent > 0 ? record.discounted_net_total : record.net_total;
-        return <strong>{total?.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} Ft</strong>;
+        return <strong>{total?.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} {currencySymbol}</strong>;
       }
     },
     {
@@ -559,7 +566,7 @@ const PublicQuoteOrder: React.FC = () => {
                   <strong>Összesen Nettó:</strong>
                 </Table.Summary.Cell>
                 <Table.Summary.Cell index={1} align="right">
-                  <strong>{totalNet.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} Ft</strong>
+                  <strong>{totalNet.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} {currencySymbol}</strong>
                 </Table.Summary.Cell>
               </Table.Summary.Row>
               <Table.Summary.Row className="no-print">
@@ -572,7 +579,7 @@ const PublicQuoteOrder: React.FC = () => {
                 <Table.Summary.Cell index={1} colSpan={hasDiscount ? 6 : 5}>
                   <div style={{ textAlign: 'right', paddingRight: 8 }}>
                     <div style={{ fontSize: 16, fontWeight: 'bold', marginBottom: 4 }}>
-                      Összesen Nettó: {totalNet.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} Ft
+                      Összesen Nettó: {totalNet.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} {currencySymbol}
                     </div>
                     <div style={{ fontSize: 12, color: '#666' }}>(nem tartalmazza az ÁFA-t)</div>
                   </div>
