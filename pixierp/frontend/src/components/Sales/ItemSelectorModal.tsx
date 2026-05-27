@@ -772,9 +772,11 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
       setManuCurrencies(currList);
       // Unit suggestions
       setUnitSuggestions(Array.isArray(unitSuggestionsRes) ? unitSuggestionsRes : []);
-      // Set default currency if not yet set
+      // Set default currency for new items only.
+      // In edit mode, currency is loaded from the product itself by the separate
+      // item-loading effect — do NOT overwrite it here (race condition would reset EUR→HUF).
       const defCurr = currList.find(c => c.is_default);
-      if (defCurr) {
+      if (defCurr && !(mode === 'edit' && initialSelection?.item_type === 'manufacturing')) {
         setManuSellCurrencyCode(defCurr.code.toUpperCase());
         setManuSellCurrencyId(defCurr.id);
         setManuCostCurrencyCode(defCurr.code.toUpperCase());
