@@ -1348,7 +1348,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           is_rate_locked: isRateLocked,
           locked_exchange_rate: isRateLocked ? lockedExchangeRate : null,
         };
-        await onAdd({ ...rfqUpdatePayload, files: manuPendingFiles, fileRemarks: manuPendingFileRemarks, keepOpen } as any);
+        await onAdd({ ...rfqUpdatePayload, _sellCurrencyCode: manuSellCurrencyCode, files: manuPendingFiles, fileRemarks: manuPendingFileRemarks, keepOpen } as any);
         setLastSavedAt(dayjs());
         setManuPendingFiles([]);
         setManuPendingFileRemarks({});
