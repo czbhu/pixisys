@@ -1,11 +1,19 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
-import { Card, Table, Spin, Alert, Typography, Descriptions, Button, message, Row, Col, Checkbox, DatePicker } from 'antd';
-import { ShoppingCartOutlined, PrinterOutlined } from '@ant-design/icons';
+import {
+  Card, Table, Spin, Alert, Typography, Descriptions, Button, message, Row, Col,
+  Checkbox, DatePicker, Upload, Input, List, Popconfirm, Tag, Progress,
+} from 'antd';
+import {
+  ShoppingCartOutlined, PrinterOutlined, UploadOutlined,
+  DeleteOutlined, PaperClipOutlined, InboxOutlined,
+} from '@ant-design/icons';
 import axios from 'axios';
 import dayjs, { Dayjs } from 'dayjs';
 
 const { Title, Text, Paragraph } = Typography;
+const { Dragger } = Upload;
+const { TextArea } = Input;
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || '/api/v1';
 
@@ -64,6 +72,14 @@ interface QuoteData {
   items: QuoteItem[];
 }
 
+interface AttachmentItem {
+  id: number;
+  original_filename: string;
+  remark: string;
+  created_at: string;
+  uploading?: boolean;
+}
+
 const PublicQuoteOrder: React.FC = () => {
   const { token } = useParams<{ token: string }>();
   const [searchParams] = useSearchParams();
@@ -76,9 +92,29 @@ const PublicQuoteOrder: React.FC = () => {
   const [submitting, setSubmitting] = useState(false);
   const [desiredDate, setDesiredDate] = useState<Dayjs | null>(null);
 
+  // Attachments state
+  const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
+  const [pendingRemark, setPendingRemark] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+
   useEffect(() => {
     loadData();
   }, [token, extraTokens, itemIdsParam]);
+
+  const loadAttachments = useCallback(async () => {
+    if (!token) return;
+    try {
+      const r = await axios.get(`${API_BASE_URL}/sales/quote-requests/public/${token}/attachments/`);
+      setAttachments(r.data || []);
+    } catch {
+      // silent
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (token) loadAttachments();
+  }, [token, loadAttachments]);
 
   const loadData = async () => {
     try {
@@ -123,6 +159,51 @@ const PublicQuoteOrder: React.FC = () => {
       setSelectedItems(allItemIds);
     } else {
       setSelectedItems(new Set());
+    }
+  };
+
+  const uploadFile = async (file: File, remark: string) => {
+    const MAX_SIZE = 20 * 1024 * 1024;
+    if (file.size > MAX_SIZE) {
+      message.error('A fájl mérete nem haladhatja meg a 20 MB-ot');
+      return;
+    }
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('remark', remark);
+    setUploading(true);
+    setUploadProgress(0);
+    try {
+      await axios.post(
+        `${API_BASE_URL}/sales/quote-requests/public/${token}/attachments/upload/`,
+        formData,
+        {
+          headers: { 'Content-Type': 'multipart/form-data' },
+          onUploadProgress: (e) => {
+            if (e.total) setUploadProgress(Math.round((e.loaded / e.total) * 100));
+          },
+        }
+      );
+      message.success(`„${file.name}" sikeresen feltöltve`);
+      setPendingRemark('');
+      loadAttachments();
+    } catch (err: any) {
+      message.error(err.response?.data?.error || 'Feltöltés sikertelen');
+    } finally {
+      setUploading(false);
+      setUploadProgress(0);
+    }
+  };
+
+  const handleDeleteAttachment = async (att: AttachmentItem) => {
+    try {
+      await axios.delete(
+        `${API_BASE_URL}/sales/quote-requests/public/${token}/attachments/${att.id}/delete/`
+      );
+      message.success('Csatolmány törölve');
+      loadAttachments();
+    } catch {
+      message.error('Törlés sikertelen');
     }
   };
 
@@ -546,6 +627,86 @@ const PublicQuoteOrder: React.FC = () => {
         />
 
         <Row gutter={[16, 12]} justify="end" align="middle" className="no-print" style={{ marginTop: 16 }}>
+
+        {/* ─── Csatolmányok / File feltöltés ─── */}
+        <Col span={24} className="no-print" style={{ marginBottom: 24 }}>
+          <Card
+            size="small"
+            title={
+              <span>
+                <PaperClipOutlined style={{ marginRight: 6 }} />
+                Csatolmányok / Dokumentumok feltöltése
+              </span>
+            }
+            style={{ borderStyle: 'dashed', borderColor: '#d9d9d9' }}
+          >
+            <Dragger
+              multiple
+              showUploadList={false}
+              beforeUpload={(file) => {
+                uploadFile(file, pendingRemark);
+                return false; // prevent default upload
+              }}
+              onDrop={(e) => {}}
+              disabled={uploading}
+            >
+              <p className="ant-upload-drag-icon">
+                <InboxOutlined />
+              </p>
+              <p className="ant-upload-text">Húzza ide a fájlokat, vagy kattintson a tallózáshoz</p>
+              <p className="ant-upload-hint">
+                Max. 20 MB / fájl – engedélyezett formátumok: PDF, Word, Excel, kép, CSV, ZIP
+              </p>
+            </Dragger>
+
+            {uploading && (
+              <Progress percent={uploadProgress} status="active" style={{ marginBottom: 8 }} />
+            )}
+
+            <TextArea
+              placeholder="Megjegyzés a feltöltendő fájl(ok)hoz (nem kötelező)"
+              value={pendingRemark}
+              onChange={(e) => setPendingRemark(e.target.value)}
+              autoSize={{ minRows: 1, maxRows: 3 }}
+              maxLength={255}
+              style={{ marginBottom: 12 }}
+            />
+
+            {attachments.length > 0 && (
+              <List
+                size="small"
+                bordered
+                header={<strong>Feltöltött fájlok</strong>}
+                dataSource={attachments}
+                renderItem={(att) => (
+                  <List.Item
+                    actions={[
+                      <Popconfirm
+                        title="Biztosan törli ezt a fájlt?"
+                        onConfirm={() => handleDeleteAttachment(att)}
+                        okText="Törlés"
+                        cancelText="Mégse"
+                      >
+                        <Button size="small" danger icon={<DeleteOutlined />} />
+                      </Popconfirm>
+                    ]}
+                  >
+                    <List.Item.Meta
+                      avatar={<PaperClipOutlined style={{ fontSize: 16, color: '#1677ff' }} />}
+                      title={att.original_filename}
+                      description={att.remark || undefined}
+                    />
+                    <Tag color="default" style={{ fontSize: 11 }}>
+                      {new Date(att.created_at).toLocaleString('hu-HU')}
+                    </Tag>
+                  </List.Item>
+                )}
+              />
+            )}
+          </Card>
+        </Col>
+
+
           <Col>
             <span style={{ marginRight: 8 }}>Ekkora szeretném (nem kötelező):</span>
             <DatePicker
