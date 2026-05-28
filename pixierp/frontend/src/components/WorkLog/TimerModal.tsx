@@ -8,6 +8,14 @@ import { manufacturingService } from '../../services/manufacturingService';
 
 const OTHER_ORDER_VALUE = '__other__';
 
+interface ResumeWorkState {
+    orderId: number | null;
+    itemId: number | null;
+    subItemId: number | null;
+    workflowName: string;
+    orderLabel: string;
+}
+
 export const TimerModal: React.FC = () => {
     const { 
         activeLog, elapsedSeconds, stopTimer, startTimer, modalOpen, setModalOpen, 
@@ -27,6 +35,10 @@ export const TimerModal: React.FC = () => {
 
     // "Egyéb" order state
     const [isOtherOrder, setIsOtherOrder] = useState(false);
+    const [resumeWorkState, setResumeWorkState] = useState<ResumeWorkState | null>(null);
+
+    const isPaused = !!activeLog && (activeLog.workflow_name || '').trim().toLowerCase() === 'szünet';
+    const disableInputs = !!activeLog;
 
     useEffect(() => {
         loadWorkflowOptions();
@@ -202,6 +214,62 @@ export const TimerModal: React.FC = () => {
         } catch (e) {}
     };
 
+    const handlePauseToggle = async () => {
+        if (isPaused) {
+            await stopTimer();
+
+            if (resumeWorkState && (resumeWorkState.orderId || resumeWorkState.orderLabel)) {
+                if (resumeWorkState.orderId) {
+                    await startTimer(
+                        resumeWorkState.orderId,
+                        resumeWorkState.itemId,
+                        resumeWorkState.workflowName,
+                        resumeWorkState.subItemId,
+                    );
+                } else {
+                    await startTimer(
+                        null,
+                        null,
+                        resumeWorkState.workflowName,
+                        null,
+                        null,
+                        resumeWorkState.orderLabel,
+                    );
+                }
+            } else {
+                form.resetFields();
+                setSelectedOrderId(null);
+                setItems([]);
+                setSubItems([]);
+                setIsOtherOrder(false);
+            }
+
+            setResumeWorkState(null);
+            return;
+        }
+
+        let previous: ResumeWorkState | null = null;
+        if (activeLog) {
+            previous = {
+                orderId: activeLog.customer_order ?? null,
+                itemId: activeLog.item ?? null,
+                subItemId: (activeLog as any).sub_item ?? null,
+                workflowName: activeLog.workflow_name || '',
+                orderLabel: (activeLog as any).order_label || '',
+            };
+        }
+
+        setResumeWorkState(previous);
+        await startTimer(
+            null,
+            null,
+            'Szünet',
+            null,
+            null,
+            'Szünet',
+        );
+    };
+
     const formatTime = (sec: number) => {
         const h = Math.floor(sec / 3600);
         const m = Math.floor((sec % 3600) / 60);
@@ -299,7 +367,7 @@ export const TimerModal: React.FC = () => {
                     rules={[{ required: !isOtherOrder, message: 'Kötelező' }]}
                 >
                     <Select
-                        disabled={!!activeLog}
+                        disabled={disableInputs}
                         showSearch
                         optionFilterProp="label"
                         optionLabelProp="label"
@@ -329,7 +397,7 @@ export const TimerModal: React.FC = () => {
                     >
                         <Input
                             placeholder="pl. Takarítás, Karbantartás, Szállítás..."
-                            disabled={!!activeLog}
+                            disabled={disableInputs}
                         />
                     </Form.Item>
                 )}
@@ -343,7 +411,7 @@ export const TimerModal: React.FC = () => {
                     <>
                         <Form.Item name="item_id" label="Tétel">
                             <Select
-                                disabled={!!activeLog}
+                                disabled={disableInputs}
                                 allowClear
                                 options={(() => {
                                     const hasManufacturing = items.some((i: any) => i.item_type === 'manufacturing' || i.item_type === 'product');
@@ -373,7 +441,7 @@ export const TimerModal: React.FC = () => {
                         {subItems.length > 0 && (
                             <Form.Item name="sub_item_id" label="Altétel">
                                 <Select
-                                    disabled={!!activeLog}
+                                    disabled={disableInputs}
                                     allowClear
                                     placeholder="Válassz altételt..."
                                     options={subItems.map((si: any) => ({
@@ -388,7 +456,7 @@ export const TimerModal: React.FC = () => {
 
                 <Form.Item name="workflow_name" label="Munkafolyamat">
                     <AutoComplete
-                        disabled={!!activeLog}
+                        disabled={disableInputs}
                         options={workflowOptions.map(w => ({ value: w }))}
                         filterOption={(inputValue, option) =>
                             option!.value.toUpperCase().indexOf(inputValue.toUpperCase()) !== -1
@@ -396,12 +464,19 @@ export const TimerModal: React.FC = () => {
                     />
                 </Form.Item>
 
-                <div style={{ display: 'flex', justifyContent: 'center', gap: 16 }}>
+                <div style={{ display: 'flex', justifyContent: 'center', gap: 12, flexWrap: 'wrap' }}>
                     {!activeLog ? (
                         <Button type="primary" size="large" onClick={handleStart} style={{ background: 'green' }}>START</Button>
                     ) : (
                         <Button type="primary" size="large" danger onClick={stopTimer}>STOP</Button>
                     )}
+                    <Button
+                        size="large"
+                        type={isPaused ? 'primary' : 'default'}
+                        onClick={handlePauseToggle}
+                    >
+                        {isPaused ? 'Szüneten vagy!' : 'Szünet'}
+                    </Button>
                 </div>
             </Form>
         </Modal>

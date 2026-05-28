@@ -5,9 +5,11 @@ import { useAuth } from './AuthContext';
 
 interface WorkLog {
   id: number;
-  customer_order: number;
+  customer_order: number | null;
   item: number | null;
+  sub_item?: number | null;
   workflow_name: string;
+  order_label?: string;
   started_at: string;
   customer_order_number?: string;
   customer_name?: string;

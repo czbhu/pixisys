@@ -247,6 +247,19 @@ const DeliveryNotes: React.FC = () => {
   // Handle "Create from Order" link
   useEffect(() => {
     const params = new URLSearchParams(location.search);
+
+    // ?id=<delivery_note_id> → filter to that note only
+    const noteId = params.get('id');
+    if (noteId) {
+        api.get(`/sales/delivery-notes/${noteId}/`).then(res => {
+            const note = res.data;
+            if (note && note.delivery_note_number) {
+                setFilterNoteNumber(note.delivery_note_number);
+            }
+        }).catch(() => {});
+        return;
+    }
+
     const orderId = params.get('create_from_order');
     if (orderId) {
         initCreateFromOrder(orderId);

@@ -1352,6 +1352,38 @@ class ManufacturingCostItemViewSet(
                 pass
             item_note = strip_html(coi.description or (coi.quote_item.description if coi.quote_item else '') or '')
 
+        # Fallback quantity when there is no resolved customer-order item
+        # (e.g. worksheet generated from RFQ context or without sub-items).
+        if not item_qty_str:
+            try:
+                if _order is not None and product is not None:
+                    order_item = (
+                        _order.items
+                        .select_related('quote_item')
+                        .filter(quote_item__manufacturing_product=product)
+                        .exclude(status='cancelled')
+                        .order_by('id')
+                        .first()
+                    )
+                    if order_item:
+                        unit = (order_item.quote_item.unit if order_item.quote_item else '') or ''
+                        item_qty_str = f"{float(order_item.quantity):g} {unit}".strip()
+
+                if not item_qty_str and _rfq is not None and product is not None:
+                    rfq_item = (
+                        _rfq.items
+                        .filter(manufacturing_product=product)
+                        .order_by('id')
+                        .first()
+                    )
+                    if rfq_item:
+                        item_qty_str = f"{float(rfq_item.quantity):g} {(rfq_item.unit or '').strip()}".strip()
+
+                if not item_qty_str and ci is not None and ci.quantity is not None:
+                    item_qty_str = f"{float(ci.quantity):g} {(ci.unit or '').strip()}".strip()
+            except Exception:
+                pass
+
         product_code = getattr(product, 'code', '') or ''
         product_name = (_item_name or product.name) if product else (_item_name or '')
         product_internal_desc = strip_html(getattr(product, 'internal_description', '') or '')

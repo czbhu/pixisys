@@ -2137,10 +2137,14 @@ const RFQs: React.FC = () => {
     const rfqIds = Array.from(new Set(selectedItems.map((item: any) => item.rfq_id as number)));
     if (!rfqIds.length) return;
 
-    // Split into already-ordered and new
+    // Split into already-in-production (or higher) and needs-production
+    // Use effective_status (based on CustomerOrderItem statuses) — not rfq.status
+    // rfq.status='ordered' only means an order was PLACED (could be via public form), not that it's in production
+    const IN_PRODUCTION_OR_ABOVE = ['in_production', 'ready', 'in_delivery', 'delivered', 'invoiced'];
     const alreadyOrderedIds = rfqIds.filter(id => {
       const rfq = (rfqs || []).find((r: any) => r.id === id);
-      return rfq && ['ordered', 'partially_ordered'].includes(rfq.status);
+      const effectiveStatus = rfq?.effective_status || rfq?.status;
+      return rfq && IN_PRODUCTION_OR_ABOVE.includes(effectiveStatus);
     });
     const toCreateIds = rfqIds.filter(id => !alreadyOrderedIds.includes(id));
 
