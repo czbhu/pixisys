@@ -344,6 +344,10 @@ if [ -d "venv" ]; then
     echo -e "${YELLOW}  • Adatbázis migrációk futtatása...${NC}"
     python manage.py migrate --no-input
     
+    # Rendszer alap adatok biztosítása (védett sablonok, szolgáltatások)
+    echo -e "${YELLOW}  • Rendszer alap adatok ellenőrzése (seed_protected_items)...${NC}"
+    python manage.py seed_protected_items --verbose && echo -e "${GREEN}  ✓ Alap adatok rendben${NC}" || echo -e "${YELLOW}  ⚠️  seed_protected_items hiba (nem kritikus)${NC}"
+    
     # Dev admin user létrehozása/frissítése (DEBUG módban)
     if [ -f ".env" ]; then
         source .env

@@ -357,6 +357,9 @@ if [ -n "$ADMIN_EMAIL" ] && [ -n "$ADMIN_PASSWORD" ]; then
         
         python manage.py migrate --noinput
         
+        echo -e "${BLUE}Rendszer alap adatok feltöltése...${NC}"
+        python manage.py seed_protected_items --verbose || echo -e "${YELLOW}⚠️  seed_protected_items hiba (nem kritikus, futtatható kézzel is)${NC}"
+        
         echo -e "${BLUE}PixiERP admin és jogosultságok létrehozása...${NC}"
         # A create_initial_admin.py már tartalmazza a jogosultságok és a jwt route-ok javítását
         python create_initial_admin.py "$ADMIN_EMAIL" "$ADMIN_PASSWORD"

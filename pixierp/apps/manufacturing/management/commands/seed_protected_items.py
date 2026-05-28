@@ -127,31 +127,39 @@ class Command(BaseCommand):
                 continue
 
             code = tpl_data.get('code')
-            # Ellenőrizzük: van-e már védett sablon ebben a kategóriában?
-            existing = ProductTemplate.objects.filter(
-                category=category, is_protected=True
-            ).first()
 
-            if existing:
-                # Ha van, de nincs code vagy code eltér, frissítjük
-                if existing.code != code:
-                    if verbose:
-                        self.stdout.write(
-                            f'  Meglévő védett sablon: "{existing.name}" (id={existing.id}) - {category_name}'
-                        )
-                # is_protected biztosítása
-                if not existing.is_protected:
-                    existing.is_protected = True
-                    existing.save(update_fields=['is_protected'])
-                    updated_count += 1
-            else:
-                # Nincs védett sablon → létrehozás
-                defaults = {k: v for k, v in tpl_data.items() if k != 'code'}
-                defaults['category'] = category
-                tpl = ProductTemplate.objects.create(code=code, **defaults)
+            # get_or_create code alapján – nem dob unique constraint hibát
+            tpl, tpl_created = ProductTemplate.objects.get_or_create(
+                code=code,
+                defaults={
+                    'name': tpl_data['name'],
+                    'description': tpl_data.get('description', ''),
+                    'calculator_type': tpl_data.get('calculator_type', 'generic'),
+                    'is_active': tpl_data.get('is_active', True),
+                    'is_protected': True,
+                    'category': category,
+                },
+            )
+            if tpl_created:
                 created_count += 1
                 if verbose:
                     self.stdout.write(f'  Létrehozva: ProductTemplate "{tpl.name}" → {category_name}')
+            else:
+                changed = False
+                if not tpl.is_protected:
+                    tpl.is_protected = True
+                    changed = True
+                if tpl.category_id != category.id:
+                    tpl.category = category
+                    changed = True
+                if not tpl.is_active:
+                    tpl.is_active = True
+                    changed = True
+                if changed:
+                    tpl.save(update_fields=['is_protected', 'category_id', 'is_active'])
+                    updated_count += 1
+                    if verbose:
+                        self.stdout.write(f'  Frissítve: ProductTemplate "{tpl.name}" ({code})')
 
         self.stdout.write(
             self.style.SUCCESS(
