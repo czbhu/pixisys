@@ -1843,12 +1843,25 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         now = timezone.now()
         tz = timezone.get_current_timezone()
         today = timezone.localtime(now).date()
-        today_start = timezone.make_aware(datetime.combine(today, dt_time.min), tz)
-        today_end = timezone.make_aware(datetime.combine(today, dt_time.max), tz)
 
-        # Today's AccessLog entries
+        # Support ?date=YYYY-MM-DD param for historical data
+        date_param = request.query_params.get('date')
+        if date_param:
+            try:
+                report_date = datetime.strptime(date_param, '%Y-%m-%d').date()
+            except (ValueError, TypeError):
+                report_date = today
+        else:
+            report_date = today
+        is_today = (report_date == today)
+        report_start = timezone.make_aware(datetime.combine(report_date, dt_time.min), tz)
+        report_end = timezone.make_aware(datetime.combine(report_date, dt_time.max), tz)
+        # For past dates use end-of-day as "now" for duration calculations
+        effective_now = now if is_today else report_end
+
+        # Report date's AccessLog entries
         today_logs = AccessLog.objects.filter(
-            check_in_time__range=(today_start, today_end)
+            check_in_time__range=(report_start, report_end)
         ).select_related('employee__user').order_by('employee_id', 'check_in_time')
 
         def _item_name(item):
@@ -1869,23 +1882,26 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                 pass
             return item.description or ''
 
-        # Currently running work logs (all users)
-        active_wls = WorkLog.objects.filter(
-            ended_at__isnull=True
-        ).select_related(
-            'user',
-            'customer_order__quote_request__company',
-            'item__quote_item__product',
-            'item__quote_item__material',
-            'item__quote_item__manufacturing_product',
-            'item__quote_item__service',
-            'sub_item',
-        )
-        active_wl_map = {wl.user_id: wl for wl in active_wls}
+        # Currently running work logs (only relevant for today)
+        if is_today:
+            active_wls = WorkLog.objects.filter(
+                ended_at__isnull=True
+            ).select_related(
+                'user',
+                'customer_order__quote_request__company',
+                'item__quote_item__product',
+                'item__quote_item__material',
+                'item__quote_item__manufacturing_product',
+                'item__quote_item__service',
+                'sub_item',
+            )
+            active_wl_map = {wl.user_id: wl for wl in active_wls}
+        else:
+            active_wl_map = {}
 
-        # Today's work logs grouped by user
+        # Report date's work logs grouped by user
         today_wls = WorkLog.objects.filter(
-            started_at__range=(today_start, today_end)
+            started_at__range=(report_start, report_end)
         ).select_related(
             'user',
             'customer_order__quote_request__company',
@@ -1920,11 +1936,22 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             is_active = False
             last_check_in = logs[0].check_in_time if logs else None
             for log in logs:
-                end = log.check_out_time or now
+                end = log.check_out_time or effective_now
                 total_sec += int((end - log.check_in_time).total_seconds())
                 if log.check_out_time is None:
                     is_active = True
                     last_check_in = log.check_in_time
+
+            # Compute break time (gaps between consecutive AccessLog sessions)
+            break_seconds = 0
+            sorted_logs = sorted(logs, key=lambda l: l.check_in_time)
+            for i in range(1, len(sorted_logs)):
+                prev_log = sorted_logs[i - 1]
+                curr_log = sorted_logs[i]
+                if prev_log.check_out_time:
+                    gap = int((curr_log.check_in_time - prev_log.check_out_time).total_seconds())
+                    if gap > 0:
+                        break_seconds += gap
 
             # Active work log for this user
             awl = active_wl_map.get(user.id)
@@ -1956,7 +1983,7 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             work_log_list = []
             active_seconds = 0
             for wl in user_wls:
-                wl_end = wl.ended_at or now
+                wl_end = wl.ended_at or effective_now
                 wl_dur = int((wl_end - wl.started_at).total_seconds())
                 active_seconds += wl_dur
                 try:
@@ -1996,6 +2023,7 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                 'check_out_time': last_check_out.isoformat() if last_check_out else None,
                 'total_duration_seconds': total_sec,
                 'active_seconds': active_seconds,
+                'break_seconds': break_seconds,
                 'is_active': is_active,
                 'active_work': active_work,
                 'work_logs': work_log_list,

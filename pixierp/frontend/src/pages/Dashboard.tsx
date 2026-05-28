@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import dayjs, { Dayjs } from 'dayjs';
 import {
     Row, Col, Card, Statistic, Table, Select, Typography, Spin, Alert,
-    Badge, Tag, List, Avatar, Space, Button, Tooltip, Grid
+    Badge, Tag, List, Avatar, Space, Button, Tooltip, Grid, DatePicker
 } from 'antd';
 import {
     UserOutlined,
@@ -14,6 +15,8 @@ import {
     PlusCircleOutlined,
     ExclamationCircleOutlined,
     ReloadOutlined,
+    LeftOutlined,
+    RightOutlined,
 } from '@ant-design/icons';
 import { salesService } from '../services/salesService';
 import { useNavigate } from 'react-router-dom';
@@ -73,6 +76,7 @@ interface WorkerEntry {
     check_out_time: string | null;
     total_duration_seconds: number;
     active_seconds: number;
+    break_seconds: number;
     is_active: boolean;
     active_work: ActiveWork | null;
     work_logs: WorkLogDetail[];
@@ -183,7 +187,9 @@ const ManufacturingDashboard: React.FC<{
     navigate: ReturnType<typeof useNavigate>;
     onRefresh: () => void;
     refreshing: boolean;
-}> = ({ counts, workers, latestOrders, navigate, onRefresh, refreshing }) => {
+    reportDate: Dayjs;
+    setReportDate: (d: Dayjs) => void;
+}> = ({ counts, workers, latestOrders, navigate, onRefresh, refreshing, reportDate, setReportDate }) => {
     const statCards = [
         { title: 'Új munkák', value: counts.new ?? 0, icon: <PlusCircleOutlined />, color: '#1677ff', status: 'new' },
         { title: 'Gyártásban', value: counts.in_production ?? 0, icon: <ThunderboltOutlined />, color: '#fa8c16', status: 'in_production' },
@@ -289,6 +295,19 @@ const ManufacturingDashboard: React.FC<{
             render: (sec: number) => (
                 <Text style={{ whiteSpace: 'nowrap', color: sec > 0 ? '#52c41a' : '#999' }}>
                     {durationLabel(sec)}
+                </Text>
+            ),
+        },
+        {
+            title: (
+                <Tooltip title="Szünetek összesítve (be- és kijelentkezések közti idő)">Szünet</Tooltip>
+            ),
+            dataIndex: 'break_seconds',
+            key: 'break_seconds',
+            width: 110,
+            render: (sec: number) => (
+                <Text style={{ whiteSpace: 'nowrap', color: sec > 0 ? '#fa8c16' : '#999' }}>
+                    {durationLabel(sec || 0)}
                 </Text>
             ),
         },
@@ -402,16 +421,44 @@ const ManufacturingDashboard: React.FC<{
             <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
                 <Col xs={24}>
                     <Card
-                        title="Napi dolgozói jelentés"
+                        title={
+                            <Space size={4}>
+                                <span>Napi dolgozói jelentés</span>
+                                <Text type="secondary" style={{ fontWeight: 400, fontSize: 13 }}>
+                                    {reportDate.isSame(dayjs(), 'day') ? '(ma)' : `(${reportDate.format('YYYY. MM. DD.')})`}
+                                </Text>
+                            </Space>
+                        }
                         extra={
-                            <Button
-                                icon={<ReloadOutlined />}
-                                size="small"
-                                loading={refreshing}
-                                onClick={onRefresh}
-                            >
-                                Frissítés
-                            </Button>
+                            <Space size={4}>
+                                <Button
+                                    icon={<LeftOutlined />}
+                                    size="small"
+                                    onClick={() => setReportDate(reportDate.subtract(1, 'day'))}
+                                />
+                                <DatePicker
+                                    value={reportDate}
+                                    onChange={(d) => d && setReportDate(d)}
+                                    size="small"
+                                    allowClear={false}
+                                    format="YYYY. MM. DD."
+                                    style={{ width: 130 }}
+                                />
+                                <Button
+                                    icon={<RightOutlined />}
+                                    size="small"
+                                    onClick={() => setReportDate(reportDate.add(1, 'day'))}
+                                    disabled={reportDate.isSame(dayjs(), 'day')}
+                                />
+                                <Button
+                                    icon={<ReloadOutlined />}
+                                    size="small"
+                                    loading={refreshing}
+                                    onClick={onRefresh}
+                                >
+                                    Frissítés
+                                </Button>
+                            </Space>
                         }
                     >
                         {workers.today_report.length === 0 ? (
@@ -580,6 +627,7 @@ const Dashboard = () => {
         active_now: [],
         today_report: [],
     });
+    const [reportDate, setReportDate] = useState<Dayjs>(dayjs());
     const navigate = useNavigate();
     const screens = Grid.useBreakpoint();
     const isMobile = !screens.md;
@@ -591,7 +639,7 @@ const Dashboard = () => {
             setError(null);
             const [stats, workerData] = await Promise.all([
                 salesService.getDashboardStats(),
-                salesService.getDashboardWorkers(),
+                salesService.getDashboardWorkers(reportDate.format('YYYY-MM-DD')),
             ]);
             setCounts(stats.counts ?? {});
             setLatestOrders(stats.latest_orders ?? []);
@@ -606,7 +654,7 @@ const Dashboard = () => {
             setLoading(false);
             setRefreshing(false);
         }
-    }, []);
+    }, [reportDate]);
 
     useEffect(() => {
         loadData();
@@ -660,6 +708,8 @@ const Dashboard = () => {
                             navigate={navigate}
                             onRefresh={() => loadData(true)}
                             refreshing={refreshing}
+                            reportDate={reportDate}
+                            setReportDate={setReportDate}
                         />
                     )}
                     {view === 'sales' && (

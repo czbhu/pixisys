@@ -546,8 +546,8 @@ export const salesService = {
         const response = await api.get('/sales/customer-orders/dashboard_stats/');
         return response.data;
     },
-    async getDashboardWorkers() {
-        const response = await api.get('/hr/attendances/dashboard_workers/');
+    async getDashboardWorkers(date?: string) {
+        const response = await api.get('/hr/attendances/dashboard_workers/', { params: date ? { date } : undefined });
         return response.data;
     },
     async startWorkLog(data: { order_id?: number | null; order_label?: string; item_id?: number | null; workflow_name?: string; sub_item_id?: number | null; for_user_id?: number | null }) {
