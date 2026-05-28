@@ -2860,6 +2860,67 @@ def public_delete_attachment(request, token: str, att_id: int):
     return Response(status=204)
 
 
+@api_view(['POST'])
+@permission_classes([AllowAny])
+@authentication_classes([])
+def public_upload_item_attachment(request, token: str, item_id: int):
+    """Publikus fájlfeltöltés egy adott árajánlat-tételhez"""
+    qr = get_object_or_404(QuoteRequest, public_token=token)
+    if qr.public_expires_at and timezone.now() > qr.public_expires_at:
+        return Response({'error': 'Link lejárt'}, status=410)
+
+    # Ellenőrzés: a tétel ehhez az árajánlathoz tartozik-e
+    item = get_object_or_404(QuoteRequestItem, id=item_id, quote_request=qr)
+
+    file = request.FILES.get('file')
+    if not file:
+        return Response({'error': 'Nincs fájl'}, status=400)
+
+    if file.size > 20 * 1024 * 1024:
+        return Response({'error': 'A fájl mérete nem haladhatja meg a 20 MB-ot'}, status=400)
+
+    ALLOWED_TYPES = {
+        'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml',
+        'application/pdf',
+        'application/msword',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/vnd.ms-excel',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'text/plain', 'text/csv',
+        'application/zip',
+    }
+    if file.content_type not in ALLOWED_TYPES:
+        return Response({'error': f'Nem engedélyezett fájltípus: {file.content_type}'}, status=400)
+
+    remark = request.data.get('remark', '')
+    att = QuoteRequestItemAttachment.objects.create(
+        quote_item=item,
+        file=file,
+        original_filename=file.name,
+        remark=remark[:255] if remark else '',
+        uploaded_by=None,
+    )
+    return Response({
+        'id': att.id,
+        'original_filename': att.original_filename,
+        'remark': att.remark,
+        'created_at': att.created_at.isoformat(),
+    }, status=201)
+
+
+@api_view(['DELETE'])
+@permission_classes([AllowAny])
+@authentication_classes([])
+def public_delete_item_attachment(request, token: str, item_id: int, att_id: int):
+    """Publikusan feltöltött tétel csatolmány törlése"""
+    qr = get_object_or_404(QuoteRequest, public_token=token)
+    item = get_object_or_404(QuoteRequestItem, id=item_id, quote_request=qr)
+    att = get_object_or_404(QuoteRequestItemAttachment, id=att_id, quote_item=item, uploaded_by=None)
+    att.file.delete(save=False)
+    att.delete()
+    return Response(status=204)
+
+
     @action(detail=True, methods=['post'])
     def create_quote(self, request, pk=None):
         """Ajánlat kérésből ajánlat létrehozása"""
