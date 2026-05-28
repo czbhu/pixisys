@@ -512,7 +512,7 @@ const PublicQuoteOrder: React.FC = () => {
           )}
         </Descriptions>
 
-        <Paragraph type="secondary" className="no-print">
+        <Paragraph className="no-print" style={{ color: '#ff4d4f', fontWeight: 500 }}>
           {data.partial_order_allowed !== false
             ? 'Jelölje be a megrendelni kívánt tételeket. A gemkapocs ikonra kattintva tételenként tölthet fel csatolmányokat.'
             : 'Az ajánlat csak egészben rendelhető meg. A gemkapocs ikonra kattintva tételenként tölthet fel csatolmányokat.'}
