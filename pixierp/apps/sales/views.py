@@ -2872,6 +2872,11 @@ def public_upload_item_attachment(request, token: str, item_id: int):
     # Ellenőrzés: a tétel ehhez az árajánlathoz tartozik-e
     item = get_object_or_404(QuoteRequestItem, id=item_id, quote_request=qr)
 
+    # Megrendelt vagy archivált tételhez nem lehet feltölteni
+    LOCKED_STATUSES = {'ordered', 'archived'}
+    if item.item_status in LOCKED_STATUSES:
+        return Response({'error': 'Megrendelt tételhez már nem tölthető fel csatolmány.'}, status=403)
+
     file = request.FILES.get('file')
     if not file:
         return Response({'error': 'Nincs fájl'}, status=400)

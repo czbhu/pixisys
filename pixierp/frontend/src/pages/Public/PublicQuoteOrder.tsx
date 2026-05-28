@@ -47,6 +47,7 @@ interface QuoteItem {
   product_description?: string;
   is_ordered?: boolean;
   ordered_at?: string | null;
+  item_status?: string;
   attachments?: AttachmentItem[];
 }
 
@@ -136,6 +137,8 @@ const ItemUploadZone: React.FC<ItemUploadZoneProps> = ({ token, item }) => {
     }
   };
 
+  const isLocked = item.item_status === 'ordered' || item.item_status === 'archived' || item.is_ordered;
+
   return (
     <div style={{ padding: '8px 16px 16px', background: '#fafafa', borderRadius: 6 }}>
       <Text strong style={{ display: 'block', marginBottom: 8 }}>
@@ -143,16 +146,25 @@ const ItemUploadZone: React.FC<ItemUploadZoneProps> = ({ token, item }) => {
         Csatolmányok ehhez a tételhez
       </Text>
 
-      <TextArea
+      {isLocked && (
+        <Alert
+          type="warning"
+          showIcon
+          message="Ez a tétel már meg van rendelve, ezért új csatolmány nem tölthető fel."
+          style={{ marginBottom: 8 }}
+        />
+      )}
+
+      {!isLocked && <TextArea
         placeholder="Megjegyzés a feltöltendő fájl(ok)hoz (nem kötelező)"
         value={remark}
         onChange={(e) => setRemark(e.target.value)}
         autoSize={{ minRows: 1, maxRows: 3 }}
         maxLength={255}
         style={{ marginBottom: 8 }}
-      />
+      />}
 
-      <Dragger
+      {!isLocked && <Dragger
         multiple
         showUploadList={false}
         beforeUpload={(file) => { uploadFile(file as File); return false; }}
@@ -168,7 +180,7 @@ const ItemUploadZone: React.FC<ItemUploadZoneProps> = ({ token, item }) => {
         <p className="ant-upload-hint" style={{ fontSize: 11 }}>
           Max. 20 MB / fájl – PDF, Word, Excel, kép, CSV, ZIP
         </p>
-      </Dragger>
+      </Dragger>}
 
       {uploading && (
         <Progress percent={progress} status="active" size="small" style={{ marginBottom: 8 }} />
@@ -514,8 +526,8 @@ const PublicQuoteOrder: React.FC = () => {
 
         <Paragraph className="no-print" style={{ color: '#ff4d4f', fontWeight: 500 }}>
           {data.partial_order_allowed !== false
-            ? 'Jelölje be a megrendelni kívánt tételeket. A gemkapocs ikonra kattintva tételenként tölthet fel csatolmányokat.'
-            : 'Az ajánlat csak egészben rendelhető meg. A gemkapocs ikonra kattintva tételenként tölthet fel csatolmányokat.'}
+            ? 'Jelölje be a megrendelni kívánt tételeket. A gemkapocs ikonra kattintva tételenként tölthet fel csatolmányokat. A megrendelés után már nem lehetséges újabb csatolmányok feltöltése.'
+            : 'Az ajánlat csak egészben rendelhető meg. A gemkapocs ikonra kattintva tételenként tölthet fel csatolmányokat. A megrendelés után már nem lehetséges újabb csatolmányok feltöltése.'}
         </Paragraph>
 
         {data.is_expired && (
