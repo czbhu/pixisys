@@ -52,6 +52,7 @@ export interface PrintParams {
   multi_sheet_enabled?: boolean;
   sheet_count?: number;      // ívek száma (multi_sheet_enabled esetén)
   binding_mode_ids?: number[];  // választott kötészeti mód(ok) (Service ID-k)
+  binding_mode_code?: string;   // a kiválasztott kötészeti mód kódja (BIND_SHEET, BIND_SADDLE, …)
 }
 
 interface Props {

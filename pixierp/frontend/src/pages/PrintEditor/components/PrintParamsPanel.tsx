@@ -515,6 +515,17 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
   const isClickSheet = selectedProduct?.calculator_type === 'click_sheet_print';
   const clickSvcOptions: PrintServiceOption[] = selectedProduct?.print_service_options_details ?? [];
 
+  // ── Kötészeti mód szerinti lapszám-szabály ──
+  // Irkatűzött (BIND_SADDLE): 4 többszöröse; Spirál/Ragasztott/Tömbösített: páros; Ívben/egyéb: szabad.
+  const bindingCode = useMemo(() => {
+    const id = params.binding_mode_ids?.[0];
+    if (id == null) return undefined;
+    return selectedProduct?.binding_services_details?.find(b => b.id === id)?.code;
+  }, [params.binding_mode_ids, selectedProduct]);
+  const sheetStep = bindingCode === 'BIND_SADDLE' ? 4
+    : (bindingCode === 'BIND_SPIRAL' || bindingCode === 'BIND_PERFECT' || bindingCode === 'BIND_PADDED') ? 2
+    : 1;
+
   // ── Sync click-sheet print service selection → params.side1_mode / side2_mode ──
   // This ensures the canvas editor can show grayscale / nyomatlan overlays in click-sheet mode too.
   useEffect(() => {
@@ -713,16 +724,17 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                   <Button
                     size="small"
                     icon={<MinusOutlined />}
-                    disabled={(params.sheet_count ?? 1) <= 1}
+                    disabled={(params.sheet_count ?? 1) - sheetStep < sheetStep}
                     onClick={() => {
-                      const next = (params.sheet_count ?? 1) - 1;
-                      if (next >= 1) update({ sheet_count: next });
+                      const next = (params.sheet_count ?? 1) - sheetStep;
+                      if (next >= sheetStep) update({ sheet_count: next });
                     }}
                   />
                   <NumInput
                     size="small"
-                    min={1}
+                    min={sheetStep}
                     max={50}
+                    step={sheetStep}
                     value={params.sheet_count ?? 1}
                     onChange={v => { if (v && v >= 1) update({ sheet_count: v }); }}
                     style={{ flex: 1, textAlign: 'center' }}
@@ -732,23 +744,40 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                     icon={<PlusOutlined />}
                     disabled={(params.sheet_count ?? 1) >= 50}
                     onClick={() => {
-                      const next = (params.sheet_count ?? 1) + 1;
+                      const next = (params.sheet_count ?? 1) + sheetStep;
                       if (next <= 50) update({ sheet_count: next });
                     }}
                   />
                 </div>
+                {sheetStep > 1 && (
+                  <Text style={{ fontSize: 10, color: '#999', display: 'block', marginTop: 2 }}>
+                    {sheetStep === 4 ? 'Irkatűzött: a lapszám 4 többszöröse' : 'A kiválasztott kötészeti módnál a lapszám páros'}
+                  </Text>
+                )}
               </div>
               {(selectedProduct?.binding_services_details?.length ?? 0) > 0 && (
                 <div style={{ marginBottom: 6 }}>
                   <Text style={{ fontSize: 11, color: '#666', display: 'block', marginBottom: 3 }}>Kötészeti mód</Text>
                   <Select
-                    mode="multiple"
                     allowClear
                     size="small"
                     placeholder="Válassz kötészeti módot…"
                     style={{ width: '100%' }}
-                    value={params.binding_mode_ids ?? []}
-                    onChange={(vals: number[]) => update({ binding_mode_ids: vals })}
+                    value={params.binding_mode_ids?.[0] ?? undefined}
+                    onChange={(val?: number) => {
+                      const det = selectedProduct?.binding_services_details?.find(b => b.id === val);
+                      const code = det?.code;
+                      const step = code === 'BIND_SADDLE' ? 4
+                        : (code === 'BIND_SPIRAL' || code === 'BIND_PERFECT' || code === 'BIND_PADDED') ? 2 : 1;
+                      const cur = params.sheet_count ?? 1;
+                      const snapped = step > 1 ? Math.max(step, Math.ceil(cur / step) * step) : cur;
+                      update({
+                        binding_mode_ids: val != null ? [val] : [],
+                        binding_mode_code: code,
+                        ...(snapped !== cur ? { sheet_count: snapped } : {}),
+                      });
+                    }}
+                    onClear={() => update({ binding_mode_ids: [], binding_mode_code: undefined })}
                     options={(selectedProduct?.binding_services_details ?? []).map(b => ({
                       label: b.name, value: b.id,
                     }))}

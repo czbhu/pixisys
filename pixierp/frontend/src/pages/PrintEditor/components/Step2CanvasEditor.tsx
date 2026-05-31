@@ -191,6 +191,12 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
   const sheetCount = params.sheet_count ?? 1;
   const sheetCountRef = useRef(sheetCount);
   useEffect(() => { sheetCountRef.current = sheetCount; }, [sheetCount]);
+  // Kötészeti mód szerinti címkézés: könyv jellegű kötéseknél "oldal", egyébként "lap"
+  const isBookBinding = params.binding_mode_code === 'BIND_SADDLE'
+    || params.binding_mode_code === 'BIND_SPIRAL'
+    || params.binding_mode_code === 'BIND_PERFECT'
+    || params.binding_mode_code === 'BIND_PADDED';
+  const sheetUnit = isBookBinding ? 'oldal' : 'lap';
   const [activeSheet, setActiveSheet] = useState(0);
   const activeSheetRef = useRef(0); // always-current sheet index (sync, no stale closure)
   // Store canvas JSON per sheet: { [sheetIdx]: { d1: json, d2: json } }
@@ -3124,20 +3130,20 @@ window.addEventListener('resize',()=>{
                   type={activeSheet === i ? 'primary' : 'default'}
                   onClick={() => handleSheetChange(i)}
                 >
-                  {i + 1}. lap
+                  {i + 1}. {sheetUnit}
                 </Button>
               ))}
               {onParamsChange && (
                 <>
-                  <Tooltip title="Lap hozzáadása">
+                  <Tooltip title={`${isBookBinding ? 'Oldal' : 'Lap'} hozzáadása`}>
                     <Button size="small" icon={<PlusOutlined />} onClick={() => {
                       saveCurrentSheetDesign();
                       onParamsChange({ ...params, sheet_count: sheetCount + 1 });
                     }} />
                   </Tooltip>
                   {sheetCount > 1 && (
-                    <Tooltip title="Utolsó lap törlése">
-                      <Popconfirm title={`Biztosan törlöd a(z) ${sheetCount}. lapot?`} okText="Törlés" cancelText="Mégse" onConfirm={() => {
+                    <Tooltip title={`Utolsó ${sheetUnit} törlése`}>
+                      <Popconfirm title={`Biztosan törlöd a(z) ${sheetCount}. ${sheetUnit}ot?`} okText="Törlés" cancelText="Mégse" onConfirm={() => {
                         const delIdx = sheetCount - 1;
                         // Remove design data
                         delete sheetDesignsRef.current[delIdx];
@@ -3249,6 +3255,49 @@ window.addEventListener('resize',()=>{
                   height={Math.round(displayH * dpr)}
                   style={{ position: 'absolute', top: 0, left: 0, width: displayW, height: displayH, pointerEvents: 'none', zIndex: 20 }}
                 />
+                {/* Kötészeti mód vizualizáció – gerinc jelzés a vászon bal szélén */}
+                {isBookBinding && (
+                  <div
+                    title={
+                      params.binding_mode_code === 'BIND_SPIRAL' ? 'Spirálozott kötés'
+                        : params.binding_mode_code === 'BIND_SADDLE' ? 'Irkatűzött kötés'
+                        : params.binding_mode_code === 'BIND_PADDED' ? 'Tömbösített (ragasztott) kötés'
+                        : 'Ragasztókötött'
+                    }
+                    style={{
+                      position: 'absolute',
+                      ...(params.binding_mode_code === 'BIND_PADDED'
+                        ? { top: 0, left: 0, width: displayW, height: 14 }
+                        : { top: 0, left: 0, width: 14, height: displayH }),
+                      pointerEvents: 'none',
+                      zIndex: 21,
+                      display: 'flex',
+                      flexDirection: params.binding_mode_code === 'BIND_PADDED' ? 'row' : 'column',
+                      alignItems: 'center',
+                      justifyContent: params.binding_mode_code === 'BIND_SADDLE' ? 'space-around' : 'space-evenly',
+                      ...(params.binding_mode_code === 'BIND_PERFECT'
+                        ? { background: 'rgba(24,144,255,0.35)', borderRight: '2px solid #1890ff' }
+                        : params.binding_mode_code === 'BIND_PADDED'
+                        ? { background: 'rgba(250,140,22,0.35)', borderBottom: '2px solid #fa8c16' }
+                        : {}),
+                    }}
+                  >
+                    {params.binding_mode_code === 'BIND_SPIRAL' &&
+                      Array.from({ length: Math.max(4, Math.floor(displayH / 22)) }, (_, i) => (
+                        <span key={i} style={{
+                          width: 8, height: 8, borderRadius: '50%',
+                          border: '2px solid #722ed1', background: '#fff',
+                        }} />
+                      ))}
+                    {params.binding_mode_code === 'BIND_SADDLE' &&
+                      Array.from({ length: 2 }, (_, i) => (
+                        <span key={i} style={{
+                          width: 3, height: 16, background: '#595959', borderRadius: 1,
+                          boxShadow: '0 0 0 1px rgba(0,0,0,0.15)',
+                        }} />
+                      ))}
+                  </div>
+                )}
                 {/* Hit zones: guides */}
                 {guides.map(g => {
                   const px = g.mm * displayScale + BLEED_MM * displayScale;
