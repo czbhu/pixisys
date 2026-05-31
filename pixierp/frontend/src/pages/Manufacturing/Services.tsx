@@ -240,6 +240,12 @@ const Services: React.FC = () => {
     const copyFrom = searchParams.get('copy_from');
     const editId = searchParams.get('edit');
 
+    const groupParam = searchParams.get('group');
+    if (groupParam) {
+      const gid = Number(groupParam);
+      if (!Number.isNaN(gid)) setSelectedCategoryFilter(gid);
+    }
+
     if (create) {
         if (copyFrom) {
             setLoading(true);

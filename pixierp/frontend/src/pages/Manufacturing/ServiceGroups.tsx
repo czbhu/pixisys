@@ -234,6 +234,16 @@ const ServiceGroups: React.FC = () => {
       dataIndex: 'name',
       key: 'name',
       sorter: (a: any, b: any) => (a.name || '').localeCompare(b.name || '', 'hu'),
+      render: (name: string, record: ServiceGroup) => (
+        <a
+          href={`/manufacturing/services?group=${record.id}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          title="Szolgáltatások megnyitása új lapon, erre a kategóriára szűrve"
+        >
+          {name}
+        </a>
+      ),
     },
     {
       title: 'Leírás',
