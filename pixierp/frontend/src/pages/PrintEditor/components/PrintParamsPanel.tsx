@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Select, InputNumber, Radio, Divider, Typography, Spin, Tooltip, Tag, Modal, Row, Col } from 'antd';
+import { Select, InputNumber, Radio, Divider, Typography, Spin, Tooltip, Tag, Modal, Row, Col, Button } from 'antd';
 import NumInput from '../../../components/NumInput';
-import { InfoCircleOutlined, CaretDownOutlined, CaretRightOutlined, AppstoreOutlined } from '@ant-design/icons';
+import { InfoCircleOutlined, CaretDownOutlined, CaretRightOutlined, AppstoreOutlined, MinusOutlined, PlusOutlined } from '@ant-design/icons';
 import type { PrintParams } from './Step1Params';
 import api from '../../../services/api';
 
@@ -708,14 +708,34 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
               <SectionLabel label="Nyomtatás" />
               <div style={{ marginBottom: 6 }}>
                 <Text style={{ fontSize: 11, color: '#666', display: 'block', marginBottom: 3 }}>Lapok száma</Text>
-                <NumInput
-                  size="small"
-                  min={1}
-                  max={50}
-                  value={params.sheet_count ?? 1}
-                  onChange={v => { if (v && v >= 1) update({ sheet_count: v }); }}
-                  style={{ width: '100%' }}
-                />
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <Button
+                    size="small"
+                    icon={<MinusOutlined />}
+                    disabled={(params.sheet_count ?? 1) <= 1}
+                    onClick={() => {
+                      const next = (params.sheet_count ?? 1) - 1;
+                      if (next >= 1) update({ sheet_count: next });
+                    }}
+                  />
+                  <NumInput
+                    size="small"
+                    min={1}
+                    max={50}
+                    value={params.sheet_count ?? 1}
+                    onChange={v => { if (v && v >= 1) update({ sheet_count: v }); }}
+                    style={{ flex: 1, textAlign: 'center' }}
+                  />
+                  <Button
+                    size="small"
+                    icon={<PlusOutlined />}
+                    disabled={(params.sheet_count ?? 1) >= 50}
+                    onClick={() => {
+                      const next = (params.sheet_count ?? 1) + 1;
+                      if (next <= 50) update({ sheet_count: next });
+                    }}
+                  />
+                </div>
               </div>
               <div style={{ marginBottom: 4 }}>
                 <Text style={{ fontSize: 11, color: '#666', display: 'block', marginBottom: 3 }}>Cím oldal</Text>
