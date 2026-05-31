@@ -23,6 +23,7 @@ interface ProductTemplate {
   name: string;
   code?: string | null;
   description?: string;
+  image_url?: string | null;
   category: number | null;
   category_name?: string;
   calculator_type?: string;
@@ -160,11 +161,15 @@ const PrintCatalogPage: React.FC = () => {
         styles={{ body: { display: 'flex', flexDirection: 'column', height: '100%' } }}
       >
         <div style={{
-          height: 96, borderRadius: 6, marginBottom: 10,
+          height: 96, borderRadius: 6, marginBottom: 10, overflow: 'hidden',
           background: 'linear-gradient(135deg, #f0f5ff 0%, #e6fffb 100%)',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
         }}>
-          <AppstoreOutlined style={{ fontSize: 40, color: '#1677ff' }} />
+          {p.image_url ? (
+            <img src={p.image_url} alt={p.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+          ) : (
+            <AppstoreOutlined style={{ fontSize: 40, color: '#1677ff' }} />
+          )}
         </div>
         <Text strong style={{ fontSize: 14 }}>{p.name}</Text>
         {p.code && <Text type="secondary" style={{ fontSize: 11 }}>{p.code}</Text>}

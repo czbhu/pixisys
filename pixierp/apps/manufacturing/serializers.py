@@ -625,6 +625,7 @@ class ProductTemplateSerializer(serializers.ModelSerializer):
     service_groups_1 = serializers.SerializerMethodField()
     service_groups_2 = serializers.SerializerMethodField()
     template_categories_details = serializers.SerializerMethodField()
+    image_url = serializers.SerializerMethodField()
 
     class Meta:
         model = ProductTemplate
@@ -632,6 +633,7 @@ class ProductTemplateSerializer(serializers.ModelSerializer):
             'id', 'name', 'code', 'description',
             'category', 'category_name',
             'calculator_type',
+            'image', 'image_url',
             'default_material_markup_percentage',
             'default_service_markup_percentage',
             'allowed_materials', 'allowed_materials_details',
@@ -655,6 +657,16 @@ class ProductTemplateSerializer(serializers.ModelSerializer):
             'service_group',
         ]
         read_only_fields = ['created_at', 'updated_at']
+
+    def get_image_url(self, obj):
+        if not obj.image:
+            return None
+        request = self.context.get('request')
+        try:
+            url = obj.image.url
+        except ValueError:
+            return None
+        return request.build_absolute_uri(url) if request else url
 
     def get_allowed_materials_details(self, obj):
         def _dim_mm(val, unit):

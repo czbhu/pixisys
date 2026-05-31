@@ -3,13 +3,13 @@ import { useNavigate } from 'react-router-dom';
 import {
   Table, Button, Space, Modal, Form, Input, Select, InputNumber,
   message, Tag, Popconfirm, Tooltip, Drawer, Row, Col, Divider,
-  Switch, Empty, Typography, Checkbox, Collapse, TreeSelect,
+  Switch, Empty, Typography, Checkbox, Collapse, TreeSelect, Upload,
 } from 'antd';
 import NumInput from '../../components/NumInput';
 import {
   PlusOutlined, EditOutlined, DeleteOutlined, MinusCircleOutlined, CopyOutlined,
   CalculatorOutlined, TagsOutlined, AppstoreOutlined, SyncOutlined, PrinterOutlined,
-  LockOutlined, ArrowUpOutlined, ArrowDownOutlined, DownloadOutlined,
+  LockOutlined, ArrowUpOutlined, ArrowDownOutlined, DownloadOutlined, UploadOutlined,
 } from '@ant-design/icons';
 import api from '../../services/api';
 import ExportButton from '../../components/ExportButton';
@@ -55,6 +55,8 @@ interface ProductTemplate {
   name: string;
   code: string | null;
   description: string;
+  image: string | null;
+  image_url: string | null;
   category: number | null;
   category_name: string | null;
   calculator_type: string;
@@ -241,6 +243,10 @@ const ProductEditor: React.FC = () => {
   const [drawerOpen, setDrawerOpen]     = useState(false);
   const [editing, setEditing]           = useState<ProductTemplate | null>(null);
   const [saving, setSaving]             = useState(false);
+  // Katalógus kép: új feltöltendő fájl + meglévő/eltávolítandó kép URL
+  const [imageFile, setImageFile]       = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [imageRemoved, setImageRemoved] = useState(false);
 
   // Form state
   const [form] = Form.useForm();
@@ -388,6 +394,9 @@ const ProductEditor: React.FC = () => {
     setQuantityDiscounts([]);
     setSelectedTemplateCategories([]);
     setServiceGroupId(null);
+    setImageFile(null);
+    setImagePreview(null);
+    setImageRemoved(false);
     setDrawerOpen(true);
   };
 
@@ -466,6 +475,9 @@ const ProductEditor: React.FC = () => {
     })));
     setSelectedTemplateCategories(p.template_categories ?? []);
     setServiceGroupId(p.service_group ?? null);
+    setImageFile(null);
+    setImagePreview(p.image_url ?? null);
+    setImageRemoved(false);
     setDrawerOpen(true);
   };
 
@@ -562,13 +574,25 @@ const ProductEditor: React.FC = () => {
 
     setSaving(true);
     try {
+      let productId: number;
       if (editing) {
         await api.patch(`/manufacturing/product-templates/${editing.id}/`, payload);
-        message.success('Termék frissítve');
+        productId = editing.id;
       } else {
-        await api.post('/manufacturing/product-templates/', payload);
-        message.success('Termék létrehozva');
+        const created = await api.post('/manufacturing/product-templates/', payload);
+        productId = created.data.id;
       }
+      // Katalógus kép kezelése (külön multipart kérés)
+      if (imageFile) {
+        const fd = new FormData();
+        fd.append('image', imageFile);
+        await api.patch(`/manufacturing/product-templates/${productId}/`, fd, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+        });
+      } else if (imageRemoved && editing) {
+        await api.patch(`/manufacturing/product-templates/${productId}/`, { image: null });
+      }
+      message.success(editing ? 'Termék frissítve' : 'Termék létrehozva');
       closeDrawer();
       loadAll();
     } catch (e: any) {
@@ -831,6 +855,50 @@ const ProductEditor: React.FC = () => {
 
                     <Form.Item name="description" label="Leírás">
                       <TextArea rows={3} placeholder="Rövid leírás…" />
+                    </Form.Item>
+
+                    <Form.Item label="Katalógus kép" help="A termékkatalógus oldalon megjelenő kép.">
+                      <Space align="start">
+                        {imagePreview ? (
+                          <div style={{ position: 'relative' }}>
+                            <img
+                              src={imagePreview}
+                              alt="előnézet"
+                              style={{ width: 96, height: 96, objectFit: 'cover', borderRadius: 6, border: '1px solid #e8e8e8' }}
+                            />
+                            <Button
+                              size="small" danger type="text"
+                              icon={<DeleteOutlined />}
+                              style={{ position: 'absolute', top: 2, right: 2, background: 'rgba(255,255,255,0.85)' }}
+                              onClick={() => { setImageFile(null); setImagePreview(null); setImageRemoved(true); }}
+                            />
+                          </div>
+                        ) : (
+                          <div style={{
+                            width: 96, height: 96, borderRadius: 6, border: '1px dashed #d9d9d9',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#bbb',
+                          }}>
+                            <AppstoreOutlined style={{ fontSize: 28 }} />
+                          </div>
+                        )}
+                        <Upload
+                          accept="image/*"
+                          showUploadList={false}
+                          beforeUpload={(file) => {
+                            const isImage = file.type.startsWith('image/');
+                            if (!isImage) { message.error('Csak képfájl tölthető fel'); return Upload.LIST_IGNORE; }
+                            if (file.size > 5 * 1024 * 1024) { message.error('A kép maximum 5 MB lehet'); return Upload.LIST_IGNORE; }
+                            setImageFile(file);
+                            setImageRemoved(false);
+                            const reader = new FileReader();
+                            reader.onload = e => setImagePreview(e.target?.result as string);
+                            reader.readAsDataURL(file);
+                            return false;
+                          }}
+                        >
+                          <Button icon={<UploadOutlined />}>{imagePreview ? 'Csere' : 'Kép feltöltése'}</Button>
+                        </Upload>
+                      </Space>
                     </Form.Item>
 
                     <Row gutter={16}>

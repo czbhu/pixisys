@@ -1514,6 +1514,12 @@ class ProductTemplate(models.Model):
         verbose_name="Védett",
         help_text="Védett terméksablon nem törölhető. Minden termékkategóriában az alapminta.",
     )
+    image = models.ImageField(
+        upload_to='manufacturing/product_templates/',
+        blank=True, null=True,
+        verbose_name="Katalógus kép",
+        help_text="A termékkatalógus oldalon megjelenő kép.",
+    )
     service_group = models.ForeignKey(
         ServiceGroup,
         on_delete=models.SET_NULL,
