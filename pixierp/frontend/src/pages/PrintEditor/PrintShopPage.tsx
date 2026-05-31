@@ -8,7 +8,7 @@ import NumInput from '../../components/NumInput';
 import {
   LockOutlined, UnlockOutlined, ShoppingOutlined, UserOutlined,
   LeftOutlined, RightOutlined, PlusCircleOutlined, ReloadOutlined,
-  FileTextOutlined, ShareAltOutlined, CopyOutlined,
+  FileTextOutlined, ShareAltOutlined, CopyOutlined, AppstoreOutlined,
 } from '@ant-design/icons';
 import { crmService } from '../../services/crmService';
 import { manufacturingService } from '../../services/manufacturingService';
@@ -721,6 +721,11 @@ const PrintShopPage: React.FC = () => {
       }}>
         <Title level={5} style={{ margin: 0 }}>Nyomdai megrendelés</Title>
         <Text type="secondary" style={{ fontSize: 12 }}>PDF feltöltés · Kalkuláció · Megrendelés</Text>
+        <Tooltip title="Termékkatalógus böngészése">
+          <Button size="small" icon={<AppstoreOutlined />} onClick={() => navigate('/print-catalog')}>
+            Katalógus
+          </Button>
+        </Tooltip>
         <div style={{ flex: 1 }} />
         {/* Lock controls — admin sees toggles */}
         {isAdmin && orderId && itemId ? (

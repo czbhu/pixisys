@@ -619,6 +619,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
       label: 'Termékszerkesztők',
       children: [
         { key: '/print-editor/sheet', label: 'Íves nyomtatás' },
+        { key: '/print-catalog', label: 'Termékkatalógus' },
         { key: '/print-shop', label: 'Nyomdai megrendelés' },
       ],
     },

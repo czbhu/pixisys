@@ -33,6 +33,7 @@ import PrintEditorPage from './pages/PrintEditor/PrintEditorPage';
 import PrintPreviewPage from './pages/PrintEditor/PrintPreviewPage';
 import PrintStoragePage from './pages/PrintEditor/PrintStoragePage';
 import PrintShopPage from './pages/PrintEditor/PrintShopPage';
+import PrintCatalogPage from './pages/PrintEditor/PrintCatalogPage';
 import PrintTemplatesPage from './pages/PrintEditor/PrintTemplatesPage';
 import StoragePage from './pages/Storage/StoragePage';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
@@ -261,6 +262,12 @@ function AppContent() {
   const isPrintShop = location.pathname.startsWith('/print-shop');
   if (isPrintShop) {
     return <PrintShopPage />;
+  }
+
+  // Print Catalog fullscreen mode - no sidebar
+  const isPrintCatalog = location.pathname.startsWith('/print-catalog');
+  if (isPrintCatalog) {
+    return <PrintCatalogPage />;
   }
 
   // Print Preview fullscreen mode - no sidebar
