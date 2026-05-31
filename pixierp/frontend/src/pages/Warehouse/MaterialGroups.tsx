@@ -17,11 +17,13 @@ import {
   EditOutlined,
   DeleteOutlined,
   ExclamationCircleOutlined,
+  DownloadOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import api from '../../services/api';
 import { deepSearchMatch } from '../../utils/searchUtils';
 import EnhancedTable from '../../components/EnhancedTable';
+import ExportButton from '../../components/ExportButton';
 
 const { TextArea } = Input;
 
@@ -51,6 +53,7 @@ const MaterialGroups: React.FC = () => {
   const [groups, setGroups] = useState<MaterialGroup[]>([]);
   const [searchText, setSearchText] = useState('');
   const [loading, setLoading] = useState(false);
+  const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [editingGroup, setEditingGroup] = useState<MaterialGroup | null>(null);
   const [initialFormValues, setInitialFormValues] = useState<MaterialGroupFormValues>({});
@@ -325,14 +328,18 @@ const MaterialGroups: React.FC = () => {
           searchValue={searchText}
           onSearchChange={setSearchText}
           searchPlaceholder="Gyorskereső..."
+          rowSelection={{ selectedRowKeys, onChange: setSelectedRowKeys }}
           toolbarExtra={
-            <Button
-              type="primary"
-              icon={<PlusOutlined />}
-              onClick={showCreateModal}
-            >
-              Új kategória
-            </Button>
+            <Space>
+              <ExportButton dataType="material_group" selectedIds={selectedRowKeys.map(Number)} />
+              <Button
+                type="primary"
+                icon={<PlusOutlined />}
+                onClick={showCreateModal}
+              >
+                Új kategória
+              </Button>
+            </Space>
           }
           pagination={false}
           expandable={{

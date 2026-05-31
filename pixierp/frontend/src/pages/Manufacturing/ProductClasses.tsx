@@ -23,10 +23,12 @@ import {
     EyeOutlined,
     SearchOutlined,
     ExclamationCircleOutlined,
-    MinusOutlined
+    MinusOutlined,
+    DownloadOutlined,
 } from '@ant-design/icons';
 import { manufacturingService, ProductClass } from '../../services/manufacturingService';
 import { hrService } from '../../services/hrService';
+import ExportButton from '../../components/ExportButton';
 
 const { Option } = Select;
 const { TextArea } = Input;
@@ -37,6 +39,7 @@ const ProductClasses: React.FC = () => {
     const [query, setQuery] = useState('');
     const [departments, setDepartments] = useState<any[]>([]);
     const [loading, setLoading] = useState(false);
+    const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
     const [isModalVisible, setIsModalVisible] = useState(false);
     const [isViewModalVisible, setIsViewModalVisible] = useState(false);
     const [editingProductClass, setEditingProductClass] = useState<ProductClass | null>(null);
@@ -339,13 +342,16 @@ const ProductClasses: React.FC = () => {
             <Card
                 title="Termék osztályok"
                 extra={
-                    <Button
-                        type="primary"
-                        icon={<PlusOutlined />}
-                        onClick={() => showModal()}
-                    >
-                        Új termék osztály
-                    </Button>
+                    <Space>
+                        <ExportButton dataType="product_class" selectedIds={selectedRowKeys.map(Number)} />
+                        <Button
+                            type="primary"
+                            icon={<PlusOutlined />}
+                            onClick={() => showModal()}
+                        >
+                            Új termék osztály
+                        </Button>
+                    </Space>
                 }
             >
                 <EnhancedTable
@@ -367,6 +373,7 @@ const ProductClasses: React.FC = () => {
                     cardBreakpoint={700}
                     size="small"
                     loading={loading}
+                    rowSelection={{ selectedRowKeys, onChange: setSelectedRowKeys }}
                     onRow={(record) => ({
                         onDoubleClick: () => showModal(record),
                         style: { cursor: 'pointer' }

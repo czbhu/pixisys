@@ -13,12 +13,14 @@ import {
 import {
     InboxOutlined,
     WarningOutlined,
+    DownloadOutlined,
 } from '@ant-design/icons';
 import { useSearchParams } from 'react-router-dom';
 import { warehouseService } from '../../services/warehouseService';
 import UnifiedQuickSearchHeader from '../../components/Layout/UnifiedQuickSearchHeader';
 import { deepSearchMatch } from '../../utils/searchUtils';
 import EnhancedTable from '../../components/EnhancedTable';
+import ExportButton from '../../components/ExportButton';
 
 const { Option } = Select;
 
@@ -40,6 +42,7 @@ const Inventory: React.FC = () => {
 
     const [loading, setLoading] = useState(true);
     const [inventory, setInventory] = useState<InventoryItem[]>([]);
+    const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
     const [searchQuery, setSearchQuery] = useState('');
     const [warehouseFilter, setWarehouseFilter] = useState<number | null>(initialWarehouse);
     const [shelfFilter] = useState<number | null>(initialShelf);
@@ -208,6 +211,7 @@ const Inventory: React.FC = () => {
                 />}
                 extra={
                     <Space>
+                        <ExportButton dataType="inventory" selectedIds={selectedRowKeys.map(Number)} />
                         <Select
                             placeholder="Raktár szűrő"
                             value={warehouseFilter}
@@ -239,6 +243,7 @@ const Inventory: React.FC = () => {
                     loading={loading}
                     cardBreakpoint={650}
                     pagination={{ pageSize: 10 }}
+                    rowSelection={{ selectedRowKeys, onChange: setSelectedRowKeys }}
                 />
             </Card>
         </div>

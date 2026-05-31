@@ -31,6 +31,7 @@ import QRLabelModal from '../../components/Warehouse/QRLabelModal';
 import UnifiedQuickSearchHeader from '../../components/Layout/UnifiedQuickSearchHeader';
 import { deepSearchMatch } from '../../utils/searchUtils';
 import EnhancedTable from '../../components/EnhancedTable';
+import ExportButton from '../../components/ExportButton';
 
 const { TextArea } = Input;
 const { Panel } = Collapse;
@@ -59,6 +60,7 @@ interface Shelf {
 const Warehouses: React.FC = () => {
     const [loading, setLoading] = useState(true);
     const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
+    const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
     const [isModalVisible, setIsModalVisible] = useState(false);
     const [isViewModalVisible, setIsViewModalVisible] = useState(false);
     const [isShelfModalVisible, setIsShelfModalVisible] = useState(false);
@@ -409,13 +411,16 @@ const Warehouses: React.FC = () => {
                     placeholder="Gyorskereső..."
                 />}
                 extra={
-                    <Button
-                        type="primary"
-                        icon={<PlusOutlined />}
-                        onClick={showCreateModal}
-                    >
-                        Új raktár
-                    </Button>
+                    <Space>
+                        <ExportButton dataType="warehouse" selectedIds={selectedRowKeys.map(Number)} />
+                        <Button
+                            type="primary"
+                            icon={<PlusOutlined />}
+                            onClick={showCreateModal}
+                        >
+                            Új raktár
+                        </Button>
+                    </Space>
                 }
             >
                 <EnhancedTable
@@ -427,6 +432,7 @@ const Warehouses: React.FC = () => {
                     loading={loading}
                     cardBreakpoint={650}
                     pagination={{ pageSize: 10 }}
+                    rowSelection={{ selectedRowKeys, onChange: setSelectedRowKeys }}
                     onRow={(record) => ({
                         onDoubleClick: () => showEditModal(record),
                         style: { cursor: 'pointer' }

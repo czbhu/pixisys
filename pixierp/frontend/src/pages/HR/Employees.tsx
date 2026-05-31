@@ -29,7 +29,8 @@ import {
     IdcardOutlined,
     SafetyOutlined,
     MailOutlined,
-    ExclamationCircleOutlined
+    ExclamationCircleOutlined,
+    DownloadOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { hrService } from '../../services/hrService';
@@ -42,6 +43,7 @@ import AccessCredentialsModal from '../../components/AccessCredentialsModal';
 import { useNavigate } from 'react-router-dom';
 import UnifiedQuickSearchHeader from '../../components/Layout/UnifiedQuickSearchHeader';
 import { deepSearchMatch } from '../../utils/searchUtils';
+import ExportButton from '../../components/ExportButton';
 
 const { Option } = Select;
 const { TextArea } = Input;
@@ -99,6 +101,7 @@ const Employees: React.FC = () => {
     const [positions, setPositions] = useState<any[]>([]);
     const [roles, setRoles] = useState<Role[]>([]);
     const [loading, setLoading] = useState(false);
+    const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
     const [error, setError] = useState<string | null>(null);
     const [isModalVisible, setIsModalVisible] = useState(false);
     const [isViewModalVisible, setIsViewModalVisible] = useState(false);
@@ -887,6 +890,7 @@ const Employees: React.FC = () => {
                     <UnifiedQuickSearchHeader
                         title="Alkalmazottak"
                         actions={<Space>
+                        <ExportButton dataType="employee" selectedIds={selectedRowKeys.map(Number)} />
                         <span>Inaktívak megjelenítése:</span>
                         <Button
                             type={showInactive ? "primary" : "default"}
@@ -931,6 +935,7 @@ const Employees: React.FC = () => {
                     cardBreakpoint={660}
                     size="small"
                     loading={loading}
+                    rowSelection={{ selectedRowKeys, onChange: setSelectedRowKeys }}
                     onRow={(record) => ({
                         onDoubleClick: () => navigate(`/hr/attendance?employee_id=${record.id}&refresh=${Date.now()}`),
                         style: { cursor: 'pointer' }

@@ -9,9 +9,10 @@ import NumInput from '../../components/NumInput';
 import {
   PlusOutlined, EditOutlined, DeleteOutlined, MinusCircleOutlined, CopyOutlined,
   CalculatorOutlined, TagsOutlined, AppstoreOutlined, SyncOutlined, PrinterOutlined,
-  LockOutlined, ArrowUpOutlined, ArrowDownOutlined,
+  LockOutlined, ArrowUpOutlined, ArrowDownOutlined, DownloadOutlined,
 } from '@ant-design/icons';
 import api from '../../services/api';
+import ExportButton from '../../components/ExportButton';
 import UnifiedQuickSearchHeader from '../../components/Layout/UnifiedQuickSearchHeader';
 import { deepSearchMatch } from '../../utils/searchUtils';
 
@@ -170,6 +171,7 @@ const ProductEditor: React.FC = () => {
   const [services, setServices]             = useState<ServiceItem[]>([]);
   const [templateCategories, setTemplateCategories] = useState<TemplateCategory[]>([]);
   const [loading, setLoading]               = useState(false);
+  const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
 
   // DIGIPR_K and DIGIPR_CMYK are protected click-pricing services — cannot be removed
   const digiprIds = useMemo(
@@ -699,9 +701,12 @@ const ProductEditor: React.FC = () => {
         searchValue={query}
         onSearchChange={setQuery}
         actions={
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-            Új termék
-          </Button>
+          <Space>
+            <ExportButton dataType="product_template" selectedIds={selectedRowKeys.map(Number)} />
+            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+              Új termék
+            </Button>
+          </Space>
         }
       />
 
@@ -713,6 +718,7 @@ const ProductEditor: React.FC = () => {
         size="middle"
         pagination={{ pageSize: 25, showSizeChanger: true }}
         locale={{ emptyText: <Empty description="Nincs termék rögzítve" /> }}
+        rowSelection={{ selectedRowKeys, onChange: setSelectedRowKeys }}
       />
 
       {/* ── Create / Edit Drawer ─────────────────────────────────────────── */}

@@ -20,11 +20,13 @@ import {
   DeleteOutlined,
   ExclamationCircleOutlined,
   MinusOutlined,
+  DownloadOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import api from '../../services/api';
 import UnifiedQuickSearchHeader from '../../components/Layout/UnifiedQuickSearchHeader';
 import { deepSearchMatch } from '../../utils/searchUtils';
+import ExportButton from '../../components/ExportButton';
 
 const { TextArea } = Input;
 
@@ -49,6 +51,7 @@ const ServiceGroups: React.FC = () => {
   const [searchText, setSearchText] = useState('');
   const [form] = Form.useForm();
   const [initialFormSnapshot, setInitialFormSnapshot] = useState('');
+  const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
 
   const normalizeForCompare = (value: any): any => {
     if (value === null || value === undefined) return undefined;
@@ -313,13 +316,16 @@ const ServiceGroups: React.FC = () => {
       <Card
         title="Szolgáltatás csoportok"
         extra={
-          <Button
-            type="primary"
-            icon={<PlusOutlined />}
-            onClick={showCreateModal}
-          >
-            Új csoport
-          </Button>
+          <Space>
+            <ExportButton dataType="service_group" selectedIds={selectedRowKeys.map(Number)} />
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              onClick={showCreateModal}
+            >
+              Új csoport
+            </Button>
+          </Space>
         }
       >
         <EnhancedTable
@@ -333,6 +339,7 @@ const ServiceGroups: React.FC = () => {
           loading={loading}
           cardBreakpoint={750}
           pagination={false}
+          rowSelection={{ selectedRowKeys, onChange: setSelectedRowKeys }}
           expandable={{
               defaultExpandAllRows: true,
           }}

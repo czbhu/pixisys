@@ -3,8 +3,9 @@ import EnhancedTable from '../../components/EnhancedTable';
 import { useSearchParams } from 'react-router-dom';
 import { Table, Button, Modal, Form, Input, InputNumber, Select, message, Space, Tag, Popconfirm, Tabs, AutoComplete, Switch, TreeSelect, Tooltip, Row, Col, Checkbox } from 'antd';
 import NumInput from '../../components/NumInput';
-import { PlusOutlined, EditOutlined, DeleteOutlined, ExclamationCircleOutlined, ThunderboltOutlined, SearchOutlined, MinusOutlined, CopyOutlined } from '@ant-design/icons';
+import { PlusOutlined, EditOutlined, DeleteOutlined, ExclamationCircleOutlined, ThunderboltOutlined, SearchOutlined, MinusOutlined, CopyOutlined, DownloadOutlined } from '@ant-design/icons';
 import api from '../../services/api';
+import ExportButton from '../../components/ExportButton';
 
 const { Option } = Select;
 const { TabPane } = Tabs;
@@ -95,6 +96,7 @@ const Services: React.FC = () => {
   const [searchParams] = useSearchParams();
   const [services, setServices] = useState<Service[]>([]);
   const [loading, setLoading] = useState(false);
+  const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
   const [modalVisible, setModalVisible] = useState(false);
   const [editingService, setEditingService] = useState<Service | null>(null);
   const [form] = Form.useForm();
@@ -1224,9 +1226,12 @@ const Services: React.FC = () => {
     <div>
       <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <h2>Szolgáltatások</h2>
-        <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
-          Új szolgáltatás
-        </Button>
+        <Space>
+          <ExportButton dataType="service" selectedIds={selectedRowKeys.map(Number)} />
+          <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
+            Új szolgáltatás
+          </Button>
+        </Space>
       </div>
 
       <EnhancedTable
@@ -1267,6 +1272,7 @@ const Services: React.FC = () => {
         loading={loading}
         rowKey="id"
         cardBreakpoint={850}
+        rowSelection={{ selectedRowKeys, onChange: setSelectedRowKeys }}
         pagination={{
             pageSize: 20,
             showSizeChanger: true,

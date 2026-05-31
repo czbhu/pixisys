@@ -6,6 +6,7 @@ import { useSearchParams } from 'react-router-dom';
 import api from '../../services/api';
 import EnhancedTable from '../../components/EnhancedTable';
 import { manufacturingService, Currency as MCurrency } from '../../services/manufacturingService';
+import ExportButton from '../../components/ExportButton';
 
 const { Option } = Select;
 const { TextArea } = Input;
@@ -2150,6 +2151,7 @@ const Materials: React.FC = () => {
             <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
               Új elem
             </Button>
+            <ExportButton dataType="material" selectedIds={selectedRowKeys} />
             <Tooltip title={selectedRowKeys.length ? `${selectedRowKeys.length} kijelölt sor exportálása` : 'Összes anyag exportálása CSV-be'}>
               <Button icon={<DownloadOutlined />} onClick={handleExportCsv}>
                 CSV export{selectedRowKeys.length ? ` (${selectedRowKeys.length})` : ''}
