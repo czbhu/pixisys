@@ -204,6 +204,38 @@ class CustomerOrder(models.Model):
                 return True
         return False
 
+    @classmethod
+    def sync_status_from_items(cls, order_id):
+        """Biztonsági háló: a szülő-rendelés státuszát közvetlenül a tételek
+        minimális státuszából számítja és szükség esetén frissíti.
+        Szállítólevél-megerősítés után hívandó, a modell-szintű
+        check_parent_status() mellé redundáns védelemként."""
+        STATUS_ORDER = ['new', 'confirmed', 'in_production', 'ready', 'in_delivery', 'delivered']
+        try:
+            order = cls.objects.get(id=order_id)
+            if order.status not in STATUS_ORDER:
+                return
+            items = order.items.exclude(status='cancelled')
+            if not items.exists():
+                return
+            ranks = [STATUS_ORDER.index(it.status) for it in items if it.status in STATUS_ORDER]
+            if not ranks:
+                return
+            min_rank = min(ranks)
+            parent_rank = STATUS_ORDER.index(order.status)
+            if min_rank > parent_rank:
+                from django.utils import timezone as tz
+                now = tz.now()
+                new_status = STATUS_ORDER[min_rank]
+                order.status = new_status
+                update_fields = ['status']
+                if new_status == 'delivered' and not order.delivered_at:
+                    order.delivered_at = now
+                    update_fields.append('delivered_at')
+                order.save(update_fields=update_fields)
+        except Exception:
+            pass
+
 
 class CustomerOrderItem(models.Model):
     """Megrendelés tételek"""
@@ -490,6 +522,7 @@ class QuoteLog(models.Model):
     user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
     action = models.CharField(max_length=200)
     created_at = models.DateTimeField(auto_now_add=True)
+    ip_address = models.GenericIPAddressField(null=True, blank=True, verbose_name="IP cím")
 
     class Meta:
         verbose_name = "Árajánlat napló"

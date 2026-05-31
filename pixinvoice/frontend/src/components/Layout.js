@@ -19,7 +19,7 @@ import styled from 'styled-components';
 import { Dropdown, Avatar, Select, message } from 'antd';
 import CompanySelector from './CompanySelector';
 import { useAuth } from '../contexts/AuthContext';
-import { systemUserAPI } from '../services/api';
+import api, { systemUserAPI } from '../services/api';
 
 const LayoutContainer = styled.div`
   display: flex;
@@ -502,7 +502,7 @@ const Layout = ({ children }) => {
         const ts = localStorage.getItem('badge_seen_' + k);
         if (ts) params['since_' + k] = ts;
       });
-      const res = await axios.get('/api/menu-badges/', { params });
+      const res = await api.get('/api/menu-badges/', { params });
       setBadgeCounts(res.data || {});
     } catch (err) {
       // fail silently
@@ -533,9 +533,16 @@ const Layout = ({ children }) => {
       const ctx = canvas.getContext('2d');
       ctx.drawImage(img, 0, 0, 32, 32);
       ctx.beginPath();
-      ctx.arc(26, 6, 7, 0, 2 * Math.PI);
+      const count = total > 99 ? '99+' : String(total);
+      const radius = count.length > 2 ? 9 : 7;
+      ctx.arc(26, 6, radius, 0, 2 * Math.PI);
       ctx.fillStyle = '#e74c3c';
       ctx.fill();
+      ctx.font = `bold ${count.length > 2 ? 7 : 9}px Arial`;
+      ctx.fillStyle = 'white';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(count, 26, 6);
       link.href = canvas.toDataURL('image/png');
     };
     img.src = '/favicon.svg';

@@ -155,6 +155,41 @@ function AppContent() {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
+  // Update favicon badge when notification counts change
+  useEffect(() => {
+    const totalBadge = Object.values(notificationCounts).reduce((s, v) => s + (Number(v) || 0), 0);
+    const link: HTMLLinkElement = (document.querySelector("link[rel='icon']") as HTMLLinkElement) || document.createElement('link');
+    if (!link.parentNode) {
+      (link as HTMLLinkElement).rel = 'icon';
+      document.head.appendChild(link);
+    }
+    if (totalBadge === 0) {
+      link.href = '/favicon.ico';
+      return;
+    }
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 32;
+      canvas.height = 32;
+      const ctx = canvas.getContext('2d')!;
+      ctx.drawImage(img, 0, 0, 32, 32);
+      const count = totalBadge > 99 ? '99+' : String(totalBadge);
+      const radius = count.length > 2 ? 9 : 7;
+      ctx.beginPath();
+      ctx.arc(26, 6, radius, 0, 2 * Math.PI);
+      ctx.fillStyle = '#e74c3c';
+      ctx.fill();
+      ctx.font = `bold ${count.length > 2 ? 7 : 9}px Arial`;
+      ctx.fillStyle = 'white';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(count, 26, 6);
+      link.href = canvas.toDataURL('image/png');
+    };
+    img.src = '/favicon.ico';
+  }, [notificationCounts]);
+
   // Automatikus napi árfolyam frissítés
   useEffect(() => {
     if (!user) return;

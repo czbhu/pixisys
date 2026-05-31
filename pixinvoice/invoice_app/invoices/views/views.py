@@ -15652,6 +15652,109 @@ class IncomingProformaViewSet(viewsets.ViewSet):
             'extract_warnings': extract_errors,
         })
 
+    @action(detail=False, methods=['post'], url_path='send-email')
+    def send_email(self, request):
+        """Send a notification email about an incoming proforma."""
+        import sys, datetime as _dt, smtplib, ssl
+        from email.message import EmailMessage as _EM
+        from email.utils import formataddr
+
+        def log(msg):
+            ts = _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            print(f"[INCOMING-PROFORMA-EMAIL {ts}] {msg}")
+            sys.stdout.flush()
+
+        data = request.data or {}
+        company_id = data.get('company_id') or (getattr(request, 'company', None) and str(request.company.id))
+        proforma_id = data.get('proforma_id') or data.get('id')
+        to_list = data.get('to') or []
+        subject = (data.get('subject') or '').strip()
+        body = (data.get('body') or '').strip()
+
+        if isinstance(to_list, str):
+            to_list = [e.strip() for e in to_list.split(',') if e.strip()]
+
+        if not to_list:
+            return Response({'error': 'Nincs címzett megadva'}, status=status.HTTP_400_BAD_REQUEST)
+
+        company, err = self._get_company(company_id, request)
+        if err:
+            return err
+
+        from invoices.models import IncomingProforma, CompanyEmailSettings
+
+        if proforma_id:
+            try:
+                pf = IncomingProforma.objects.get(id=proforma_id, company=company)
+            except IncomingProforma.DoesNotExist:
+                return Response({'error': 'Díjbekérő nem található'}, status=status.HTTP_404_NOT_FOUND)
+        else:
+            pf = None
+
+        if not subject and pf:
+            subject = f"Bejövő díjbekérő: {pf.proforma_number}"
+        if not subject:
+            subject = "Bejövő díjbekérő értesítő"
+
+        if not body and pf:
+            due = pf.due_date.strftime('%Y-%m-%d') if pf.due_date else '—'
+            issue = pf.issue_date.strftime('%Y-%m-%d') if pf.issue_date else '—'
+            gross = f"{float(pf.gross_amount or 0):,.0f} {pf.currency or 'HUF'}"
+            body = (
+                f"Bejövő díjbekérő értesítő\n\n"
+                f"Szállító: {pf.supplier_name or '—'}\n"
+                f"Adószám: {pf.supplier_tax_number or '—'}\n"
+                f"Díjbekérő szám: {pf.proforma_number}\n"
+                f"Keltezés: {issue}\n"
+                f"Esedékesség: {due}\n"
+                f"Bruttó összeg: {gross}\n"
+                f"Státusz: {pf.get_status_display()}\n"
+                f"\nMegjegyzés: {pf.comment or '—'}"
+            )
+
+        # Get SMTP settings
+        try:
+            es = CompanyEmailSettings.objects.get(company=company)
+        except CompanyEmailSettings.DoesNotExist:
+            return Response({'error': 'Nincs e-mail beállítás a céghez'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not es.smtp_host or not es.smtp_user:
+            return Response({'error': 'SMTP beállítások hiányoznak'}, status=status.HTTP_400_BAD_REQUEST)
+
+        from_addr = es.smtp_from or es.smtp_user
+        sender_name = es.default_sender_name or (company.name if company else '')
+        from_display = formataddr((sender_name, from_addr)) if sender_name else from_addr
+
+        msg = _EM()
+        msg['Subject'] = subject
+        msg['From'] = from_display
+        msg['To'] = ', '.join(to_list)
+
+        # Plain text + HTML body
+        html_body = body.replace('\n', '<br>')
+        msg.add_alternative(body, subtype='plain')
+        msg.add_alternative(f"<html><body><pre style=\"font-family:sans-serif;font-size:14px\">{html_body}</pre></body></html>", subtype='html')
+
+        try:
+            port = int(es.smtp_port or 587)
+            if es.smtp_use_tls and port == 465:
+                ctx = ssl.create_default_context()
+                with smtplib.SMTP_SSL(es.smtp_host, port, context=ctx) as srv:
+                    srv.login(es.smtp_user, es.smtp_password or '')
+                    srv.send_message(msg)
+            else:
+                with smtplib.SMTP(es.smtp_host, port) as srv:
+                    if es.smtp_use_tls:
+                        srv.starttls()
+                    srv.login(es.smtp_user, es.smtp_password or '')
+                    srv.send_message(msg)
+            log(f"Email sent to {to_list}")
+            return Response({'success': True, 'sent_to': to_list})
+        except Exception as exc:
+            log(f"Email send error: {exc}")
+            return Response({'error': f'E-mail küldési hiba: {exc}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
 
 # Backup Management Views
 class BackupConfigurationViewSet(viewsets.ModelViewSet):

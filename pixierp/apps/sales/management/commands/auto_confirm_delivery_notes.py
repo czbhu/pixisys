@@ -94,6 +94,12 @@ class Command(BaseCommand):
                     coi.status = new_status
                     coi.save()
 
+            # Safety net: explicitly resync parent order statuses
+            from apps.sales.models import CustomerOrder
+            order_ids = set(dn.items.values_list('customer_order_item__customer_order_id', flat=True))
+            for oid in order_ids:
+                CustomerOrder.sync_status_from_items(oid)
+
             confirmed += 1
 
         if dry_run:

@@ -187,9 +187,10 @@ const ManufacturingDashboard: React.FC<{
     navigate: ReturnType<typeof useNavigate>;
     onRefresh: () => void;
     refreshing: boolean;
+    workerLoading: boolean;
     reportDate: Dayjs;
     setReportDate: (d: Dayjs) => void;
-}> = ({ counts, workers, latestOrders, navigate, onRefresh, refreshing, reportDate, setReportDate }) => {
+}> = ({ counts, workers, latestOrders, navigate, onRefresh, refreshing, workerLoading, reportDate, setReportDate }) => {
     const statCards = [
         { title: 'Új munkák', value: counts.new ?? 0, icon: <PlusCircleOutlined />, color: '#1677ff', status: 'new' },
         { title: 'Gyártásban', value: counts.in_production ?? 0, icon: <ThunderboltOutlined />, color: '#fa8c16', status: 'in_production' },
@@ -461,8 +462,10 @@ const ManufacturingDashboard: React.FC<{
                             </Space>
                         }
                     >
-                        {workers.today_report.length === 0 ? (
-                            <Text type="secondary">Ma még senki nem lépett be.</Text>
+                        {workerLoading ? (
+                            <div style={{ textAlign: 'center', padding: 32 }}><Spin /></div>
+                        ) : workers.today_report.length === 0 ? (
+                            <Text type="secondary">Erre a napra nincs munkanapló bejegyzés.</Text>
                         ) : (
                             <Table
                                 dataSource={workers.today_report}
@@ -474,7 +477,7 @@ const ManufacturingDashboard: React.FC<{
                                     expandedRowRender: (w) =>
                                         w.work_logs.length > 0
                                             ? <WorkerDailyTable logs={w.work_logs} navigate={navigate} />
-                                            : <Text type="secondary" style={{ paddingLeft: 8, fontSize: 12 }}>Nincs munkanapló ma.</Text>,
+                                            : <Text type="secondary" style={{ paddingLeft: 8, fontSize: 12 }}>Nincs munkanapló bejegyzés.</Text>,
                                     rowExpandable: () => true,
                                 }}
                             />
@@ -632,6 +635,8 @@ const Dashboard = () => {
     const screens = Grid.useBreakpoint();
     const isMobile = !screens.md;
 
+    const [workerLoading, setWorkerLoading] = useState(false);
+
     const loadData = useCallback(async (silent = false) => {
         try {
             if (!silent) setLoading(true);
@@ -654,11 +659,32 @@ const Dashboard = () => {
             setLoading(false);
             setRefreshing(false);
         }
-    }, [reportDate]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []); // intentionally no reportDate dep — initial load only uses today
+
+    const loadWorkers = useCallback(async (date: Dayjs) => {
+        try {
+            setWorkerLoading(true);
+            const workerData = await salesService.getDashboardWorkers(date.format('YYYY-MM-DD'));
+            setWorkers({
+                active_now: workerData.active_now ?? [],
+                today_report: workerData.today_report ?? [],
+            });
+        } catch (err) {
+            console.error('Worker report load error:', err);
+        } finally {
+            setWorkerLoading(false);
+        }
+    }, []);
 
     useEffect(() => {
         loadData();
     }, [loadData]);
+
+    // When reportDate changes (pagination), only reload the workers section
+    useEffect(() => {
+        loadWorkers(reportDate);
+    }, [reportDate]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const handleViewChange = (v: DashboardView) => {
         setView(v);
@@ -708,6 +734,7 @@ const Dashboard = () => {
                             navigate={navigate}
                             onRefresh={() => loadData(true)}
                             refreshing={refreshing}
+                            workerLoading={workerLoading}
                             reportDate={reportDate}
                             setReportDate={setReportDate}
                         />

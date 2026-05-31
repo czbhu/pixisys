@@ -2,8 +2,8 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import styled from 'styled-components';
-import { Plus, Edit2, Trash2, Eye, RefreshCw, Search, X, FolderOpen, PlusCircle, FileDown } from 'lucide-react';
-import api, { companyBankAccountAPI, incomingProformaAPI } from '../services/api';
+import { Plus, Edit2, Trash2, Eye, RefreshCw, Search, X, FolderOpen, PlusCircle, FileDown, Mail } from 'lucide-react';
+import api, { companyBankAccountAPI, incomingProformaAPI, systemUserAPI } from '../services/api';
 
 // ── Styled components ────────────────────────────────────────────────────────
 const PageWrap = styled.div`padding: 16px 20px;`;
@@ -145,6 +145,15 @@ export default function IncomingProformas() {
   const [savingEdit, setSavingEdit] = useState(false);
   const [batchItemSaving, setBatchItemSaving] = useState({});
   const [itemAmountDrafts, setItemAmountDrafts] = useState({});
+
+  // Email modal
+  const [emailRow, setEmailRow] = useState(null);
+  const [emailTo, setEmailTo] = useState('');
+  const [emailSubject, setEmailSubject] = useState('');
+  const [emailBody, setEmailBody] = useState('');
+  const [sendingEmail, setSendingEmail] = useState(false);
+  const [systemUsers, setSystemUsers] = useState([]);
+  const [userPickerValue, setUserPickerValue] = useState('');
 
   // Follow globally selected company from sidebar selector.
   useEffect(() => {
@@ -515,6 +524,63 @@ export default function IncomingProformas() {
     }
   };
 
+  const openEmail = async (row) => {
+    const due = row.due_date || '—';
+    const gross = Number(row.gross_amount || 0).toLocaleString('hu-HU', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+    setEmailRow(row);
+    setEmailTo('');
+    setUserPickerValue('');
+    setEmailSubject(`Bejövő díjbekérő: ${row.proforma_number}`);
+    setEmailBody(
+
+      `Bejövő díjbekérő értesítő\n\n` +
+      `Szállító: ${row.supplier_name || '—'}\n` +
+      `Adószám: ${row.supplier_tax_number || '—'}\n` +
+      `Díjbekérő szám: ${row.proforma_number}\n` +
+      `Esedékesség: ${due}\n` +
+      `Bruttó összeg: ${gross} ${row.currency || 'HUF'}\n` +
+      `Státusz: ${STATUS_LABELS[row.status] || row.status}`
+    );
+  };
+
+  // Load system users when email modal opens
+  useEffect(() => {
+    if (!emailRow) return;
+    systemUserAPI.getSystemUsers({ page_size: 200 })
+      .then(res => setSystemUsers(res.data?.results || res.data || []))
+      .catch(() => setSystemUsers([]));
+  }, [emailRow]);
+
+  const addUserEmail = (email) => {
+    if (!email) return;
+    const current = emailTo.split(',').map(e => e.trim()).filter(Boolean);
+    if (!current.includes(email)) {
+      setEmailTo(current.length ? current.join(', ') + ', ' + email : email);
+    }
+    setUserPickerValue('');
+  };
+
+  const sendEmailAction = async () => {
+    const recipients = emailTo.split(',').map(e => e.trim()).filter(Boolean);
+    if (!recipients.length) { toast.error('Adj meg legalább egy e-mail címet'); return; }
+    setSendingEmail(true);
+    try {
+      await incomingProformaAPI.sendEmail({
+        company_id: companyId,
+        proforma_id: emailRow?.id,
+        to: recipients,
+        subject: emailSubject,
+        body: emailBody,
+      });
+      toast.success('E-mail elküldve');
+      setEmailRow(null);
+    } catch (e) {
+      toast.error(e?.response?.data?.error || 'E-mail küldési hiba');
+    } finally {
+      setSendingEmail(false);
+    }
+  };
+
   return (
     <PageWrap>
       <TopBar>
@@ -639,6 +705,9 @@ export default function IncomingProformas() {
                       </IconButton>
                       <IconButton onClick={()=>openEdit(row)} title="Szerkesztés" style={{background:'#dbeafe',color:'#1d4ed8'}}>
                         <Edit2 size={14}/>
+                      </IconButton>
+                      <IconButton onClick={()=>openEmail(row)} title="E-mail küldés" style={{background:'#d1fae5',color:'#065f46'}}>
+                        <Mail size={14}/>
                       </IconButton>
                       <IconButton onClick={()=>handleDelete(row)} title="Törlés" style={{background:'#fee2e2',color:'#dc2626'}}>
                         <Trash2 size={14}/>
@@ -876,6 +945,69 @@ export default function IncomingProformas() {
                   );
                 })
               )}
+            </ModalBody>
+          </ModalContent>
+        </ModalOverlay>
+      )}
+
+      {/* Email compose modal */}
+      {emailRow && (
+        <ModalOverlay onClick={() => setEmailRow(null)}>
+          <ModalContent onClick={e => e.stopPropagation()} style={{maxWidth:560}}>
+            <ModalHeader>
+              <ModalTitle>E-mail küldése – {emailRow.proforma_number}</ModalTitle>
+              <CloseBtn onClick={() => setEmailRow(null)}>Bezárás</CloseBtn>
+            </ModalHeader>
+            <ModalBody>
+              <div style={{display:'flex',flexDirection:'column',gap:12}}>
+                <div>
+                  <label style={{display:'block',fontWeight:600,marginBottom:4,fontSize:13}}>Felhasználó hozzáadása</label>
+                  <select
+                    value={userPickerValue}
+                    onChange={e => addUserEmail(e.target.value)}
+                    style={{width:'100%',padding:'7px 10px',border:'1px solid #d1d5db',borderRadius:6,fontSize:13,boxSizing:'border-box',background:'#fff'}}
+                  >
+                    <option value="">— Válassz felhasználót —</option>
+                    {systemUsers.map(u => (
+                      <option key={u.id} value={u.email}>
+                        {u.last_name} {u.first_name} ({u.email})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label style={{display:'block',fontWeight:600,marginBottom:4,fontSize:13}}>Címzett(ek) <span style={{fontWeight:400,color:'#6b7280'}}>(vesszővel elválasztva)</span></label>
+                  <input
+                    value={emailTo}
+                    onChange={e=>setEmailTo(e.target.value)}
+                    placeholder="pelda@email.hu, masik@email.hu"
+                    style={{width:'100%',padding:'7px 10px',border:'1px solid #d1d5db',borderRadius:6,fontSize:13,boxSizing:'border-box'}}
+                  />
+                </div>
+                <div>
+                  <label style={{display:'block',fontWeight:600,marginBottom:4,fontSize:13}}>Tárgy</label>
+                  <input
+                    value={emailSubject}
+                    onChange={e=>setEmailSubject(e.target.value)}
+                    style={{width:'100%',padding:'7px 10px',border:'1px solid #d1d5db',borderRadius:6,fontSize:13,boxSizing:'border-box'}}
+                  />
+                </div>
+                <div>
+                  <label style={{display:'block',fontWeight:600,marginBottom:4,fontSize:13}}>Üzenet</label>
+                  <textarea
+                    value={emailBody}
+                    onChange={e=>setEmailBody(e.target.value)}
+                    rows={8}
+                    style={{width:'100%',padding:'7px 10px',border:'1px solid #d1d5db',borderRadius:6,fontSize:13,resize:'vertical',boxSizing:'border-box'}}
+                  />
+                </div>
+                <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
+                  <SecondaryButton onClick={() => setEmailRow(null)}>Mégse</SecondaryButton>
+                  <PrimaryButton onClick={sendEmailAction} disabled={sendingEmail || !emailTo.trim()}>
+                    <Mail size={14}/> {sendingEmail ? 'Küldés…' : 'E-mail küldése'}
+                  </PrimaryButton>
+                </div>
+              </div>
             </ModalBody>
           </ModalContent>
         </ModalOverlay>

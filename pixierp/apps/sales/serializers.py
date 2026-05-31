@@ -637,7 +637,7 @@ class QuoteLogSerializer(serializers.ModelSerializer):
     user_name = serializers.CharField(source='user.get_full_name', read_only=True)
     class Meta:
         model = QuoteLog
-        fields = ['id', 'action', 'created_at', 'user', 'user_name']
+        fields = ['id', 'action', 'created_at', 'user', 'user_name', 'ip_address']
 
 class QuoteItemSerializer(serializers.ModelSerializer):
     product_name = serializers.CharField(source='product.name', read_only=True)

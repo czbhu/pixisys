@@ -36,6 +36,61 @@ from apps.core.models import Currency
 from apps.crm.models import Company as CrmCompany, Contact
 from .models import QuoteLog, QuoteRequestItemAttachment, SearchStat, QuoteRequestAttachment, QuoteRequestEmailLog, QuoteRequestInvitation, WorkLog
 from .serializers import ServiceSerializer, QuoteLogSerializer, QuoteRequestItemAttachmentSerializer, QuoteRequestAttachmentSerializer, QuoteRequestInvitationSerializer
+
+
+def _get_ip(request):
+    """Extract real client IP from request headers."""
+    xff = request.META.get('HTTP_X_FORWARDED_FOR', '')
+    if xff:
+        return xff.split(',')[0].strip()
+    return request.META.get('REMOTE_ADDR', '')
+
+
+def _notify_internal_team(qr, subject, body):
+    """Send an email notification to the internal team (RFQ owner) about a public customer action."""
+    try:
+        from django.core.mail import get_connection, EmailMultiAlternatives
+        from apps.core.models import EmailServerConfig
+        email_config = EmailServerConfig.objects.filter(is_active=True).first()
+        if not email_config:
+            return
+        recipient = None
+        if qr.created_by and qr.created_by.email:
+            recipient = qr.created_by.email
+        elif qr.owner and qr.owner.email:
+            recipient = qr.owner.email
+        if not recipient:
+            return
+        connection = get_connection(
+            backend='django.core.mail.backends.smtp.EmailBackend',
+            host=email_config.smtp_host,
+            port=email_config.smtp_port,
+            username=email_config.smtp_username,
+            password=email_config.smtp_password,
+            use_tls=email_config.smtp_use_tls,
+            use_ssl=email_config.smtp_use_ssl,
+            fail_silently=True,
+            timeout=10,
+        )
+        from_email = (
+            f"{email_config.from_name} <{email_config.from_email}>"
+            if email_config.from_name else email_config.from_email
+        )
+        msg = EmailMultiAlternatives(
+            subject=subject,
+            body=body,
+            from_email=from_email,
+            to=[recipient],
+            connection=connection,
+        )
+        msg.send()
+        try:
+            from apps.core.email_utils import archive_to_imap_sent
+            archive_to_imap_sent(email_config, msg)
+        except Exception:
+            pass
+    except Exception:
+        pass
 from apps.core.models import EmailServerConfig, EmailTemplate, SignatureTemplate, Currency, Company as CoreCompany
 import smtplib, ssl, imaplib, email
 from email.mime.multipart import MIMEMultipart
@@ -227,6 +282,57 @@ class ManufacturingProductViewSet(viewsets.ModelViewSet):
     queryset = ManufacturingProduct.objects.all()
     serializer_class = ManufacturingProductSerializer
     permission_classes = [AllowAny]
+
+
+def _build_items_table_html(items_qs, currency_symbol=''):
+    """HTML táblázat generálása email sablonhoz az ajánlat tételeiből."""
+    rows = []
+    for item in items_qs:
+        name = (item.item_name if item.item_name else None) or \
+               getattr(item.manufacturing_product, 'name', None) or \
+               getattr(item.product, 'name', None) or \
+               getattr(item.material, 'name', None) or \
+               getattr(item.service, 'name', None) or ''
+        code = getattr(item.manufacturing_product, 'code', None) or \
+               getattr(item.material, 'code', None) or \
+               getattr(item.service, 'code', None) or ''
+        description = item.description or ''
+        qty = item.quantity
+        unit = item.unit or ''
+        net_unit = item.net_unit_price or 0
+        net_total = item.net_total or (qty * net_unit)
+        cur = currency_symbol
+
+        def fmt(val):
+            try:
+                return '{:,.0f}'.format(float(val)).replace(',', '\u00a0')
+            except Exception:
+                return str(val)
+
+        rows.append(
+            '<tr>'
+            '<td style="border:1px solid #ddd;padding:6px 10px;">' + str(name) + '</td>'
+            '<td style="border:1px solid #ddd;padding:6px 10px;">' + str(code) + '</td>'
+            '<td style="border:1px solid #ddd;padding:6px 10px;">' + str(description) + '</td>'
+            '<td style="border:1px solid #ddd;padding:6px 10px;text-align:right;">' + fmt(qty) + '</td>'
+            '<td style="border:1px solid #ddd;padding:6px 10px;">' + str(unit) + '</td>'
+            '<td style="border:1px solid #ddd;padding:6px 10px;text-align:right;">' + fmt(net_unit) + ((' ' + cur) if cur else '') + '</td>'
+            '<td style="border:1px solid #ddd;padding:6px 10px;text-align:right;">' + fmt(net_total) + ((' ' + cur) if cur else '') + '</td>'
+            '</tr>'
+        )
+    rows_html = ''.join(rows)
+    return (
+        '<table style="border-collapse:collapse;width:100%;font-size:13px;">'
+        '<thead><tr style="background:#f5f5f5;">'
+        '<th style="border:1px solid #ddd;padding:6px 10px;text-align:left;">Termék neve</th>'
+        '<th style="border:1px solid #ddd;padding:6px 10px;text-align:left;">Cikkszám</th>'
+        '<th style="border:1px solid #ddd;padding:6px 10px;text-align:left;">Leírás</th>'
+        '<th style="border:1px solid #ddd;padding:6px 10px;text-align:right;">Mennyiség</th>'
+        '<th style="border:1px solid #ddd;padding:6px 10px;text-align:left;">Egység</th>'
+        '<th style="border:1px solid #ddd;padding:6px 10px;text-align:right;">Nettó egységár</th>'
+        '<th style="border:1px solid #ddd;padding:6px 10px;text-align:right;">Nettó ár</th>'
+        '</tr></thead><tbody>' + rows_html + '</tbody></table>'
+    )
 
 class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
     queryset = QuoteRequest.objects.all()  # Base queryset
@@ -1049,16 +1155,23 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             'contact_names': contact_names,
             **extra_context,
         }
+        # Build items_table HTML — replace BEFORE .format(**ctx) to avoid HTML curly braces issues
+        # Combine items from ALL RFQs (primary + additional) so all selected items appear in the table
+        _all_rfq_ids_send = [qr.id] + [aqr.id for aqr in additional_qrs]
+        _items_qs_send = QuoteRequestItem.objects.filter(quote_request_id__in=_all_rfq_ids_send).order_by('sort_order', 'id')
+        _currency_symbol = getattr(getattr(qr, 'currency', None), 'symbol', '') or ''
+        _items_table_html = _build_items_table_html(_items_qs_send, _currency_symbol)
         subject = override_subject if override_subject is not None else (tpl.subject_template or '').format(**ctx)
         if override_body is not None:
-            body = override_body
-            body_core = override_body
+            body = override_body.replace('{items_table}', _items_table_html)
+            body_core = body
             # Replace any bare/stale public URL in the override body with the correct combined URL
             base_url = f"{settings.FRONTEND_BASE_URL}/public/quote/{qr.public_token}/order"
             body = re.sub(re.escape(base_url) + r'(?:\?[^"\' <>\s]*)?', public_url, body)
             body_core = body
         else:
-            body_core = (tpl.body_template or '').format(**ctx)
+            _body_tpl = (tpl.body_template or '').replace('{items_table}', _items_table_html)
+            body_core = _body_tpl.format(**ctx)
             if tpl.is_html:
                 body = f"{body_core}{sig.body_html if sig else ''}"
             else:
@@ -1330,14 +1443,21 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             'public_order_url': public_url,
             **extra_context,
         }
+        # Build items_table HTML — replace BEFORE .format(**ctx) to avoid HTML curly braces issues
+        # Combine items from ALL RFQs (primary + additional) so all selected items appear in the table
+        _all_rfq_ids_render = [qr.id] + [aqr.id for aqr in additional_qrs]
+        _items_qs_render = QuoteRequestItem.objects.filter(quote_request_id__in=_all_rfq_ids_render).order_by('sort_order', 'id')
+        _currency_symbol = getattr(getattr(qr, 'currency', None), 'symbol', '') or ''
+        _items_table_html = _build_items_table_html(_items_qs_render, _currency_symbol)
         subject = override_subject if override_subject is not None else (tpl.subject_template or '').format(**ctx)
         if override_body is not None:
-            body = override_body
+            body = override_body.replace('{items_table}', _items_table_html)
             # Replace any bare/stale public URL in the override body with the correct combined URL
             base_url = f"{settings.FRONTEND_BASE_URL}/public/quote/{qr.public_token}/order"
             body = re.sub(re.escape(base_url) + r'(?:\?[^"\' <>\s]*)?', public_url, body)
         else:
-            body_core = (tpl.body_template or '').format(**ctx)
+            _body_tpl = (tpl.body_template or '').replace('{items_table}', _items_table_html)
+            body_core = _body_tpl.format(**ctx)
             body = f"{body_core}{sig.body_html if sig else ''}" if tpl.is_html else f"{body_core}\n\n{sig.body_html if sig else ''}"
         return Response({'subject': subject, 'body': body, 'is_html': tpl.is_html})
 
@@ -2168,10 +2288,11 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         # 2. QuoteLog entries
         for log in qr.logs.select_related('user').order_by('created_at'):
             u = user_info(log.user)
+            who_name = u['name'] or (f'IP: {log.ip_address}' if log.ip_address else '')
             events.append({
                 'timestamp': fmt_ts(log.created_at),
                 'who_role': u['role'],
-                'who_name': u['name'],
+                'who_name': who_name,
                 'what': log.action,
                 'category': 'log',
             })
@@ -2728,6 +2849,14 @@ def public_submit_order(request, token: str):
             qr.status = 'ordered'
             qr.save(update_fields=['status'])
 
+        # Napló bejegyzés (IP-vel)
+        _order_ip = _get_ip(request)
+        QuoteLog.objects.create(
+            quote=qr, user=None,
+            action=f'Ügyfél megrendelést küldött be (megrendelésszám: {order_number})',
+            ip_address=_order_ip or None,
+        )
+
         # Email küldés (csak sikeres tranzakció esetén)
         from django.core.mail import get_connection, EmailMultiAlternatives
         from apps.core.models import EmailServerConfig
@@ -2823,6 +2952,26 @@ def public_upload_attachment(request, token: str):
         remark=remark[:255] if remark else '',
         uploaded_by=None,
     )
+
+    # QuoteLog + email értesítő
+    _att_ip = _get_ip(request)
+    QuoteLog.objects.create(
+        quote=qr, user=None,
+        action=f'Ügyfél csatolmányt töltött fel: {file.name}',
+        ip_address=_att_ip or None,
+    )
+    _notify_internal_team(
+        qr,
+        subject=f'Új csatolmány érkezett – {qr.number or qr.request_number}',
+        body=(
+            f'Az ügyfél csatolmányt töltött fel az ajánlathoz.\n\n'
+            f'Árajánlat: {qr.title}\n'
+            f'Szám: {qr.number or qr.request_number}\n'
+            f'Fájl: {file.name}\n'
+            f'IP: {_att_ip}\n'
+        ),
+    )
+
     return Response({
         'id': att.id,
         'original_filename': att.original_filename,
@@ -2907,6 +3056,26 @@ def public_upload_item_attachment(request, token: str, item_id: int):
         remark=remark[:255] if remark else '',
         uploaded_by=None,
     )
+
+    # QuoteLog + email értesítő
+    _item_ip = _get_ip(request)
+    QuoteLog.objects.create(
+        quote=qr, user=None,
+        action=f'Ügyfél tételhez csatolmányt töltött fel: {file.name}',
+        ip_address=_item_ip or None,
+    )
+    _notify_internal_team(
+        qr,
+        subject=f'Új tételcsatolmány érkezett – {qr.number or qr.request_number}',
+        body=(
+            f'Az ügyfél egy tételhez csatolmányt töltött fel.\n\n'
+            f'Árajánlat: {qr.title}\n'
+            f'Szám: {qr.number or qr.request_number}\n'
+            f'Fájl: {file.name}\n'
+            f'IP: {_item_ip}\n'
+        ),
+    )
+
     return Response({
         'id': att.id,
         'original_filename': att.original_filename,
@@ -5204,20 +5373,104 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
     
     @action(detail=True, methods=['get'])
     def activity_logs(self, request, pk=None):
-        """Get activity logs for this customer order"""
-        from apps.core.models import ActivityLog
-        from apps.core.serializers import ActivityLogSerializer
-        from django.contrib.contenttypes.models import ContentType
-        
+        """Comprehensive activity timeline for a CustomerOrder, including RFQ logs."""
         order = self.get_object()
-        content_type = ContentType.objects.get_for_model(CustomerOrder)
-        logs = ActivityLog.objects.filter(
-            content_type=content_type,
-            object_id=order.id
-        ).select_related('user').order_by('-timestamp')
-        
-        serializer = ActivityLogSerializer(logs, many=True)
-        return Response(serializer.data)
+        qr = order.quote_request
+        events = []
+
+        def _user_info(u):
+            if not u:
+                return {'name': '', 'role': ''}
+            name = u.get_full_name() or u.username
+            role = ''
+            try:
+                depts = list(u.employee_profile.departments.values_list('name', flat=True))
+                role = ', '.join(depts)
+            except Exception:
+                pass
+            if not role:
+                role = ', '.join(u.groups.values_list('name', flat=True))
+            return {'name': name, 'role': role}
+
+        def _fmt(dt):
+            return dt.isoformat() if dt and hasattr(dt, 'isoformat') else str(dt) if dt else None
+
+        # ── RFQ creation ──
+        if qr:
+            u = _user_info(qr.created_by)
+            events.append({'timestamp': _fmt(qr.created_at), 'who_role': u['role'], 'who_name': u['name'],
+                           'what': f'Árajánlat létrehozva: {qr.number or qr.request_number}', 'category': 'rfq'})
+
+            # ── QuoteLog entries (includes public customer actions) ──
+            for log in qr.logs.select_related('user').order_by('created_at'):
+                u = _user_info(log.user)
+                who_name = u['name'] or (f'IP: {log.ip_address}' if log.ip_address else '')
+                events.append({'timestamp': _fmt(log.created_at), 'who_role': u['role'], 'who_name': who_name,
+                               'what': log.action, 'category': 'log'})
+
+            # ── Email logs ──
+            from .models import QuoteRequestEmailLog as _EL
+            for el in _EL.objects.filter(quote_request=qr).select_related('sent_by').order_by('sent_at'):
+                u = _user_info(el.sent_by)
+                events.append({'timestamp': _fmt(el.sent_at), 'who_role': u['role'], 'who_name': u['name'],
+                               'what': f'E-mail kiküldve: {el.subject} → {(el.to or "")[:80]}', 'category': 'email'})
+
+        # ── CustomerOrder lifecycle ──
+        u = _user_info(order.created_by)
+        events.append({'timestamp': _fmt(order.order_date or order.created_at), 'who_role': u['role'], 'who_name': u['name'],
+                       'what': f'Megrendelés létrehozva: {order.order_number}', 'category': 'order'})
+        if order.production_started_at:
+            events.append({'timestamp': _fmt(order.production_started_at), 'who_role': '', 'who_name': '',
+                           'what': f'Gyártásba küldve: {order.order_number}', 'category': 'production'})
+        if order.ready_at:
+            events.append({'timestamp': _fmt(order.ready_at), 'who_role': '', 'who_name': '',
+                           'what': f'Készre jelölve: {order.order_number}', 'category': 'ready'})
+        if order.delivery_started_at:
+            events.append({'timestamp': _fmt(order.delivery_started_at), 'who_role': '', 'who_name': '',
+                           'what': f'Szállítás megkezdve: {order.order_number}', 'category': 'delivery'})
+        if order.delivered_at:
+            events.append({'timestamp': _fmt(order.delivered_at), 'who_role': '', 'who_name': '',
+                           'what': f'Leszállítva: {order.order_number}', 'category': 'delivered'})
+        if order.invoice_number:
+            events.append({'timestamp': _fmt(order.updated_at), 'who_role': '', 'who_name': '',
+                           'what': f'Számlázva: {order.invoice_number}', 'category': 'invoice'})
+
+        # ── Delivery notes ──
+        from .models import DeliveryNote as _DN
+        dns = (
+            _DN.objects.filter(items__customer_order_item__customer_order=order)
+            .distinct().select_related('created_by', 'confirmed_by_user').order_by('created_at')
+        )
+        for dn in dns:
+            u = _user_info(dn.created_by)
+            events.append({'timestamp': _fmt(dn.created_at), 'who_role': u['role'], 'who_name': u['name'],
+                           'what': f'Szállítólevél: {dn.delivery_note_number}', 'category': 'delivery_note'})
+            if dn.is_confirmed and dn.confirmed_at:
+                confirmed_by = dn.confirmed_by_info or (dn.confirmed_by_user.get_full_name() if dn.confirmed_by_user else '')
+                u2 = _user_info(dn.confirmed_by_user)
+                events.append({'timestamp': _fmt(dn.confirmed_at), 'who_role': u2['role'],
+                               'who_name': confirmed_by or u2['name'],
+                               'what': f'Szállítólevél visszaigazolva: {dn.delivery_note_number}', 'category': 'delivery_confirmed'})
+
+        # ── Manufacturing cost items ──
+        if qr:
+            from apps.manufacturing.models import ManufacturingCostItem as _MCI
+            mci_map = dict(_MCI.STATUS_CHOICES)
+            for qi in qr.items.select_related('manufacturing_product').filter(manufacturing_product__isnull=False):
+                mp = qi.manufacturing_product
+                for ci in mp.cost_items.select_related('department', 'supplier').order_by('sort_order', 'id'):
+                    if ci.is_internal:
+                        dept = ci.department.name if ci.department else ''
+                        role, who = (f'Belső: {dept}' if dept else 'Belső'), dept
+                    else:
+                        role, who = 'Külső', (ci.supplier.name if ci.supplier else '')
+                    status_disp = mci_map.get(ci.status, ci.status)
+                    notes_part = f' – {ci.notes.strip()}' if ci.notes and ci.notes.strip() else ''
+                    events.append({'timestamp': _fmt(mp.created_at), 'who_role': role, 'who_name': who,
+                                   'what': f'{ci.name} ({status_disp}){notes_part}', 'category': 'cost_item'})
+
+        events.sort(key=lambda e: (e['timestamp'] or ''))
+        return Response(events)
     
     @action(detail=False, methods=['post'])
     def create_invoices(self, request):
@@ -6519,6 +6772,34 @@ class DeliveryNoteViewSet(viewsets.ModelViewSet):
                 if coi.status not in ('in_delivery', 'delivered'):
                     coi.status = 'in_delivery'
                     coi.save()
+
+        # QuoteLog az érintett RFQ-khoz + email értesítő
+        try:
+            _dn_ip = ip  # already extracted above
+            _logged_qrs = set()
+            for _dn_item in dn.items.all():
+                _qr = _dn_item.customer_order_item.customer_order.quote_request
+                if _qr and _qr.id not in _logged_qrs:
+                    QuoteLog.objects.create(
+                        quote=_qr, user=None,
+                        action=f'Szállítólevél visszaigazolva (publikus felület): {dn.delivery_note_number}',
+                        ip_address=_dn_ip or None,
+                    )
+                    _notify_internal_team(
+                        _qr,
+                        subject=f'Szállítólevél visszaigazolva – {dn.delivery_note_number}',
+                        body=(
+                            f'Az ügyfél visszaigazolta a szállítólevelet a publikus felületen keresztül.\n\n'
+                            f'Szállítólevél: {dn.delivery_note_number}\n'
+                            f'Árajánlat: {_qr.title}\n'
+                            f'Szám: {_qr.number or _qr.request_number}\n'
+                            f'IP: {_dn_ip}\n'
+                            + (f'Megjegyzés: {notes}\n' if notes else '')
+                        ),
+                    )
+                    _logged_qrs.add(_qr.id)
+        except Exception:
+            pass
 
         return Response({'status': 'ok'})
 

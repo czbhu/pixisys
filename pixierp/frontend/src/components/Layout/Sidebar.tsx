@@ -231,6 +231,17 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
         .reduce((sum, [_, count]) => sum + count, 0);
   };
 
+  // Badge label helper for submenu items
+  const labelWithBadge = (text: string, key: string) => {
+    const cnt = getCount(key);
+    return cnt > 0 ? (
+      <span style={{ display: 'flex', alignItems: 'center' }}>
+        {text}
+        <Badge count={cnt} size="small" style={{ marginLeft: 8 }} />
+      </span>
+    ) : <>{text}</>;
+  };
+
   const menuItems = [
     {
       key: '/dashboard',
@@ -257,15 +268,15 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
         },
         {
           key: '/personal/attendance',
-          label: 'Jelenléti ív',
+          label: labelWithBadge('Jelenléti ív', '/personal/attendance'),
         },
         {
           key: '/personal/tasks',
-          label: 'Feladatok',
+          label: labelWithBadge('Feladatok', '/personal/tasks'),
         },
         {
           key: '/personal/approvals',
-          label: 'Jóváhagyások',
+          label: labelWithBadge('Jóváhagyások', '/personal/approvals'),
         },
         {
           key: '/personal/cash-registers',
@@ -289,7 +300,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
       children: [
         {
           key: '/hr/employees',
-          label: 'Alkalmazottak',
+          label: labelWithBadge('Alkalmazottak', '/hr/employees'),
         },
         {
           key: '/hr/departments',
@@ -297,19 +308,19 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
         },
         {
           key: '/hr/attendance',
-          label: 'Jelenlét',
+          label: labelWithBadge('Jelenlét', '/hr/attendance'),
         },
         {
           key: '/hr/work-logs',
-          label: 'Munkanaplók',
+          label: labelWithBadge('Munkanaplók', '/hr/work-logs'),
         },
         {
           key: '/hr/payroll',
-          label: 'Bérszámfejtés',
+          label: labelWithBadge('Bérszámfejtés', '/hr/payroll'),
         },
         {
           key: '/hr/leaves',
-          label: 'Szabadságok',
+          label: labelWithBadge('Szabadságok', '/hr/leaves'),
         },
         {
           key: '/hr/analytics',
@@ -330,24 +341,29 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
     },
     {
       key: '/sales',
-      icon: <ShoppingCartOutlined />,
-      label: 'Értékesítés',
+      icon: (collapsed && getSectionCount('/sales') > 0) ? <Badge count={getSectionCount('/sales')} size="small" offset={[0, 10]}><ShoppingCartOutlined /></Badge> : <ShoppingCartOutlined />,
+      label: (
+        <span style={{ display: 'flex', alignItems: 'center' }}>
+            Értékesítés
+            {!collapsed && getSectionCount('/sales') > 0 && <Badge count={getSectionCount('/sales')} size="small" style={{ marginLeft: 8 }} />}
+        </span>
+      ),
       children: [
         {
           key: '/sales/rfqs',
-          label: 'Árajánlatok',
+          label: labelWithBadge('Árajánlatok', '/sales/rfqs'),
         },
         {
           key: '/sales/customer-orders',
-          label: 'Megrendelések',
+          label: labelWithBadge('Megrendelések', '/sales/customer-orders'),
         },
         {
           key: '/sales/delivery-notes',
-          label: 'Szállítás',
+          label: labelWithBadge('Szállítás', '/sales/delivery-notes'),
         },
         {
           key: '/sales/invoicing',
-          label: 'Számlázás',
+          label: labelWithBadge('Számlázás', '/sales/invoicing'),
         },
         {
           key: '/sales/invitations',
@@ -359,7 +375,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
         },
         {
           key: '/sales/projects',
-          label: 'Projektek',
+          label: labelWithBadge('Projektek', '/sales/projects'),
         },
       ],
     },
@@ -375,11 +391,11 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
       children: [
         {
           key: '/manufacturing/ordered-products',
-          label: 'Megrendelt Gyártások',
+          label: labelWithBadge('Megrendelt Gyártások', '/manufacturing/ordered-products'),
         },
         {
           key: '/manufacturing/queue',
-          label: 'Gyártási Sor',
+          label: labelWithBadge('Gyártási Sor', '/manufacturing/queue'),
         },
         {
           key: '/manufacturing/product-classes',
@@ -405,8 +421,13 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
     },
     {
       key: '/finance',
-      icon: <DollarOutlined />,
-      label: 'Pénzügy',
+      icon: (collapsed && getSectionCount('/finance') > 0) ? <Badge count={getSectionCount('/finance')} size="small" offset={[0, 10]}><DollarOutlined /></Badge> : <DollarOutlined />,
+      label: (
+        <span style={{ display: 'flex', alignItems: 'center' }}>
+          Pénzügy
+          {!collapsed && getSectionCount('/finance') > 0 && <Badge count={getSectionCount('/finance')} size="small" style={{ marginLeft: 8 }} />}
+        </span>
+      ),
       children: [
         {
           key: '/finance/payments',
@@ -436,20 +457,25 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
     },
     {
       key: '/crm',
-      icon: <UserOutlined />,
-      label: 'CRM',
+      icon: (collapsed && getSectionCount('/crm') > 0) ? <Badge count={getSectionCount('/crm')} size="small" offset={[0, 10]}><UserOutlined /></Badge> : <UserOutlined />,
+      label: (
+        <span style={{ display: 'flex', alignItems: 'center' }}>
+          CRM
+          {!collapsed && getSectionCount('/crm') > 0 && <Badge count={getSectionCount('/crm')} size="small" style={{ marginLeft: 8 }} />}
+        </span>
+      ),
       children: [
         {
           key: '/crm/companies',
-          label: 'Cégek',
+          label: labelWithBadge('Cégek', '/crm/companies'),
         },
         {
           key: '/crm/contacts',
-          label: 'Kapcsolatok',
+          label: labelWithBadge('Kapcsolatok', '/crm/contacts'),
         },
         {
           key: '/crm/activities',
-          label: 'Tevékenységek',
+          label: labelWithBadge('Tevékenységek', '/crm/activities'),
         },
         {
           key: '/crm/campaigns',
@@ -459,20 +485,25 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
     },
     {
       key: '/orders',
-      icon: <ShoppingOutlined />,
-      label: 'Rendelések',
+      icon: (collapsed && getSectionCount('/orders') > 0) ? <Badge count={getSectionCount('/orders')} size="small" offset={[0, 10]}><ShoppingOutlined /></Badge> : <ShoppingOutlined />,
+      label: (
+        <span style={{ display: 'flex', alignItems: 'center' }}>
+          Rendelések
+          {!collapsed && getSectionCount('/orders') > 0 && <Badge count={getSectionCount('/orders')} size="small" style={{ marginLeft: 8 }} />}
+        </span>
+      ),
       children: [
         {
           key: '/orders/orders',
-          label: 'Megrendelések',
+          label: labelWithBadge('Megrendelések', '/orders/orders'),
         },
         {
           key: '/orders/shipments',
-          label: 'Szállítások',
+          label: labelWithBadge('Szállítások', '/orders/shipments'),
         },
         {
           key: '/orders/returns',
-          label: 'Visszaküldések',
+          label: labelWithBadge('Visszaküldések', '/orders/returns'),
         },
         {
           key: '/orders/suppliers',
@@ -482,8 +513,13 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
     },
     {
       key: '/warehouse',
-      icon: <InboxOutlined />,
-      label: 'Raktár',
+      icon: (collapsed && getSectionCount('/warehouse') > 0) ? <Badge count={getSectionCount('/warehouse')} size="small" offset={[0, 10]}><InboxOutlined /></Badge> : <InboxOutlined />,
+      label: (
+        <span style={{ display: 'flex', alignItems: 'center' }}>
+          Raktár
+          {!collapsed && getSectionCount('/warehouse') > 0 && <Badge count={getSectionCount('/warehouse')} size="small" style={{ marginLeft: 8 }} />}
+        </span>
+      ),
       children: [
         {
           key: '/warehouse/materials',
@@ -495,15 +531,15 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
         },
         {
           key: '/warehouse/inventory',
-          label: 'Készlet',
+          label: labelWithBadge('Készlet', '/warehouse/inventory'),
         },
         {
           key: '/warehouse/receipts',
-          label: 'Bevételezések',
+          label: labelWithBadge('Bevételezések', '/warehouse/receipts'),
         },
         {
           key: '/warehouse/supplier-invoices',
-          label: 'Beszállítói számlák',
+          label: labelWithBadge('Beszállítói számlák', '/warehouse/supplier-invoices'),
         },
         {
           key: '/warehouse/scraps',
@@ -523,11 +559,11 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
         },
         {
           key: '/warehouse/picking',
-          label: 'Kiszedés',
+          label: labelWithBadge('Kiszedés', '/warehouse/picking'),
         },
         {
           key: '/warehouse/picking-list',
-          label: 'Kiszedési lista',
+          label: labelWithBadge('Kiszedési lista', '/warehouse/picking-list'),
         },
       ],
     },
@@ -548,12 +584,17 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
     },
     {
       key: '/tickets',
-      icon: <FileTextOutlined />,
-      label: 'Jegyek',
+      icon: (collapsed && getSectionCount('/tickets') > 0) ? <Badge count={getSectionCount('/tickets')} size="small" offset={[0, 10]}><FileTextOutlined /></Badge> : <FileTextOutlined />,
+      label: (
+        <span style={{ display: 'flex', alignItems: 'center' }}>
+          Jegyek
+          {!collapsed && getSectionCount('/tickets') > 0 && <Badge count={getSectionCount('/tickets')} size="small" style={{ marginLeft: 8 }} />}
+        </span>
+      ),
       children: [
         {
           key: '/tickets/list',
-          label: 'Jegyek',
+          label: labelWithBadge('Jegyek', '/tickets/list'),
         },
         {
           key: '/tickets/settings',

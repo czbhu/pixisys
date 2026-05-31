@@ -607,6 +607,7 @@ export const incomingProformaAPI = {
     fd.append('file', file);
     return api.post('/api/incoming-proformas/parse-document/', fd);
   },
+  sendEmail: (data) => api.post('/api/incoming-proformas/send-email/', data),
 };
 
 export const importAPI = {

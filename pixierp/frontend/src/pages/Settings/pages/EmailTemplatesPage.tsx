@@ -91,7 +91,8 @@ const EmailTemplatesPage: React.FC = () => {
               <Text code>{'{contact_names}'}</Text> - Kapcsolattartók nevei (vagy "Ügyfelünk" ha nincs)<br />
               <Text code>{'{public_order_url}'}</Text> - Nyilvános megrendelő link<br />
               <Text code>{'{project_name}'}</Text> - Projekt neve (rfqs_send: több tételes küldésnél)<br />
-              <Text code>{'{item_names}'}</Text> - Tételek neve felsorolva, max 50 karakter (rfqs_send: több tételes küldésnél)
+              <Text code>{'{item_names}'}</Text> - Tételek neve felsorolva, max 50 karakter (rfqs_send: több tételes küldésnél)<br />
+              <Text code>{'{items_table}'}</Text> - HTML táblázat: termék neve, cikkszám, leírás, mennyiség, egység, nettó egységár, nettó ár
             </div>
           }
           type="info"

@@ -409,6 +409,81 @@ class ManufacturingCostItem(models.Model):
         super().save(*args, **kwargs)
         if self.status == 'cancelled' and old_status != 'cancelled':
             self._check_parent_order_item_cancelled()
+        # Auto-create CustomerOrder when cost item reaches an order-like status
+        _ORDER_LIKE = {'confirmed', 'in_production', 'ready', 'in_delivery', 'delivered'}
+        if self.status in _ORDER_LIKE and old_status != self.status:
+            try:
+                self._ensure_customer_order_exists()
+            except Exception:
+                pass  # never block the save
+
+    def _ensure_customer_order_exists(self):
+        """If the linked ManufacturingProduct is connected to a QuoteRequestItem
+        that has no active CustomerOrder, create one automatically."""
+        from apps.sales.models import (
+            QuoteRequest, CustomerOrder, CustomerOrderItem,
+        )
+        _ORDER_STATUS_RANK = ['new', 'confirmed', 'in_production', 'ready', 'in_delivery', 'delivered']
+        mp = self.product
+        for qi in mp.quoterequestitem_set.select_related('quote_request').all():
+            qr = qi.quote_request
+            if qr.is_deleted or qr.status == 'cancelled':
+                continue
+            # Check if a non-cancelled COI already covers this item
+            has_coi = CustomerOrderItem.objects.filter(
+                quote_item=qi,
+            ).exclude(customer_order__status='cancelled').exclude(status='cancelled').exists()
+            if has_coi:
+                continue
+            # Determine the highest cost-item status for this MP
+            all_cost_statuses = [
+                s for s in mp.cost_items.exclude(status='cancelled').values_list('status', flat=True)
+                if s in set(_ORDER_STATUS_RANK)
+            ]
+            if not all_cost_statuses:
+                continue
+            co_item_status = max(all_cost_statuses, key=lambda s: _ORDER_STATUS_RANK.index(s))
+            # Look for an existing CO on this RFQ to add the item to
+            existing_co = qr.customer_orders.exclude(status='cancelled').order_by('-id').first()
+            if existing_co:
+                CustomerOrderItem.objects.create(
+                    customer_order=existing_co,
+                    quote_item=qi,
+                    status=co_item_status,
+                    quantity=qi.quantity,
+                    unit=qi.unit or 'db',
+                    net_unit_price=qi.net_unit_price or 0,
+                    vat_rate=qi.vat_rate or 27,
+                    discount_percent=qi.discount_percent or 0,
+                    description=qi.item_name or '',
+                )
+            else:
+                # Create a new CustomerOrder
+                order_number = qr.number or qr.request_number or f"QR{qr.id}"
+                suffix = 2
+                base = order_number
+                while CustomerOrder.objects.filter(order_number=order_number).exists():
+                    order_number = f"{base}-{suffix}"; suffix += 1
+                co = CustomerOrder.objects.create(
+                    quote_request=qr,
+                    order_number=order_number,
+                    status=co_item_status,
+                    created_by=qr.created_by,
+                )
+                CustomerOrderItem.objects.create(
+                    customer_order=co,
+                    quote_item=qi,
+                    status=co_item_status,
+                    quantity=qi.quantity,
+                    unit=qi.unit or 'db',
+                    net_unit_price=qi.net_unit_price or 0,
+                    vat_rate=qi.vat_rate or 27,
+                    discount_percent=qi.discount_percent or 0,
+                    description=qi.item_name or '',
+                )
+                if qr.status not in ('ordered',):
+                    qr.status = 'ordered'
+                    qr.save(update_fields=['status'])
 
     def _check_parent_order_item_cancelled(self):
         """Ha a termék összes altétele törölve státuszba kerül,
