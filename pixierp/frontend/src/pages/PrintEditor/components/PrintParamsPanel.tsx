@@ -829,6 +829,25 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
           {/* Standard nyomtatási mód – nem klikkdíjas termékekhez */}
           {!isClickSheet && (
             <>
+              {(selectedProduct?.calculator_type === 'sheet_print' || selectedProduct?.calculator_type === 'roll_print') && (
+                <>
+                  <SectionLabel label="Alapanyag" />
+                  <Select
+                    allowClear
+                    showSearch
+                    placeholder="Válassz alapanyagot…"
+                    optionFilterProp="children"
+                    value={params.material_id ?? undefined}
+                    onChange={(id: number | undefined) => update({ material_id: id ?? null })}
+                    onClear={() => update({ material_id: null })}
+                    style={{ width: '100%' }}
+                    size="small"
+                  >
+                    {materials.map(m => <Option key={m.id} value={m.id}>{m.name}</Option>)}
+                    {materials.length === 0 && <Option disabled value={-1}>Nincs alapanyag beállítva</Option>}
+                  </Select>
+                </>
+              )}
               <SectionLabel label="Nyomtatási mód" />
               <Radio.Group
                 value={params.sides}
