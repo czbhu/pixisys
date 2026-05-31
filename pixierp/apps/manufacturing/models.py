@@ -1441,6 +1441,13 @@ class ProductTemplate(models.Model):
         related_name='finishing_for_templates',
         verbose_name="Kész termékre vonatkozó szolgáltatások",
     )
+    binding_services = models.ManyToManyField(
+        Service,
+        blank=True,
+        related_name='binding_for_templates',
+        verbose_name="Kötészeti módok",
+        help_text="A termékhez választható kötészeti módok (pl. Ívben, Irkatűzött, Spirálozott). A felhasználó a Print Editorban választ közülük.",
+    )
 
     custom_size_enabled = models.BooleanField(default=False, verbose_name="Egyedi méret engedélyezett")
     UNIT_CHOICES = [('mm', 'mm'), ('cm', 'cm'), ('m', 'm')]

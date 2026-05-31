@@ -74,6 +74,7 @@ interface ProductTemplate {
   allowed_materials_details?: MaterialDetail[];
   required_services?: number[];
   finishing_services?: number[];
+  binding_services_details?: { id: number; name: string; code: string }[];
   quantity_discounts?: { id: number; min_amount: number; discount_type: string; discount_value: number }[];
   template_categories?: number[];
 }
@@ -737,6 +738,23 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                   />
                 </div>
               </div>
+              {(selectedProduct?.binding_services_details?.length ?? 0) > 0 && (
+                <div style={{ marginBottom: 6 }}>
+                  <Text style={{ fontSize: 11, color: '#666', display: 'block', marginBottom: 3 }}>Kötészeti mód</Text>
+                  <Select
+                    mode="multiple"
+                    allowClear
+                    size="small"
+                    placeholder="Válassz kötészeti módot…"
+                    style={{ width: '100%' }}
+                    value={params.binding_mode_ids ?? []}
+                    onChange={(vals: number[]) => update({ binding_mode_ids: vals })}
+                    options={(selectedProduct?.binding_services_details ?? []).map(b => ({
+                      label: b.name, value: b.id,
+                    }))}
+                  />
+                </div>
+              )}
               <div style={{ marginBottom: 4 }}>
                 <Text style={{ fontSize: 11, color: '#666', display: 'block', marginBottom: 3 }}>Cím oldal</Text>
                 <Select

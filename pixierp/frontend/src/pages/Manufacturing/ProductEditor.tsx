@@ -70,6 +70,8 @@ interface ProductTemplate {
   required_services_details: ResourceItem[];
   finishing_services: number[];
   finishing_services_details: ResourceItem[];
+  binding_services: number[];
+  binding_services_details: ResourceItem[];
   finishing_service_groups: number[][];
   service_groups_1: number[][];
   service_groups_2: number[][];  print_sides: 1 | 2;
@@ -204,12 +206,12 @@ const ProductEditor: React.FC = () => {
   // Subcategory child groups are identified by their code suffix:
   //   _PRINT (Nyomtatás), _REQUIRED (Kötelező), _FINISHING (Utómunka), _PRODUCT (Kész termékre).
   const subcatServiceIds = useMemo(() => {
-    const result: Record<'PRINT' | 'REQUIRED' | 'FINISHING' | 'PRODUCT', Set<number> | null> = {
-      PRINT: null, REQUIRED: null, FINISHING: null, PRODUCT: null,
+    const result: Record<'PRINT' | 'REQUIRED' | 'FINISHING' | 'BINDING' | 'PRODUCT', Set<number> | null> = {
+      PRINT: null, REQUIRED: null, FINISHING: null, BINDING: null, PRODUCT: null,
     };
     if (serviceGroupId == null) return result;
     const children = serviceGroups.filter(g => g.parent === serviceGroupId);
-    (['PRINT', 'REQUIRED', 'FINISHING', 'PRODUCT'] as const).forEach(suffix => {
+    (['PRINT', 'REQUIRED', 'FINISHING', 'BINDING', 'PRODUCT'] as const).forEach(suffix => {
       const child = children.find(g => g.code && g.code.endsWith(`_${suffix}`));
       if (child) result[suffix] = new Set(child.service_ids ?? []);
     });
@@ -225,6 +227,7 @@ const ProductEditor: React.FC = () => {
   const printServiceOptions     = useMemo(() => makeServiceOptions(subcatServiceIds.PRINT),     [makeServiceOptions, subcatServiceIds]);
   const requiredServiceOptions  = useMemo(() => makeServiceOptions(subcatServiceIds.REQUIRED),  [makeServiceOptions, subcatServiceIds]);
   const finishingServiceOptions = useMemo(() => makeServiceOptions(subcatServiceIds.FINISHING), [makeServiceOptions, subcatServiceIds]);
+  const bindingServiceOptions   = useMemo(() => makeServiceOptions(subcatServiceIds.BINDING),   [makeServiceOptions, subcatServiceIds]);
   const productServiceOptions   = useMemo(() => makeServiceOptions(subcatServiceIds.PRODUCT),   [makeServiceOptions, subcatServiceIds]);
 
   // Printing-mode groups (top-level service groups, i.e. no parent) for the service_group select.
@@ -241,6 +244,7 @@ const ProductEditor: React.FC = () => {
 
   // Form state
   const [form] = Form.useForm();
+  const watchedCalcType = Form.useWatch('calculator_type', form);
   const [sizes, setSizes]                             = useState<SizeRow[]>([emptySizeRow(0)]);
   const [selectedMaterials, setSelectedMaterials]     = useState<number[]>([]);
   const [selectedMaterialGroups, setSelectedMaterialGroups] = useState<number[]>([]);
@@ -248,6 +252,7 @@ const ProductEditor: React.FC = () => {
   const [serviceGroups2, setServiceGroups2]           = useState<number[][]>([[]])
   const [selectedPrintServiceOptions, setSelectedPrintServiceOptions] = useState<number[]>([]);
   const [requiredServices, setRequiredServices]       = useState<number[]>([]);
+  const [bindingServices, setBindingServices]         = useState<number[]>([]);
   const [finishingServiceGroups, setFinishingServiceGroups] = useState<number[][]>([[]]);
   const [quantityDiscounts, setQuantityDiscounts]     = useState<QuantityDiscount[]>([]);
   const [selectedTemplateCategories, setSelectedTemplateCategories] = useState<number[]>([]);
@@ -376,6 +381,7 @@ const ProductEditor: React.FC = () => {
     setSelectedMaterialGroups([]);
     setSelectedPrintServiceOptions([]);
     setRequiredServices([]);
+    setBindingServices([]);
     setFinishingServiceGroups([[]]);
     setServiceGroups1([[]]);
     setServiceGroups2([[]]);
@@ -448,8 +454,8 @@ const ProductEditor: React.FC = () => {
     setSelectedMaterials(p.allowed_materials ?? []);
     setSelectedMaterialGroups(p.allowed_material_groups ?? []);
     setRequiredServices(p.required_services ?? []);
-    setFinishingServiceGroups(p.finishing_service_groups?.length ? p.finishing_service_groups : [[]]);
-    setServiceGroups1(p.service_groups_1?.length ? p.service_groups_1 : [[]]);
+    setBindingServices(p.binding_services ?? []);
+    setFinishingServiceGroups(p.finishing_service_groups?.length ? p.finishing_service_groups : [[]]);    setServiceGroups1(p.service_groups_1?.length ? p.service_groups_1 : [[]]);
     setServiceGroups2(p.service_groups_2?.length ? p.service_groups_2 : [[]]);
     setQuantityDiscounts((p.quantity_discounts ?? []).map(d => ({
       _key: d.id,
@@ -523,6 +529,7 @@ const ProductEditor: React.FC = () => {
       allowed_materials: selectedMaterials,
       allowed_material_groups: selectedMaterialGroups,
       required_services: requiredServices,
+      binding_services: bindingServices,
       finishing_service_groups: finishingServiceGroups,
       service_groups_1: serviceGroups1,
       service_groups_2: serviceGroups2,
@@ -1050,6 +1057,28 @@ const ProductEditor: React.FC = () => {
                   </>
                 ),
               },
+              ...(watchedCalcType === 'click_sheet_print' ? [{
+                key: 'binding_services',
+                label: <Text strong style={{ fontSize: 13 }}>Kötészeti mód</Text>,
+                children: (
+                  <>
+                    <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
+                      Az íves klikkdíjas nyomtatáshoz választható kötészeti módok. A felhasználó a Print Editorban ezek közül választhat (egyszerre többet is).
+                    </Text>
+                    <Select
+                      mode="multiple"
+                      allowClear
+                      showSearch
+                      placeholder="Kötészeti mód hozzáadása…"
+                      style={{ width: '100%' }}
+                      value={bindingServices}
+                      onChange={setBindingServices}
+                      optionFilterProp="label"
+                      options={bindingServiceOptions}
+                    />
+                  </>
+                ),
+              }] : []),
               {
                 key: 'print',
                 label: <Text strong style={{ fontSize: 13 }}>Nyomtatási beállítások</Text>,

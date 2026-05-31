@@ -619,6 +619,7 @@ class ProductTemplateSerializer(serializers.ModelSerializer):
     allowed_services_details = serializers.SerializerMethodField()
     required_services_details = serializers.SerializerMethodField()
     finishing_services_details = serializers.SerializerMethodField()
+    binding_services_details = serializers.SerializerMethodField()
     finishing_service_groups = serializers.SerializerMethodField()
     print_service_options_details = serializers.SerializerMethodField()
     service_groups_1 = serializers.SerializerMethodField()
@@ -638,6 +639,7 @@ class ProductTemplateSerializer(serializers.ModelSerializer):
             'allowed_services', 'allowed_services_details',
             'required_services', 'required_services_details',
             'finishing_services', 'finishing_services_details',
+            'binding_services', 'binding_services_details',
             'finishing_service_groups',
             'service_groups_1', 'service_groups_2',
             'template_categories', 'template_categories_details',
@@ -697,6 +699,9 @@ class ProductTemplateSerializer(serializers.ModelSerializer):
 
     def get_finishing_services_details(self, obj):
         return [{'id': s.id, 'name': s.name, 'code': s.code} for s in obj.finishing_services.all()]
+
+    def get_binding_services_details(self, obj):
+        return [{'id': s.id, 'name': s.name, 'code': s.code} for s in obj.binding_services.all()]
 
     def get_finishing_service_groups(self, obj):
         groups = obj.service_groups.filter(side='F').order_by('group_index').prefetch_related('services')
@@ -761,6 +766,7 @@ class ProductTemplateSerializer(serializers.ModelSerializer):
         allowed_material_groups = validated_data.pop('allowed_material_groups', [])
         print_service_options = validated_data.pop('print_service_options', [])
         required_services = validated_data.pop('required_services', [])
+        binding_services = validated_data.pop('binding_services', [])
         template_categories = validated_data.pop('template_categories', [])
         validated_data.pop('finishing_services', None)  # derived from finishing_service_groups
         validated_data.pop('allowed_services', None)  # derived from groups
@@ -772,6 +778,7 @@ class ProductTemplateSerializer(serializers.ModelSerializer):
         template.allowed_material_groups.set(allowed_material_groups)
         template.print_service_options.set(print_service_options)
         template.required_services.set(required_services)
+        template.binding_services.set(binding_services)
         template.template_categories.set(template_categories)
         self._save_service_groups(template, sg1, sg2, sgf)
         self._save_service_groups(template, sg1, sg2)
@@ -789,6 +796,7 @@ class ProductTemplateSerializer(serializers.ModelSerializer):
         allowed_material_groups = validated_data.pop('allowed_material_groups', None)
         print_service_options = validated_data.pop('print_service_options', None)
         required_services = validated_data.pop('required_services', None)
+        binding_services = validated_data.pop('binding_services', None)
         template_categories = validated_data.pop('template_categories', None)
         validated_data.pop('finishing_services', None)  # derived from finishing_service_groups
         validated_data.pop('allowed_services', None)  # derived from groups
@@ -805,6 +813,8 @@ class ProductTemplateSerializer(serializers.ModelSerializer):
             instance.print_service_options.set(print_service_options)
         if required_services is not None:
             instance.required_services.set(required_services)
+        if binding_services is not None:
+            instance.binding_services.set(binding_services)
         if template_categories is not None:
             instance.template_categories.set(template_categories)
         sgf = self.initial_data.get('finishing_service_groups', None)

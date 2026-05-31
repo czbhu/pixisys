@@ -7,12 +7,14 @@ from apps.manufacturing.models import ProductClass, ProductTemplate, ServiceGrou
 #   - Nyomtatás                        (kód-utótag: _PRINT,     'services' kulcs)
 #   - Kötelező kapcsolódó szolgáltatás (kód-utótag: _REQUIRED,  'required' kulcs)
 #   - Utómunka                         (kód-utótag: _FINISHING, 'finishing' kulcs)
+#   - Kötészeti mód                    (kód-utótag: _BINDING,   'binding' kulcs)
 #   - Kész termékre vonatkozó          (kód-utótag: _PRODUCT,   'product' kulcs)
 # Minden csoport és szolgáltatás védett (is_protected=True), placeholder 0 Ft árral.
 SUBCATEGORIES = [
     ('PRINT', 'Nyomtatás', 'services'),
     ('REQUIRED', 'Kötelező kapcsolódó szolgáltatás', 'required'),
     ('FINISHING', 'Utómunka', 'finishing'),
+    ('BINDING', 'Kötészeti mód', 'binding'),
     ('PRODUCT', 'Kész termékre vonatkozó', 'product'),
 ]
 
@@ -28,6 +30,13 @@ SVC_CONTOUR_CUT   = {'code': 'CONTOUR_CUT',   'name': 'Kontúrvágás',         
 SVC_EYELET        = {'code': 'EYELET',        'name': 'Gyűrűzés',              'description': 'Ringli (gyűrű) behelyezése'}
 SVC_HEMMING       = {'code': 'HEMMING',       'name': 'Szegés',                'description': 'Szélek szegése'}
 SVC_STRETCH_FRAME = {'code': 'STRETCH_FRAME', 'name': 'Vakrámázás',            'description': 'Vakrámára feszítés'}
+
+# ── Kötészeti mód (binding) szolgáltatás-definíciók ──
+SVC_BIND_SHEET    = {'code': 'BIND_SHEET',    'name': 'Ívben (alap)',   'description': 'Kötés nélkül, ívben (alapértelmezett)'}
+SVC_BIND_SADDLE   = {'code': 'BIND_SADDLE',   'name': 'Irkatűzött',     'description': 'Irkatűzött (tűzött) kötés'}
+SVC_BIND_SPIRAL   = {'code': 'BIND_SPIRAL',   'name': 'Spirálozott',    'description': 'Spirálozott kötés'}
+SVC_BIND_PERFECT  = {'code': 'BIND_PERFECT',  'name': 'Ragasztókötött', 'description': 'Ragasztókötött (perfect binding)'}
+SVC_BIND_PADDED   = {'code': 'BIND_PADDED',   'name': 'Tömbösített',     'description': 'Tömbösített (enyvezett tömb) kötés'}
 
 PRINT_SERVICE_GROUPS = [
     {
@@ -54,6 +63,14 @@ PRINT_SERVICE_GROUPS = [
             SVC_LAM_GLOSSY,
             SVC_LAM_SILK,
             SVC_CUT_STACK,
+        ],
+        # Kötészeti mód alkategória
+        'binding': [
+            SVC_BIND_SHEET,
+            SVC_BIND_SADDLE,
+            SVC_BIND_SPIRAL,
+            SVC_BIND_PERFECT,
+            SVC_BIND_PADDED,
         ],
         # Kész termékre vonatkozó alkategória
         'product': [
@@ -202,6 +219,7 @@ class Command(BaseCommand):
         # code -> objektum gyorsítótár
         self.groups_by_code = {}            # szülő csoport kódja -> ServiceGroup
         self.print_subgroup_by_parent = {}  # szülő kód -> _PRINT alkategória ServiceGroup
+        self.binding_subgroup_by_parent = {}  # szülő kód -> _BINDING alkategória ServiceGroup
         self.services_by_code = {}
 
         self._seed_groups_and_services()
@@ -307,6 +325,8 @@ class Command(BaseCommand):
                 sub = self._ensure_group(sub_code, display_name, parent=parent)
                 if suffix == 'PRINT':
                     self.print_subgroup_by_parent[grp['code']] = sub
+                if suffix == 'BINDING':
+                    self.binding_subgroup_by_parent[grp['code']] = sub
                 for svc_data in services:
                     self._ensure_service(svc_data, sub, drop_from=parent)
 
@@ -372,6 +392,12 @@ class Command(BaseCommand):
                 tpl.allowed_services.add(*grp_services)
                 tpl.print_service_options_order = [s.id for s in grp_services]
                 tpl.save(update_fields=['print_service_options_order'])
+
+            # binding_services feltöltése a _BINDING alkategória szolgáltatásaival
+            binding_subgroup = self.binding_subgroup_by_parent.get(prod['group_code'])
+            binding_services = list(binding_subgroup.services.all()) if binding_subgroup else []
+            if binding_services:
+                tpl.binding_services.set(binding_services)
 
     def _log(self, msg):
         if self.verbose:

@@ -51,6 +51,7 @@ export interface PrintParams {
   material_id: number | null;
   multi_sheet_enabled?: boolean;
   sheet_count?: number;      // ívek száma (multi_sheet_enabled esetén)
+  binding_mode_ids?: number[];  // választott kötészeti mód(ok) (Service ID-k)
 }
 
 interface Props {
