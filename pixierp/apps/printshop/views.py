@@ -308,7 +308,10 @@ class PrintOrderViewSet(viewsets.ModelViewSet):
                 binding=str(d.get('binding', 'cut')),
                 folding_count=int(d.get('folding_count', 0)),
                 config=config,
-                selected_service_ids=d.get('selected_service_ids') or [],
+                selected_service_ids=list(dict.fromkeys([
+                    *(d.get('selected_service_ids') or []),
+                    *(d.get('finishing_service_ids') or []),
+                ])),
             )
             return Response(breakdown)
         except Exception as e:

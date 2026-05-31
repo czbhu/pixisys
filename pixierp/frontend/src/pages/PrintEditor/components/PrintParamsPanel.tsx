@@ -262,6 +262,14 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
   // Robust flatten: supports both legacy (number|null)[] and new number[][] shapes
   const flattenGroups = (arr: any[]): number[] =>
     arr.flatMap(g => Array.isArray(g) ? g.filter((x): x is number => x != null) : (g != null ? [g] : []));
+  // Robust per-group setter: pads the array so the value sticks even if the
+  // restored selection array is shorter than the product's group count.
+  const setGroupValue = (prev: number[][], idx: number, vals: number[]): number[][] => {
+    const next = prev.slice();
+    while (next.length <= idx) next.push([]);
+    next[idx] = vals;
+    return next;
+  };
   const flatSelectedIds = useMemo(() => [
     ...flattenGroups(selectedServices1),
     ...flattenGroups(selectedServices2),
@@ -338,6 +346,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
           sides: p.sides, side1_mode: p.side1_mode, side2_mode: p.side2_mode,
           binding: p.binding, folding_count: p.folding_count,
           selected_service_ids: flatSelectedIds,
+          finishing_service_ids: flatFinishingIds,
         });
         setPricing(res.data);
         onPriceChange?.(res.data);
@@ -348,9 +357,9 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
         setCalcLoading(false);
       }
     }, 400);
-  }, [flatSelectedIds]); // eslint-disable-line
+  }, [flatSelectedIds, flatFinishingIds]); // eslint-disable-line
 
-  useEffect(() => { calculatePrice(params); }, [params, flatSelectedIds]); // eslint-disable-line
+  useEffect(() => { calculatePrice(params); }, [params, flatSelectedIds, flatFinishingIds]); // eslint-disable-line
 
   // ── Click-sheet-print calculation ────────────────────────────────────────
   const calculateClickPrice = useCallback(async () => {
@@ -980,7 +989,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                           style={{ width: '100%' }}
                           placeholder="Válassz utómunká(ka)t…"
                           value={sel[gIdx] ?? []}
-                          onChange={(vals: number[]) => setSel(prev => prev.map((s, i) => i === gIdx ? vals : s))}
+                          onChange={(vals: number[]) => setSel(prev => setGroupValue(prev, gIdx, vals))}
                         >
                           {group.map(svcId => {
                             const svc = svcById.get(svcId);
@@ -1023,7 +1032,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                       style={{ width: '100%' }}
                       placeholder="Válassz…"
                       value={selectedFinishingServices[gIdx] ?? []}
-                      onChange={(vals: number[]) => setSelectedFinishingServices(prev => prev.map((s, i) => i === gIdx ? vals : s))}
+                      onChange={(vals: number[]) => setSelectedFinishingServices(prev => setGroupValue(prev, gIdx, vals))}
                     >
                       {group.map(svcId => {
                         const svc = svcById.get(svcId);
