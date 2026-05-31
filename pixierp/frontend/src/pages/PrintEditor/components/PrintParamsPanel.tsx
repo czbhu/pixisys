@@ -448,6 +448,10 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
     setSelectedPrintSvcId1(null);
     setSelectedPrintSvcId2(null);
     setClickSides((product.print_sides ?? 1) as 1 | 2);
+    // UV táblás/tekercses termék: alapból 1 oldalas nyomtatás
+    if (product.calculator_type === 'sheet_print' || product.calculator_type === 'roll_print') {
+      update({ sides: '1', side2_mode: 'none' });
+    }
     // Auto-select material if exactly one is available
     const mats = product.allowed_materials_details ?? [];
     if (mats.length === 1) {
@@ -921,18 +925,22 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                 </div>
               )}
 
-              <SectionLabel label="Kötészet" />
-              <Radio.Group
-                value={params.binding}
-                onChange={e => update({ binding: e.target.value })}
-                size="small"
-                optionType="button"
-                buttonStyle="solid"
-                style={{ width: '100%', display: 'flex', marginBottom: 4 }}
-              >
-                <Radio.Button value="cut" style={{ flex: 1, textAlign: 'center', fontSize: 11 }}>Méretre vágás</Radio.Button>
-                <Radio.Button value="fold" style={{ flex: 1, textAlign: 'center', fontSize: 11 }}>Hajtogatás</Radio.Button>
-              </Radio.Group>
+              {!(selectedProduct?.calculator_type === 'sheet_print' || selectedProduct?.calculator_type === 'roll_print') && (
+                <>
+                  <SectionLabel label="Kötészet" />
+                  <Radio.Group
+                    value={params.binding}
+                    onChange={e => update({ binding: e.target.value })}
+                    size="small"
+                    optionType="button"
+                    buttonStyle="solid"
+                    style={{ width: '100%', display: 'flex', marginBottom: 4 }}
+                  >
+                    <Radio.Button value="cut" style={{ flex: 1, textAlign: 'center', fontSize: 11 }}>Méretre vágás</Radio.Button>
+                    <Radio.Button value="fold" style={{ flex: 1, textAlign: 'center', fontSize: 11 }}>Hajtogatás</Radio.Button>
+                  </Radio.Group>
+                </>
+              )}
             </>
           )}
 
