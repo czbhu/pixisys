@@ -16,6 +16,19 @@ SUBCATEGORIES = [
     ('PRODUCT', 'Kész termékre vonatkozó', 'product'),
 ]
 
+# ── Újrahasznosítható Utómunka (finishing) szolgáltatás-definíciók ──
+# Több nyomtatási mód is hivatkozhat ugyanarra a szolgáltatásra (M2M tagság).
+SVC_LAM_MATT      = {'code': 'LAM_MATT',      'name': 'Fóliázás - matt',       'description': 'Matt fóliázás'}
+SVC_LAM_GLOSSY    = {'code': 'LAM_GLOSSY',    'name': 'Fóliázás - fényes',     'description': 'Fényes fóliázás'}
+SVC_LAM_SILK      = {'code': 'LAM_SILK',      'name': 'Fóliázás - selyem matt', 'description': 'Selyem matt (soft touch) fóliázás'}
+SVC_CUT_STACK     = {'code': 'CUT_STACK',     'name': 'Méretre vágás',         'description': 'Kész nyomat méretre vágása'}
+SVC_VARNISH_MATT  = {'code': 'VARNISH_MATT',  'name': 'Lakkozás - matt',       'description': 'Matt lakkozás'}
+SVC_VARNISH_GLOSSY = {'code': 'VARNISH_GLOSSY', 'name': 'Lakkozás - fényes',   'description': 'Fényes lakkozás'}
+SVC_CONTOUR_CUT   = {'code': 'CONTOUR_CUT',   'name': 'Kontúrvágás',           'description': 'Kontúr (alakra) vágás'}
+SVC_EYELET        = {'code': 'EYELET',        'name': 'Gyűrűzés',              'description': 'Ringli (gyűrű) behelyezése'}
+SVC_HEMMING       = {'code': 'HEMMING',       'name': 'Szegés',                'description': 'Szélek szegése'}
+SVC_STRETCH_FRAME = {'code': 'STRETCH_FRAME', 'name': 'Vakrámázás',            'description': 'Vakrámára feszítés'}
+
 PRINT_SERVICE_GROUPS = [
     {
         'code': 'PRINT_DIGIPRINT_CLICK',
@@ -37,10 +50,10 @@ PRINT_SERVICE_GROUPS = [
         ],
         # Utómunka alkategória
         'finishing': [
-            {'code': 'LAM_MATT', 'name': 'Fóliázás - matt',
-             'description': 'Matt fóliázás'},
-            {'code': 'LAM_GLOSSY', 'name': 'Fóliázás - fényes',
-             'description': 'Fényes fóliázás'},
+            SVC_LAM_MATT,
+            SVC_LAM_GLOSSY,
+            SVC_LAM_SILK,
+            SVC_CUT_STACK,
         ],
         # Kész termékre vonatkozó alkategória
         'product': [
@@ -64,6 +77,15 @@ PRINT_SERVICE_GROUPS = [
             {'code': 'UVPR_BOARD_CMYK_W', 'name': 'Színes és fehér nyomtatás',
              'description': 'Táblás UV színes és fehér nyomtatás (CMYK + W)'},
         ],
+        # Utómunka alkategória
+        'finishing': [
+            SVC_LAM_MATT,
+            SVC_LAM_GLOSSY,
+            SVC_VARNISH_MATT,
+            SVC_VARNISH_GLOSSY,
+            SVC_CUT_STACK,
+            SVC_CONTOUR_CUT,
+        ],
     },
     {
         'code': 'PRINT_UV_ROLL',
@@ -80,6 +102,16 @@ PRINT_SERVICE_GROUPS = [
              'description': 'Tekercses UV fehér nyomtatás'},
             {'code': 'UVPR_ROLL_CMYK_W', 'name': 'Színes és fehér nyomtatás',
              'description': 'Tekercses UV színes és fehér nyomtatás (CMYK + W)'},
+        ],
+        # Utómunka alkategória
+        'finishing': [
+            SVC_LAM_MATT,
+            SVC_LAM_GLOSSY,
+            SVC_CUT_STACK,
+            SVC_CONTOUR_CUT,
+            SVC_EYELET,
+            SVC_HEMMING,
+            SVC_STRETCH_FRAME,
         ],
     },
     {
