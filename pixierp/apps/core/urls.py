@@ -2,6 +2,7 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from . import views
 from .views_emergency import emergency_login_view
+from . import views_data_export
 
 router = DefaultRouter()
 router.register(r'users', views.UserViewSet, basename='user')
@@ -52,6 +53,10 @@ urlpatterns = [
     path('currencies/update-rates/', views.update_exchange_rates_view, name='update_exchange_rates'),
     path('backup/export/', views.export_database_view, name='export_database'),
     path('backup/import/', views.import_database_view, name='import_database'),
+    path('data-export/list/', views_data_export.data_export_list, name='data_export_list'),
+    path('data-export/', views_data_export.data_export, name='data_export'),
+    path('data-import/analyze/', views_data_export.data_import_analyze, name='data_import_analyze'),
+    path('data-import/execute/', views_data_export.data_import_execute, name='data_import_execute'),
     path('tickets/public/<uuid:token>/', views.PublicTicketView.as_view(), name='public-ticket-detail'),
     path('tickets/public/<uuid:token>/reply/', views.PublicTicketReplyView.as_view(), name='public-ticket-reply'),
     path('public-site/config/', views.PublicSiteConfigView.as_view(), name='public-site-config'),

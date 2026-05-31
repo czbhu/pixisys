@@ -14,7 +14,8 @@ import {
     HddOutlined,
     EnvironmentOutlined,
     WifiOutlined,
-    ScanOutlined
+    ScanOutlined,
+    SwapOutlined,
 } from '@ant-design/icons';
 import AccessControlSettingsPage from './pages/AccessControlSettingsPage';
 import EmailServerPage from './pages/EmailServerPage';
@@ -34,6 +35,7 @@ import IotPage from './pages/IotPage';
 import NfcPage from './pages/NfcPage';
 import PrintProductsPage from './pages/PrintProductsPage';
 import PickupLocationsPage from './pages/PickupLocationsPage';
+import ExportImportPage from './pages/ExportImportPage';
 import ModuleDashboard from '../../components/ModuleDashboard';
 
 const SettingsModule: React.FC = () => {
@@ -55,6 +57,7 @@ const SettingsModule: React.FC = () => {
         { key: '/settings/iot', label: 'IoT eszközök', icon: <WifiOutlined /> },
         { key: '/settings/nfc', label: 'NFC tagek', icon: <ScanOutlined /> },
         { key: '/settings/pickup-locations', label: 'Átvételi helyek', icon: <EnvironmentOutlined /> },
+        { key: '/settings/export-import', label: 'Export / Import', icon: <SwapOutlined /> },
   ];
 
   return (
@@ -78,6 +81,7 @@ const SettingsModule: React.FC = () => {
       <Route path="/nfc" element={<NfcPage />} />
       <Route path="/print-products" element={<PrintProductsPage />} />
       <Route path="/pickup-locations" element={<PickupLocationsPage />} />
+      <Route path="/export-import" element={<ExportImportPage />} />
     </Routes>
   );
 };
