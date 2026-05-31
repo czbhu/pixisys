@@ -390,13 +390,20 @@ class ServiceGroupSerializer(serializers.ModelSerializer):
     created_by_name = serializers.CharField(source='created_by.get_full_name', read_only=True)
     parent_name = serializers.CharField(source='parent.name', read_only=True)
     services_count = serializers.SerializerMethodField()
+    service_ids = serializers.SerializerMethodField()
 
     class Meta:
         model = ServiceGroup
         fields = '__all__'
 
     def get_services_count(self, obj):
-        return 0
+        annotated = getattr(obj, 'services_count_annotated', None)
+        if annotated is not None:
+            return annotated
+        return obj.services.count()
+
+    def get_service_ids(self, obj):
+        return list(obj.services.values_list('id', flat=True))
 
 class ServiceSerializer(serializers.ModelSerializer):
     """Szolgáltatás serializer"""
@@ -643,6 +650,7 @@ class ProductTemplateSerializer(serializers.ModelSerializer):
             'custom_size_height_min', 'custom_size_height_max',
             'sizes', 'quantity_discounts',
             'is_active', 'is_protected', 'created_at', 'updated_at',
+            'service_group',
         ]
         read_only_fields = ['created_at', 'updated_at']
 

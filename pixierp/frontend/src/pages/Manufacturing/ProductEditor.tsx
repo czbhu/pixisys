@@ -72,8 +72,7 @@ interface ProductTemplate {
   finishing_services_details: ResourceItem[];
   finishing_service_groups: number[][];
   service_groups_1: number[][];
-  service_groups_2: number[][];
-  print_sides: 1 | 2;
+  service_groups_2: number[][];  print_sides: 1 | 2;
   print_service: number | null;
   print_service_options: number[];
   print_service_options_details: { id: number; name: string; code: string; setup_cost_selling: number; unit_cost_selling: number; max_width_mm: number | null; max_height_mm: number | null }[];
@@ -90,6 +89,7 @@ interface ProductTemplate {
   quantity_discounts: { id: number; min_amount: number; discount_type: string; discount_value: number }[];
   template_categories: number[];
   template_categories_details: { id: number; name: string }[];
+  service_group: number | null;
   is_active: boolean;
   is_protected: boolean;
   created_at: string;
@@ -110,6 +110,14 @@ interface ProductClass {
 
 interface MaterialItem extends ResourceItem {}
 interface ServiceItem extends ResourceItem {}
+
+interface ServiceGroupItem {
+  id: number;
+  name: string;
+  code: string | null;
+  parent: number | null;
+  service_ids: number[];
+}
 
 const CALCULATOR_TYPES = [
   {
@@ -179,6 +187,7 @@ const ProductEditor: React.FC = () => {
   const [materials, setMaterials]           = useState<MaterialItem[]>([]);
   const [materialGroups, setMaterialGroups] = useState<MaterialGroup[]>([]);
   const [services, setServices]             = useState<ServiceItem[]>([]);
+  const [serviceGroups, setServiceGroups]   = useState<ServiceGroupItem[]>([]);
   const [templateCategories, setTemplateCategories] = useState<TemplateCategory[]>([]);
   const [loading, setLoading]               = useState(false);
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
@@ -187,6 +196,40 @@ const ProductEditor: React.FC = () => {
   const digiprIds = useMemo(
     () => new Set(services.filter(s => s.code === 'DIGIPR_K' || s.code === 'DIGIPR_CMYK').map(s => s.id)),
     [services]
+  );
+
+  // Service-subcategory filtering: when a product has a service_group (printing mode),
+  // each select is populated only from the matching subcategory of that group.
+  // Subcategory child groups are identified by their code suffix:
+  //   _PRINT (Nyomtatás), _REQUIRED (Kötelező), _FINISHING (Utómunka), _PRODUCT (Kész termékre).
+  const subcatServiceIds = useMemo(() => {
+    const result: Record<'PRINT' | 'REQUIRED' | 'FINISHING' | 'PRODUCT', Set<number> | null> = {
+      PRINT: null, REQUIRED: null, FINISHING: null, PRODUCT: null,
+    };
+    if (serviceGroupId == null) return result;
+    const children = serviceGroups.filter(g => g.parent === serviceGroupId);
+    (['PRINT', 'REQUIRED', 'FINISHING', 'PRODUCT'] as const).forEach(suffix => {
+      const child = children.find(g => g.code && g.code.endsWith(`_${suffix}`));
+      if (child) result[suffix] = new Set(child.service_ids ?? []);
+    });
+    return result;
+  }, [serviceGroupId, serviceGroups]);
+
+  // Option lists per subcategory; falls back to ALL services when no matching subcategory.
+  const makeServiceOptions = useCallback((ids: Set<number> | null) => {
+    const list = ids ? services.filter(s => ids.has(s.id)) : services;
+    return list.map(s => ({ label: `${s.name} (${s.code})`, value: s.id }));
+  }, [services]);
+
+  const printServiceOptions     = useMemo(() => makeServiceOptions(subcatServiceIds.PRINT),     [makeServiceOptions, subcatServiceIds]);
+  const requiredServiceOptions  = useMemo(() => makeServiceOptions(subcatServiceIds.REQUIRED),  [makeServiceOptions, subcatServiceIds]);
+  const finishingServiceOptions = useMemo(() => makeServiceOptions(subcatServiceIds.FINISHING), [makeServiceOptions, subcatServiceIds]);
+  const productServiceOptions   = useMemo(() => makeServiceOptions(subcatServiceIds.PRODUCT),   [makeServiceOptions, subcatServiceIds]);
+
+  // Printing-mode groups (top-level service groups, i.e. no parent) for the service_group select.
+  const printingModeGroupOptions = useMemo(
+    () => serviceGroups.filter(g => g.parent == null).map(g => ({ label: g.name, value: g.id })),
+    [serviceGroups]
   );
   const [query, setQuery]                   = useState('');
 
@@ -207,6 +250,7 @@ const ProductEditor: React.FC = () => {
   const [finishingServiceGroups, setFinishingServiceGroups] = useState<number[][]>([[]]);
   const [quantityDiscounts, setQuantityDiscounts]     = useState<QuantityDiscount[]>([]);
   const [selectedTemplateCategories, setSelectedTemplateCategories] = useState<number[]>([]);
+  const [serviceGroupId, setServiceGroupId]           = useState<number | null>(null);
 
   // Produkciózás (imposition) modal
   const [impositionOpen, setImpositionOpen]   = useState(false);
@@ -226,13 +270,14 @@ const ProductEditor: React.FC = () => {
   const loadAll = useCallback(async () => {
     setLoading(true);
     try {
-      const [prodRes, catRes, matRes, matGrpRes, svcRes, tplCatRes] = await Promise.all([
+      const [prodRes, catRes, matRes, matGrpRes, svcRes, tplCatRes, svcGrpRes] = await Promise.all([
         api.get('/manufacturing/product-templates/'),
         api.get('/manufacturing/product-classes/?page_size=1000'),
         api.get('/warehouse/materials/?page_size=1000'),
         api.get('/warehouse/material-groups/?page_size=1000'),
         api.get('/manufacturing/services/?page_size=1000'),
         api.get('/printshop/template-categories/'),
+        api.get('/manufacturing/service-groups/?page_size=1000'),
       ]);
       setProducts(Array.isArray(prodRes.data) ? prodRes.data : (prodRes.data.results ?? []));
       setCategories(Array.isArray(catRes.data) ? catRes.data : (catRes.data.results ?? []));
@@ -240,6 +285,7 @@ const ProductEditor: React.FC = () => {
       setMaterialGroups(Array.isArray(matGrpRes.data) ? matGrpRes.data : (matGrpRes.data.results ?? []));
       setServices(Array.isArray(svcRes.data) ? svcRes.data : (svcRes.data.results ?? []));
       setTemplateCategories(Array.isArray(tplCatRes.data) ? tplCatRes.data : (tplCatRes.data.results ?? []));
+      setServiceGroups(Array.isArray(svcGrpRes.data) ? svcGrpRes.data : (svcGrpRes.data.results ?? []));
     } catch {
       message.error('Hiba az adatok betöltésekor');
     } finally {
@@ -335,6 +381,7 @@ const ProductEditor: React.FC = () => {
     setServiceGroups2([[]]);
     setQuantityDiscounts([]);
     setSelectedTemplateCategories([]);
+    setServiceGroupId(null);
     setDrawerOpen(true);
   };
 
@@ -412,6 +459,7 @@ const ProductEditor: React.FC = () => {
       discount_value: Number(d.discount_value),
     })));
     setSelectedTemplateCategories(p.template_categories ?? []);
+    setServiceGroupId(p.service_group ?? null);
     setDrawerOpen(true);
   };
 
@@ -478,8 +526,8 @@ const ProductEditor: React.FC = () => {
       finishing_service_groups: finishingServiceGroups,
       service_groups_1: serviceGroups1,
       service_groups_2: serviceGroups2,
-      template_categories: selectedTemplateCategories,
-      quantity_discounts: quantityDiscounts
+      service_group: serviceGroupId,
+      template_categories: selectedTemplateCategories,      quantity_discounts: quantityDiscounts
         .filter(d => d.min_amount != null && d.discount_value != null)
         .map(d => ({
           id: d.id,
@@ -818,6 +866,21 @@ const ProductEditor: React.FC = () => {
                         options={CALCULATOR_TYPES}
                       />
                     </Form.Item>
+
+                    <Form.Item
+                      label="Nyomtatási mód szolgáltatás-csoport"
+                      tooltip="A kiválasztott csoport alkategóriái (Nyomtatás, Kötelező, Utómunka, Kész termékre) szűrik a szolgáltatás-választókat. Üresen hagyva minden szolgáltatás elérhető."
+                    >
+                      <Select
+                        allowClear
+                        showSearch
+                        placeholder="Nincs (minden szolgáltatás elérhető)"
+                        optionFilterProp="label"
+                        value={serviceGroupId ?? undefined}
+                        onChange={(val) => setServiceGroupId(val ?? null)}
+                        options={printingModeGroupOptions}
+                      />
+                    </Form.Item>
                   </>
                 ),
               },
@@ -982,7 +1045,7 @@ const ProductEditor: React.FC = () => {
                       value={requiredServices}
                       onChange={setRequiredServices}
                       optionFilterProp="label"
-                      options={services.map(s => ({ label: `${s.name} (${s.code})`, value: s.id }))}
+                      options={requiredServiceOptions}
                     />
                   </>
                 ),
@@ -1021,7 +1084,7 @@ const ProductEditor: React.FC = () => {
                                       showSearch
                                       placeholder="pl. Fekete-fehér íves nyomtatás"
                                       optionFilterProp="label"
-                                      options={services.map(s => ({ label: `${s.name} (${s.code})`, value: s.id }))}
+                                      options={printServiceOptions}
                                     />
                                   </Form.Item>
                                 </Col>
@@ -1044,9 +1107,8 @@ const ProductEditor: React.FC = () => {
                                       }
                                     }}
                                     optionFilterProp="label"
-                                    options={services
-                                      .filter(s => !selectedPrintServiceOptions.includes(s.id))
-                                      .map(s => ({ label: `${s.name} (${s.code})`, value: s.id }))}
+                                    options={printServiceOptions
+                                      .filter(o => !selectedPrintServiceOptions.includes(o.value))}
                                   />
                                   <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
                                     {selectedPrintServiceOptions.map((id, idx) => {
@@ -1136,7 +1198,7 @@ const ProductEditor: React.FC = () => {
                                   setGroups(prev => prev.map((g, i) => i === gIdx ? finalVals : g));
                                 }}
                                 optionFilterProp="label"
-                                options={services.map(s => ({ label: `${s.name} (${s.code})`, value: s.id }))}
+                                options={finishingServiceOptions}
                                 tagRender={(props) => {
                                   const { label, value, closable, onClose } = props;
                                   const isDigipr = digiprIds.has(value as number);
@@ -1206,7 +1268,7 @@ const ProductEditor: React.FC = () => {
                             value={group}
                             onChange={newVals => setFinishingServiceGroups(prev => prev.map((g, i) => i === gIdx ? newVals : g))}
                             optionFilterProp="label"
-                            options={services.map(s => ({ label: `${s.name} (${s.code})`, value: s.id }))}
+                            options={productServiceOptions}
                           />
                           <Tooltip title="Csoport törlése">
                             <Button

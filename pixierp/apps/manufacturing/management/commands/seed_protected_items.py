@@ -2,18 +2,50 @@ from django.core.management.base import BaseCommand
 from apps.manufacturing.models import ProductClass, ProductTemplate, ServiceGroup, Service
 
 
-# ── Nyomtatási szolgáltatás-csoportok és a hozzájuk tartozó szolgáltatások ──
+# ── Nyomtatási szolgáltatás-csoportok és alkategóriáik ──
+# Minden nyomtatási mód egy SZÜLŐ csoport, amelyen belül 4 alkategória (gyermek csoport):
+#   - Nyomtatás                        (kód-utótag: _PRINT,     'services' kulcs)
+#   - Kötelező kapcsolódó szolgáltatás (kód-utótag: _REQUIRED,  'required' kulcs)
+#   - Utómunka                         (kód-utótag: _FINISHING, 'finishing' kulcs)
+#   - Kész termékre vonatkozó          (kód-utótag: _PRODUCT,   'product' kulcs)
 # Minden csoport és szolgáltatás védett (is_protected=True), placeholder 0 Ft árral.
+SUBCATEGORIES = [
+    ('PRINT', 'Nyomtatás', 'services'),
+    ('REQUIRED', 'Kötelező kapcsolódó szolgáltatás', 'required'),
+    ('FINISHING', 'Utómunka', 'finishing'),
+    ('PRODUCT', 'Kész termékre vonatkozó', 'product'),
+]
+
 PRINT_SERVICE_GROUPS = [
     {
         'code': 'PRINT_DIGIPRINT_CLICK',
         'name': 'Íves klikkdíjas nyomtatás',
         'description': 'Klikkdíjas íves digitális nyomtatás szolgáltatásai',
+        # Nyomtatás alkategória
         'services': [
             {'code': 'DIGIPR_K', 'name': 'Fekete-fehér nyomtatás',
              'description': 'Klikkdíjas fekete-fehér digitális nyomtatás'},
             {'code': 'DIGIPR_CMYK', 'name': 'Színes nyomtatás',
              'description': 'Klikkdíjas színes digitális nyomtatás (CMYK)'},
+        ],
+        # Kötelező kapcsolódó szolgáltatás alkategória
+        'required': [
+            {'code': 'CUT_STACK', 'name': 'Méretre vágás',
+             'description': 'Kész nyomat méretre vágása'},
+            {'code': 'NO_CUT', 'name': 'Ívben',
+             'description': 'Vágás nélkül, ívben szállítva'},
+        ],
+        # Utómunka alkategória
+        'finishing': [
+            {'code': 'LAM_MATT', 'name': 'Fóliázás - matt',
+             'description': 'Matt fóliázás'},
+            {'code': 'LAM_GLOSSY', 'name': 'Fóliázás - fényes',
+             'description': 'Fényes fóliázás'},
+        ],
+        # Kész termékre vonatkozó alkategória
+        'product': [
+            {'code': 'SHIPPING', 'name': 'Házhozszállítás',
+             'description': 'Kész termék házhozszállítása'},
         ],
     },
     {
@@ -76,7 +108,8 @@ PRINT_SERVICE_GROUPS = [
 
 
 # ── Védett alaptermékek (nyomtatási módonként) ──
-# group_code: a print_service_options M2M ezen csoport szolgáltatásaival töltődik fel.
+# group_code: a termék service_group FK-ja erre a SZÜLŐ csoportra mutat; a
+# print_service_options M2M a csoport _PRINT alkategóriájának szolgáltatásaival töltődik fel.
 BASE_PRODUCTS = [
     {
         'code': 'SYS_PRINT_CLICK',
@@ -135,7 +168,8 @@ class Command(BaseCommand):
         self.updated_count = 0
 
         # code -> objektum gyorsítótár
-        self.groups_by_code = {}
+        self.groups_by_code = {}            # szülő csoport kódja -> ServiceGroup
+        self.print_subgroup_by_parent = {}  # szülő kód -> _PRINT alkategória ServiceGroup
         self.services_by_code = {}
 
         self._seed_groups_and_services()
@@ -147,73 +181,102 @@ class Command(BaseCommand):
             )
         )
 
-    # ── 1-2. Szolgáltatás-csoportok és szolgáltatások ──
+    # ── Segéd: védett ServiceGroup biztosítása ──
+    def _ensure_group(self, code, name, description='', parent=None):
+        sg, created = ServiceGroup.objects.get_or_create(
+            code=code,
+            defaults={
+                'name': name,
+                'description': description,
+                'is_protected': True,
+                'is_active': True,
+                'parent': parent,
+            },
+        )
+        if created:
+            self.created_count += 1
+            self._log(f'Létrehozva: ServiceGroup "{sg.name}" ({code})')
+        else:
+            changed = False
+            if not sg.is_protected:
+                sg.is_protected = True
+                changed = True
+            if not sg.is_active:
+                sg.is_active = True
+                changed = True
+            if sg.name != name:
+                sg.name = name
+                changed = True
+            if parent is not None and sg.parent_id != parent.id:
+                sg.parent = parent
+                changed = True
+            if changed:
+                sg.save()
+                self.updated_count += 1
+                self._log(f'Frissítve: ServiceGroup "{sg.name}" ({code})')
+        return sg
+
+    # ── Segéd: védett Service biztosítása, és kizárólag a megadott csoportba helyezése ──
+    def _ensure_service(self, svc_data, group, drop_from=None):
+        code = svc_data['code']
+        svc, created = Service.objects.get_or_create(
+            code=code,
+            defaults={
+                'name': svc_data['name'],
+                'description': svc_data.get('description', ''),
+                'unit': 'db',
+                'unit_cost_price': 0,
+                'unit_selling_price': 0,
+                'is_active': True,
+                'is_protected': True,
+            },
+        )
+        if created:
+            self.created_count += 1
+            self._log(f'  Létrehozva: Service "{svc.name}" ({code})')
+        else:
+            changed = False
+            if not svc.is_protected:
+                svc.is_protected = True
+                changed = True
+            if not svc.is_active:
+                svc.is_active = True
+                changed = True
+            if changed:
+                svc.save(update_fields=['is_protected', 'is_active'])
+                self.updated_count += 1
+                self._log(f'  Frissítve: Service "{svc.name}" ({code})')
+
+        if not svc.groups.filter(pk=group.pk).exists():
+            svc.groups.add(group)
+        # Régi szülő-csoport tagság megszüntetése (átkerült az alkategóriába)
+        if drop_from is not None and svc.groups.filter(pk=drop_from.pk).exists():
+            svc.groups.remove(drop_from)
+
+        self.services_by_code[code] = svc
+        return svc
+
+    # ── 1-2. Szülő csoportok, alkategóriák és szolgáltatások ──
     def _seed_groups_and_services(self):
         for grp in PRINT_SERVICE_GROUPS:
-            sg, sg_created = ServiceGroup.objects.get_or_create(
-                code=grp['code'],
-                defaults={
-                    'name': grp['name'],
-                    'description': grp.get('description', ''),
-                    'is_protected': True,
-                    'is_active': True,
-                },
+            parent = self._ensure_group(
+                grp['code'], grp['name'], grp.get('description', ''), parent=None
             )
-            if sg_created:
-                self.created_count += 1
-                self._log(f'Létrehozva: ServiceGroup "{sg.name}" ({grp["code"]})')
-            else:
-                changed = False
-                if not sg.is_protected:
-                    sg.is_protected = True
-                    changed = True
-                if not sg.is_active:
-                    sg.is_active = True
-                    changed = True
-                if sg.name != grp['name']:
-                    sg.name = grp['name']
-                    changed = True
-                if changed:
-                    sg.save(update_fields=['is_protected', 'is_active', 'name'])
-                    self.updated_count += 1
-                    self._log(f'Frissítve: ServiceGroup "{sg.name}" ({grp["code"]})')
+            self.groups_by_code[grp['code']] = parent
 
-            self.groups_by_code[grp['code']] = sg
-
-            for svc_data in grp['services']:
-                code = svc_data['code']
-                svc, svc_created = Service.objects.get_or_create(
-                    code=code,
-                    defaults={
-                        'name': svc_data['name'],
-                        'description': svc_data.get('description', ''),
-                        'unit': 'db',
-                        'unit_cost_price': 0,
-                        'unit_selling_price': 0,
-                        'is_active': True,
-                        'is_protected': True,
-                    },
-                )
-                if svc_created:
-                    self.created_count += 1
-                    self._log(f'  Létrehozva: Service "{svc.name}" ({code})')
-                else:
-                    changed = False
-                    if not svc.is_protected:
-                        svc.is_protected = True
-                        changed = True
-                    if not svc.is_active:
-                        svc.is_active = True
-                        changed = True
-                    if changed:
-                        svc.save(update_fields=['is_protected', 'is_active'])
-                        self.updated_count += 1
-                        self._log(f'  Frissítve: Service "{svc.name}" ({code})')
-
-                if not svc.groups.filter(pk=sg.pk).exists():
-                    svc.groups.add(sg)
-
-                self.services_by_code[code] = svc
+            for suffix, sub_name, data_key in SUBCATEGORIES:
+                sub_code = f"{grp['code']}_{suffix}"
+                services = grp.get(data_key, [])
+                # A Nyomtatás alkategória mindig létrejön; a többi csak ha van benne szolgáltatás.
+                if not services and suffix != 'PRINT':
+                    continue
+                # A ServiceGroup.name egyedi, ezért a szülő nevével prefixeljük.
+                display_name = f"{grp['name']} – {sub_name}"
+                sub = self._ensure_group(sub_code, display_name, parent=parent)
+                if suffix == 'PRINT':
+                    self.print_subgroup_by_parent[grp['code']] = sub
+                for svc_data in services:
+                    self._ensure_service(svc_data, sub, drop_from=parent)
 
     # ── 3. Védett alaptermékek ──
     def _seed_base_products(self):
@@ -227,6 +290,8 @@ class Command(BaseCommand):
                     self.created_count += 1
                     self._log(f'Létrehozva: ProductClass "{category_name}"')
 
+            parent_group = self.groups_by_code.get(prod['group_code'])
+
             tpl, tpl_created = ProductTemplate.objects.get_or_create(
                 code=prod['code'],
                 defaults={
@@ -236,6 +301,7 @@ class Command(BaseCommand):
                     'is_active': True,
                     'is_protected': True,
                     'category': category,
+                    'service_group': parent_group,
                 },
             )
             if tpl_created:
@@ -255,15 +321,20 @@ class Command(BaseCommand):
                 if category and tpl.category_id != category.id:
                     tpl.category = category
                     changed = True
+                if parent_group and tpl.service_group_id != parent_group.id:
+                    tpl.service_group = parent_group
+                    changed = True
                 if changed:
-                    tpl.save(update_fields=['is_protected', 'is_active', 'calculator_type', 'category_id'])
+                    tpl.save(update_fields=[
+                        'is_protected', 'is_active', 'calculator_type',
+                        'category_id', 'service_group_id',
+                    ])
                     self.updated_count += 1
                     self._log(f'Frissítve: ProductTemplate "{tpl.name}" ({prod["code"]})')
 
-            # print_service_options feltöltése a csoport szolgáltatásaival
-            grp_services = [self.services_by_code[s['code']]
-                            for g in PRINT_SERVICE_GROUPS if g['code'] == prod['group_code']
-                            for s in g['services']]
+            # print_service_options feltöltése a _PRINT alkategória szolgáltatásaival
+            print_subgroup = self.print_subgroup_by_parent.get(prod['group_code'])
+            grp_services = list(print_subgroup.services.all()) if print_subgroup else []
             if grp_services:
                 tpl.print_service_options.set(grp_services)
                 tpl.allowed_services.add(*grp_services)

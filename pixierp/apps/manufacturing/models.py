@@ -1507,6 +1507,15 @@ class ProductTemplate(models.Model):
         verbose_name="Védett",
         help_text="Védett terméksablon nem törölhető. Minden termékkategóriában az alapminta.",
     )
+    service_group = models.ForeignKey(
+        ServiceGroup,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='product_templates_for_group',
+        verbose_name="Nyomtatási mód szolgáltatás-csoport",
+        help_text="A nyomtatási mód szolgáltatás-csoportja; ennek alkategóriái (Nyomtatás, Kötelező, Utómunka, Kész termékre) töltik a szerkesztő select-jeit.",
+    )
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="Létrehozva")
     updated_at = models.DateTimeField(auto_now=True, verbose_name="Módosítva")
 

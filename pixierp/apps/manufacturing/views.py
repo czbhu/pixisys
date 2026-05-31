@@ -322,7 +322,7 @@ class CurrencyViewSet(viewsets.ModelViewSet):
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class ServiceGroupViewSet(viewsets.ModelViewSet):
-    queryset = ServiceGroup.objects.all()
+    queryset = ServiceGroup.objects.annotate(services_count_annotated=models.Count('services'))
     serializer_class = ServiceGroupSerializer
     pagination_class = LargeResultsSetPagination
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
