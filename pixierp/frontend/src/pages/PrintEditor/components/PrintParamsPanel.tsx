@@ -310,7 +310,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
       const data = res.data?.results ?? res.data;
       setAllMaterials(Array.isArray(data) ? data : []);
     }).catch(() => {});
-    api.get('/manufacturing/product-templates/?page_size=1000').then(res => {
+    api.get('/manufacturing/product-templates/?page_size=1000&is_active=true').then(res => {
       const data = res.data?.results ?? res.data;
       const list: ProductTemplate[] = Array.isArray(data) ? data : [];
       setProducts(list);
