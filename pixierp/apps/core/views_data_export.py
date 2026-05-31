@@ -11,9 +11,9 @@ import datetime
 import logging
 
 from django.http import JsonResponse, HttpResponse
-from django.contrib.auth.decorators import login_required
-from django.views.decorators.http import require_http_methods
 from django.db import transaction
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
 
 logger = logging.getLogger(__name__)
 
@@ -193,8 +193,8 @@ def _ser_employee(emp):
 # List endpoint (for picker UI)
 # ─────────────────────────────────────────────────────────────────────────────
 
-@login_required
-@require_http_methods(['GET'])
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
 def data_export_list(request):
     """Return list of available records per type for the export picker UI."""
     from apps.manufacturing.models import ServiceGroup, Service, ProductClass, ProductTemplate
@@ -273,8 +273,8 @@ def data_export_list(request):
 # Export endpoint
 # ─────────────────────────────────────────────────────────────────────────────
 
-@login_required
-@require_http_methods(['POST'])
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
 def data_export(request):
     """
     POST body: { "selections": { "service": [1,2,3], "product_template": [4,5], ... } }
@@ -284,11 +284,7 @@ def data_export(request):
     from apps.warehouse.models import MaterialGroup, Material, Warehouse, Inventory
     from apps.hr.models import Employee
 
-    try:
-        body = json.loads(request.body)
-    except Exception:
-        return _err('Érvénytelen JSON')
-
+    body = request.data
     selections = body.get('selections', {})
     export = {'_version': 1, '_exported_at': datetime.datetime.now().isoformat()}
 
@@ -355,8 +351,8 @@ def data_export(request):
 # Analyze endpoint (pre-import conflict check)
 # ─────────────────────────────────────────────────────────────────────────────
 
-@login_required
-@require_http_methods(['POST'])
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
 def data_import_analyze(request):
     """
     Accepts the JSON export file + list of types to import.
@@ -366,11 +362,7 @@ def data_import_analyze(request):
     from apps.warehouse.models import MaterialGroup, Material, Warehouse, Inventory
     from apps.hr.models import Employee
 
-    try:
-        body = json.loads(request.body)
-    except Exception:
-        return _err('Érvénytelen JSON')
-
+    body = request.data
     data = body.get('data', {})
     types = body.get('types', list(data.keys()))
 
@@ -527,8 +519,8 @@ def data_import_analyze(request):
 # Execute import endpoint
 # ─────────────────────────────────────────────────────────────────────────────
 
-@login_required
-@require_http_methods(['POST'])
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
 def data_import_execute(request):
     """
     POST body: {
@@ -542,11 +534,7 @@ def data_import_execute(request):
     from apps.manufacturing.models import ServiceGroup, Service, ProductClass, ProductTemplate
     from apps.warehouse.models import MaterialGroup, Material, Warehouse, Inventory
 
-    try:
-        body = json.loads(request.body)
-    except Exception:
-        return _err('Érvénytelen JSON')
-
+    body = request.data
     data = body.get('data', {})
     types = body.get('types', list(data.keys()))
     overwrite_map = body.get('overwrite', {})  # { type: [codes to overwrite] }
