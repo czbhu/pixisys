@@ -249,19 +249,25 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
   const [cuttingMode, setCuttingMode] = useState<'auto' | 'material' | 'print'>((_cs.cuttingMode as any) ?? 'auto');
 
   // Service selection: per AND-group for side 1 and side 2
-  // selectedServices1[i] = chosen service ID (or null) for group i on side 1
+  // selectedServices1[i] = chosen service IDs (multi) for group i on side 1
   const [allServices, setAllServices] = useState<ServiceDetail[]>([]);
-  const [selectedServices1, setSelectedServices1] = useState<(number | null)[]>(_cs.services1 ?? []);
-  const [selectedServices2, setSelectedServices2] = useState<(number | null)[]>(_cs.services2 ?? []);
-  const [selectedFinishingServices, setSelectedFinishingServices] = useState<(number | null)[]>(_cs.finishingServices ?? []);
+  // Normalize restored legacy (number|null)[] shape → number[][]
+  const _normGroups = (arr: any): number[][] =>
+    Array.isArray(arr) ? arr.map(g => Array.isArray(g) ? g.filter((x: any) => x != null) : (g != null ? [g] : [])) : [];
+  const [selectedServices1, setSelectedServices1] = useState<number[][]>(_normGroups(_cs.services1));
+  const [selectedServices2, setSelectedServices2] = useState<number[][]>(_normGroups(_cs.services2));
+  const [selectedFinishingServices, setSelectedFinishingServices] = useState<number[][]>(_normGroups(_cs.finishingServices));
 
   const svcById = new Map(allServices.map(s => [s.id, s]));
+  // Robust flatten: supports both legacy (number|null)[] and new number[][] shapes
+  const flattenGroups = (arr: any[]): number[] =>
+    arr.flatMap(g => Array.isArray(g) ? g.filter((x): x is number => x != null) : (g != null ? [g] : []));
   const flatSelectedIds = useMemo(() => [
-    ...selectedServices1.filter((id): id is number => id != null),
-    ...selectedServices2.filter((id): id is number => id != null),
+    ...flattenGroups(selectedServices1),
+    ...flattenGroups(selectedServices2),
   ], [selectedServices1, selectedServices2]);
   const flatFinishingIds = useMemo(() =>
-    selectedFinishingServices.filter((id): id is number => id != null),
+    flattenGroups(selectedFinishingServices),
   [selectedFinishingServices]);
 
   // ── Persist click-state to localStorage ────────────────────────────────
@@ -415,9 +421,9 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
       restoringRef.current = false;
     } else {
       // User changed product — reset selections
-      setSelectedServices1(sg1.map(() => null));
-      setSelectedServices2(sg2.map(() => null));
-      setSelectedFinishingServices(sgf.map(() => null));
+      setSelectedServices1(sg1.map(() => []));
+      setSelectedServices2(sg2.map(() => []));
+      setSelectedFinishingServices(sgf.map(() => []));
     }
   }, [selectedProductId, products]); // eslint-disable-line
 
@@ -944,35 +950,64 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
             </>
           )}
 
-          <SectionLabel label="Mennyiség" />
-          <NumInput
-            size="small"
-            min={1}
-            max={100000}
-            style={{ width: '100%' }}
-            value={params.quantity_input ?? params.quantity}
-            addonAfter="db"
-            onChange={v => {
-              if (!v) return;
-              update({ quantity_input: v, quantity_unit: 'db' });
-            }}
-          />
+          {/* ── Extrák (termék sablon alapján) ─────────────────────────────── */}
+          {selectedProduct && ((selectedProduct.service_groups_1 ?? []).some(g => g.length > 0) ||
+                               (selectedProduct.service_groups_2 ?? []).some(g => g.length > 0)) && (
+            <>
+              <SectionLabel label="Utómunka" />
+              {[{ side: '1' as const, groups: selectedProduct.service_groups_1 ?? [], sel: selectedServices1, setSel: setSelectedServices1 },
+                { side: '2' as const, groups: selectedProduct.service_groups_2 ?? [], sel: selectedServices2, setSel: setSelectedServices2 },
+              ].map(({ side, groups, sel, setSel }) => {
+                const nonEmpty = groups.filter(g => g.length > 0);
+                if (nonEmpty.length === 0) return null;
+                return (
+                  <div key={side} style={{ marginBottom: 8 }}>
+                    <Text style={{ fontSize: 11, color: '#666', display: 'block', marginBottom: 4 }}>{side}. oldal:
+                    </Text>
+                    {nonEmpty.map((group, gIdx) => (
+                      <div key={gIdx}>
+                        {gIdx > 0 && (
+                          <div style={{ display: 'flex', alignItems: 'center', margin: '4px 0' }}>
+                            <div style={{ flex: 1, height: 1, background: '#e8e8e8' }} />
+                            <Tag color="blue" style={{ margin: '0 6px', fontSize: 10, lineHeight: '16px' }}>ÉS</Tag>
+                            <div style={{ flex: 1, height: 1, background: '#e8e8e8' }} />
+                          </div>
+                        )}
+                        <Select
+                          mode="multiple"
+                          allowClear
+                          size="small"
+                          style={{ width: '100%' }}
+                          placeholder="Válassz utómunká(ka)t…"
+                          value={sel[gIdx] ?? []}
+                          onChange={(vals: number[]) => setSel(prev => prev.map((s, i) => i === gIdx ? vals : s))}
+                        >
+                          {group.map(svcId => {
+                            const svc = svcById.get(svcId);
+                            const costPerDb = estimateSvcCostPerDb(svc);
+                            return (
+                              <Option key={svcId} value={svcId}>
+                                {svc?.name ?? `#${svcId}`}
+                                {costPerDb != null ? ` (+${costPerDb.toLocaleString('hu-HU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Ft/db)` : ''}
+                              </Option>
+                            );
+                          })}
+                        </Select>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })}
+            </>
+          )}
 
-      {/* ── Extrák (termék sablon alapján) ─────────────────────────────── */}
-      {selectedProduct && ((selectedProduct.service_groups_1 ?? []).some(g => g.length > 0) ||
-                           (selectedProduct.service_groups_2 ?? []).some(g => g.length > 0)) && (
-        <>
-          <SectionLabel label="Extrák" />
-          {[{ side: '1' as const, groups: selectedProduct.service_groups_1 ?? [], sel: selectedServices1, setSel: setSelectedServices1 },
-            { side: '2' as const, groups: selectedProduct.service_groups_2 ?? [], sel: selectedServices2, setSel: setSelectedServices2 },
-          ].map(({ side, groups, sel, setSel }) => {
-            const nonEmpty = groups.filter(g => g.length > 0);
-            if (nonEmpty.length === 0) return null;
-            return (
-              <div key={side} style={{ marginBottom: 8 }}>
-                <Text style={{ fontSize: 11, color: '#666', display: 'block', marginBottom: 4 }}>{side}. oldal:
-                </Text>
-                {nonEmpty.map((group, gIdx) => (
+          {/* ── Kész termékre vonatkozó extrák ─────────────────────────────── */}
+          {selectedProduct && (selectedProduct.finishing_service_groups ?? []).some(g => g.length > 0) && (
+            <>
+              <SectionLabel label="Kész termék extrák" />
+              {(selectedProduct.finishing_service_groups ?? []).map((group, gIdx) => {
+                if (group.length === 0) return null;
+                return (
                   <div key={gIdx}>
                     {gIdx > 0 && (
                       <div style={{ display: 'flex', alignItems: 'center', margin: '4px 0' }}>
@@ -982,13 +1017,13 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                       </div>
                     )}
                     <Select
+                      mode="multiple"
                       allowClear
                       size="small"
                       style={{ width: '100%' }}
-                      placeholder="Nem kérem / válassz…"
-                      value={sel[gIdx] ?? undefined}
-                      onChange={v => setSel(prev => prev.map((s, i) => i === gIdx ? (v ?? null) : s))}
-                      onClear={() => setSel(prev => prev.map((s, i) => i === gIdx ? null : s))}
+                      placeholder="Válassz…"
+                      value={selectedFinishingServices[gIdx] ?? []}
+                      onChange={(vals: number[]) => setSelectedFinishingServices(prev => prev.map((s, i) => i === gIdx ? vals : s))}
                     >
                       {group.map(svcId => {
                         const svc = svcById.get(svcId);
@@ -1002,53 +1037,24 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                       })}
                     </Select>
                   </div>
-                ))}
-              </div>
-            );
-          })}
-        </>
-      )}
+                );
+              })}
+            </>
+          )}
 
-      {/* ── Kész termékre vonatkozó extrák ─────────────────────────────── */}
-      {selectedProduct && (selectedProduct.finishing_service_groups ?? []).some(g => g.length > 0) && (
-        <>
-          <SectionLabel label="Kész termék extrák" />
-          {(selectedProduct.finishing_service_groups ?? []).map((group, gIdx) => {
-            if (group.length === 0) return null;
-            return (
-              <div key={gIdx}>
-                {gIdx > 0 && (
-                  <div style={{ display: 'flex', alignItems: 'center', margin: '4px 0' }}>
-                    <div style={{ flex: 1, height: 1, background: '#e8e8e8' }} />
-                    <Tag color="blue" style={{ margin: '0 6px', fontSize: 10, lineHeight: '16px' }}>ÉS</Tag>
-                    <div style={{ flex: 1, height: 1, background: '#e8e8e8' }} />
-                  </div>
-                )}
-                <Select
-                  allowClear
-                  size="small"
-                  style={{ width: '100%' }}
-                  placeholder="Nem kérem / válassz…"
-                  value={selectedFinishingServices[gIdx] ?? undefined}
-                  onChange={v => setSelectedFinishingServices(prev => prev.map((s, i) => i === gIdx ? (v ?? null) : s))}
-                  onClear={() => setSelectedFinishingServices(prev => prev.map((s, i) => i === gIdx ? null : s))}
-                >
-                  {group.map(svcId => {
-                    const svc = svcById.get(svcId);
-                    const costPerDb = estimateSvcCostPerDb(svc);
-                    return (
-                      <Option key={svcId} value={svcId}>
-                        {svc?.name ?? `#${svcId}`}
-                        {costPerDb != null ? ` (+${costPerDb.toLocaleString('hu-HU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Ft/db)` : ''}
-                      </Option>
-                    );
-                  })}
-                </Select>
-              </div>
-            );
-          })}
-        </>
-      )}
+          <SectionLabel label="Mennyiség" />
+          <NumInput
+            size="small"
+            min={1}
+            max={100000}
+            style={{ width: '100%' }}
+            value={params.quantity_input ?? params.quantity}
+            addonAfter="db"
+            onChange={v => {
+              if (!v) return;
+              update({ quantity_input: v, quantity_unit: 'db' });
+            }}
+          />
       </>
 
       {/* Price display */}
