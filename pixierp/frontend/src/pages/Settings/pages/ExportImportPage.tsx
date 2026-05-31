@@ -103,7 +103,7 @@ const ExportTab: React.FC = () => {
     }
     setLoadingList(true);
     try {
-      const { data } = await api.get('/core/data-export/list/', {
+      const { data } = await api.get('/data-export/list/', {
         params: { types: selectedTypes.join(',') },
       });
       setListData(data);
@@ -128,7 +128,7 @@ const ExportTab: React.FC = () => {
       for (const t of selectedTypes) {
         selections[t] = selectedIds[t] || [];
       }
-      const resp = await api.post('/core/data-export/', { selections }, { responseType: 'blob' });
+      const resp = await api.post('/data-export/', { selections }, { responseType: 'blob' });
       const url = window.URL.createObjectURL(new Blob([resp.data]));
       const a = document.createElement('a');
       a.href = url;
@@ -358,7 +358,7 @@ const ImportTab: React.FC = () => {
     if (!fileData) return;
     setAnalyzing(true);
     try {
-      const { data } = await api.post('/core/data-import/analyze/', {
+      const { data } = await api.post('/data-import/analyze/', {
         data: fileData,
         types: selectedTypes,
       });
@@ -393,7 +393,7 @@ const ImportTab: React.FC = () => {
           .filter(([, res]) => res === 'overwrite')
           .map(([code]) => code);
       }
-      const { data } = await api.post('/core/data-import/execute/', {
+      const { data } = await api.post('/data-import/execute/', {
         data: fileData,
         types: selectedTypes,
         overwrite: owMap,
