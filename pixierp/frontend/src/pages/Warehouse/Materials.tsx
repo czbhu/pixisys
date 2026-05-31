@@ -250,6 +250,13 @@ const Materials: React.FC = () => {
     const create = searchParams.get('create') === 'true';
     const copyFrom = searchParams.get('copy_from');
     const editId = searchParams.get('edit');
+    const groupParam = searchParams.get('group');
+    if (groupParam) {
+      const gid = Number(groupParam);
+      if (!Number.isNaN(gid)) {
+        setFilterGroupId(gid);
+      }
+    }
     
     if (create) {
       if (copyFrom) {

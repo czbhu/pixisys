@@ -239,6 +239,16 @@ const MaterialGroups: React.FC = () => {
       dataIndex: 'name',
       key: 'name',
       sorter: (a: any, b: any) => (a.name || '').localeCompare(b.name || '', 'hu'),
+      render: (name: string, record: MaterialGroup) => (
+        <a
+          href={`/warehouse/materials?group=${record.id}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          title="Gyűjtő alapanyagainak megnyitása új lapon"
+        >
+          {name}
+        </a>
+      ),
     },
     {
       title: 'Leírás',
