@@ -983,13 +983,12 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                           </div>
                         )}
                         <Select
-                          mode="multiple"
                           allowClear
                           size="small"
                           style={{ width: '100%' }}
-                          placeholder="Válassz utómunká(ka)t…"
-                          value={sel[gIdx] ?? []}
-                          onChange={(vals: number[]) => setSel(prev => setGroupValue(prev, gIdx, vals))}
+                          placeholder="Válassz utómunkát… (VAGY)"
+                          value={sel[gIdx]?.[0] ?? undefined}
+                          onChange={(val: number | undefined) => setSel(prev => setGroupValue(prev, gIdx, val != null ? [val] : []))}
                         >
                           {group.map(svcId => {
                             const svc = svcById.get(svcId);
@@ -1026,13 +1025,12 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                       </div>
                     )}
                     <Select
-                      mode="multiple"
                       allowClear
                       size="small"
                       style={{ width: '100%' }}
-                      placeholder="Válassz…"
-                      value={selectedFinishingServices[gIdx] ?? []}
-                      onChange={(vals: number[]) => setSelectedFinishingServices(prev => setGroupValue(prev, gIdx, vals))}
+                      placeholder="Válassz… (VAGY)"
+                      value={selectedFinishingServices[gIdx]?.[0] ?? undefined}
+                      onChange={(val: number | undefined) => setSelectedFinishingServices(prev => setGroupValue(prev, gIdx, val != null ? [val] : []))}
                     >
                       {group.map(svcId => {
                         const svc = svcById.get(svcId);
