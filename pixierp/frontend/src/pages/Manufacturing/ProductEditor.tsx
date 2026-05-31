@@ -132,6 +132,16 @@ const CALCULATOR_TYPES = [
     value: 'click_sheet_print',
     tooltip: 'Klikkdíjas gépeknél (pl. Konica Minolta) alkalmazható. A nyomtatási díj: beállítási díj + ívszám × oldalszám × klikk díj. Impozíció alapján számítja a szükséges ívszámot.',
   },
+  {
+    label: 'Szitanyomás',
+    value: 'screen_print',
+    tooltip: 'Szitanyomáshoz. A díj a színek száma (1-6 szín) szerinti szolgáltatás alapján számolódik.',
+  },
+  {
+    label: 'Tamponnyomás',
+    value: 'pad_print',
+    tooltip: 'Tamponnyomáshoz. A díj a színek száma (1-2 szín) szerinti szolgáltatás alapján számolódik.',
+  },
 ];
 
 const UNITS = [

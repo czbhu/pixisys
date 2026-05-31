@@ -215,7 +215,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
   const [priceOpen, setPriceOpen] = useState(true);
   const [presets, setPresets] = useState<SizePreset[]>([]);
   const [products, setProducts] = useState<ProductTemplate[]>([]);
-  const [selectedProductId, setSelectedProductId] = useState<number | null>(null);
+  const [allMaterials, setAllMaterials] = useState<MaterialDetail[]>([]);  const [selectedProductId, setSelectedProductId] = useState<number | null>(null);
   const [selectedPreset, setSelectedPreset] = useState<number | null>(null);
   const [productSizeKey, setProductSizeKey] = useState<string | null>(() => readClickState().productSizeKey ?? null);
   const [pricing, setPricing] = useState<PriceBreakdown | null>(null);
@@ -291,6 +291,10 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
       const data = res.data?.results ?? res.data;
       setPresets(Array.isArray(data) ? data : []);
     });
+    api.get('/warehouse/materials/?page_size=1000&is_active=true').then(res => {
+      const data = res.data?.results ?? res.data;
+      setAllMaterials(Array.isArray(data) ? data : []);
+    }).catch(() => {});
     api.get('/manufacturing/product-templates/?page_size=1000').then(res => {
       const data = res.data?.results ?? res.data;
       const list: ProductTemplate[] = Array.isArray(data) ? data : [];
@@ -559,7 +563,10 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
     const total = fixedCost + unitCost * units;
     return total / qty;
   }, [params.quantity, clickPricing?.sheets_needed]);
-  const materials = selectedProduct?.allowed_materials_details ?? [];
+  const materials = useMemo(() => {
+    const allowed = selectedProduct?.allowed_materials_details ?? [];
+    return allowed.length > 0 ? allowed : allMaterials;
+  }, [selectedProduct, allMaterials]);
   const activePricing = isClickSheet ? null : pricing;
   const activeClickPricing = isClickSheet ? clickPricing : null;
 

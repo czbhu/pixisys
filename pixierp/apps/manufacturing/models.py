@@ -503,6 +503,10 @@ class ManufacturingCostItem(models.Model):
 class ServiceGroup(models.Model):
     """Szolgáltatás csoport modell"""
     name = models.CharField(max_length=100, unique=True, verbose_name="Csoport neve")
+    code = models.CharField(
+        max_length=50, blank=True, null=True, unique=True, verbose_name="Kód",
+        help_text="Rendszer-azonosító kód (pl. PRINT_DIGIPRINT_CLICK).",
+    )
     description = models.TextField(blank=True, verbose_name="Leírás")
     is_active = models.BooleanField(default=True, verbose_name="Aktív")
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="Létrehozva")
@@ -1387,6 +1391,8 @@ class ProductTemplate(models.Model):
         ('sheet_print', 'Íves/Táblás optimalizálás'),
         ('roll_print', 'Tekercses kalkuláció'),
         ('click_sheet_print', 'Klikkdíjas íves nyomtatás'),
+        ('screen_print', 'Szitanyomás'),
+        ('pad_print', 'Tamponnyomás'),
     ]
     calculator_type = models.CharField(
         max_length=50,
