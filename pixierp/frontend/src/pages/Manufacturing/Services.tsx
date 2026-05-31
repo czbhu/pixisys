@@ -316,7 +316,7 @@ const Services: React.FC = () => {
   const fetchServices = async () => {
     setLoading(true);
     try {
-      const response = await api.get('/manufacturing/services/');
+      const response = await api.get('/manufacturing/services/?page_size=1000');
       const data = Array.isArray(response.data) ? response.data : (response.data.results || []);
       setServices(data);
     } catch (error) {
