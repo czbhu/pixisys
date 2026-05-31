@@ -188,6 +188,7 @@ const ProductEditor: React.FC = () => {
   const [materialGroups, setMaterialGroups] = useState<MaterialGroup[]>([]);
   const [services, setServices]             = useState<ServiceItem[]>([]);
   const [serviceGroups, setServiceGroups]   = useState<ServiceGroupItem[]>([]);
+  const [serviceGroupId, setServiceGroupId] = useState<number | null>(null);
   const [templateCategories, setTemplateCategories] = useState<TemplateCategory[]>([]);
   const [loading, setLoading]               = useState(false);
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
@@ -250,7 +251,6 @@ const ProductEditor: React.FC = () => {
   const [finishingServiceGroups, setFinishingServiceGroups] = useState<number[][]>([[]]);
   const [quantityDiscounts, setQuantityDiscounts]     = useState<QuantityDiscount[]>([]);
   const [selectedTemplateCategories, setSelectedTemplateCategories] = useState<number[]>([]);
-  const [serviceGroupId, setServiceGroupId]           = useState<number | null>(null);
 
   // Produkciózás (imposition) modal
   const [impositionOpen, setImpositionOpen]   = useState(false);
