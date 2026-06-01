@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Typography, Input, Card, Row, Col, Breadcrumb, Empty, Spin, Tag, Button, Tooltip,
+  Typography, Input, Card, Row, Col, Breadcrumb, Empty, Spin, Tag, Button, Tooltip, Popover,
 } from 'antd';
 import {
   FolderOpenOutlined, FolderOutlined, AppstoreOutlined, SearchOutlined,
@@ -167,7 +167,17 @@ const PrintCatalogPage: React.FC = () => {
           display: 'flex', alignItems: 'center', justifyContent: 'center',
         }}>
           {p.image_url ? (
-            <img src={p.image_url} alt={p.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            <Popover
+              content={
+                <img src={p.image_url} alt={p.name}
+                  style={{ maxWidth: 320, maxHeight: 320, objectFit: 'contain', display: 'block' }} />
+              }
+              trigger="hover"
+              overlayInnerStyle={{ padding: 6 }}
+            >
+              <img src={p.image_url} alt={p.name}
+                style={{ width: '100%', height: '100%', objectFit: 'cover', cursor: 'zoom-in' }} />
+            </Popover>
           ) : (
             <AppstoreOutlined style={{ fontSize: 40, color: '#1677ff' }} />
           )}
@@ -210,7 +220,17 @@ const PrintCatalogPage: React.FC = () => {
               display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}>
               {c.image_url ? (
-                <img src={c.image_url} alt={c.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                <Popover
+                  content={
+                    <img src={c.image_url} alt={c.name}
+                      style={{ maxWidth: 320, maxHeight: 320, objectFit: 'contain', display: 'block' }} />
+                  }
+                  trigger="hover"
+                  overlayInnerStyle={{ padding: 6 }}
+                >
+                  <img src={c.image_url} alt={c.name}
+                    style={{ width: '100%', height: '100%', objectFit: 'cover', cursor: 'zoom-in' }} />
+                </Popover>
               ) : (
                 <FolderOpenOutlined style={{ fontSize: 28, color: '#faad14' }} />
               )}
