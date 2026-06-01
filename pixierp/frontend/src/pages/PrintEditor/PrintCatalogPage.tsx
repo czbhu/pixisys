@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Typography, Input, Card, Row, Col, Breadcrumb, Empty, Spin, Tag, Button, Tooltip, Popover,
 } from 'antd';
@@ -50,10 +50,13 @@ const CALC_COLORS: Record<string, string> = {
 
 const PrintCatalogPage: React.FC = () => {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const currentCatId: number | null = searchParams.get('cat') ? Number(searchParams.get('cat')) : null;
+  const setCurrentCatId = (id: number | null) =>
+    setSearchParams(id != null ? { cat: id.toString() } : {}, { replace: false });
   const [loading, setLoading] = useState(true);
   const [categories, setCategories] = useState<ProductClass[]>([]);
   const [products, setProducts] = useState<ProductTemplate[]>([]);
-  const [currentCatId, setCurrentCatId] = useState<number | null>(null);
   const [search, setSearch] = useState('');
 
   useEffect(() => {
