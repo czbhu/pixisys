@@ -14,7 +14,8 @@ import {
     Tag,
     Tooltip,
     Popconfirm,
-    TreeSelect
+    TreeSelect,
+    Upload,
 } from 'antd';
 import {
     PlusOutlined,
@@ -25,10 +26,13 @@ import {
     ExclamationCircleOutlined,
     MinusOutlined,
     DownloadOutlined,
+    UploadOutlined,
+    AppstoreOutlined,
 } from '@ant-design/icons';
 import { manufacturingService, ProductClass } from '../../services/manufacturingService';
 import { hrService } from '../../services/hrService';
 import ExportButton from '../../components/ExportButton';
+import api from '../../services/api';
 
 const { Option } = Select;
 const { TextArea } = Input;
@@ -46,6 +50,10 @@ const ProductClasses: React.FC = () => {
     const [viewingProductClass, setViewingProductClass] = useState<ProductClass | null>(null);
     const [form] = Form.useForm();
     const [initialFormSnapshot, setInitialFormSnapshot] = useState('');
+    // Kategória kép: új feltöltendő fájl + előnézet + eltávolítás jelző
+    const [imageFile, setImageFile] = useState<File | null>(null);
+    const [imagePreview, setImagePreview] = useState<string | null>(null);
+    const [imageRemoved, setImageRemoved] = useState(false);
 
     const normalizeForCompare = (value: any): any => {
         if (value === null || value === undefined) return undefined;
@@ -183,9 +191,15 @@ const ProductClasses: React.FC = () => {
                     departments.find(dept => dept.name === name)?.id
                 ).filter(Boolean)
             });
+            setImageFile(null);
+            setImagePreview(productClass.image_url ?? null);
+            setImageRemoved(false);
         } else {
             setEditingProductClass(null);
             form.resetFields();
+            setImageFile(null);
+            setImagePreview(null);
+            setImageRemoved(false);
         }
         setIsModalVisible(true);
     };
@@ -221,12 +235,26 @@ const ProductClasses: React.FC = () => {
                 hr_departments: values.hr_departments || []
             };
 
+            let savedId: number;
             if (editingProductClass) {
                 await manufacturingService.updateProductClass(editingProductClass.id, data);
+                savedId = editingProductClass.id;
                 message.success('Termék osztály sikeresen frissítve!');
             } else {
-                await manufacturingService.createProductClass(data);
+                const created = await manufacturingService.createProductClass(data);
+                savedId = created.id;
                 message.success('Termék osztály sikeresen létrehozva!');
+            }
+
+            // Kategória kép kezelése (külön multipart kérés)
+            if (imageFile) {
+                const fd = new FormData();
+                fd.append('image', imageFile);
+                await api.patch(`/manufacturing/product-classes/${savedId}/`, fd, {
+                    headers: { 'Content-Type': 'multipart/form-data' },
+                });
+            } else if (imageRemoved && editingProductClass) {
+                await api.patch(`/manufacturing/product-classes/${savedId}/`, { image: null });
             }
 
             setIsModalVisible(false);
@@ -437,6 +465,50 @@ const ProductClasses: React.FC = () => {
                         label="Leírás"
                     >
                         <TextArea rows={3} placeholder="Leírás" />
+                    </Form.Item>
+
+                    <Form.Item label="Kategória kép" help="A termékkatalógus oldalon megjelenő kép.">
+                        <Space align="start">
+                            {imagePreview ? (
+                                <div style={{ position: 'relative' }}>
+                                    <img
+                                        src={imagePreview}
+                                        alt="előnézet"
+                                        style={{ width: 96, height: 96, objectFit: 'cover', borderRadius: 6, border: '1px solid #e8e8e8' }}
+                                    />
+                                    <Button
+                                        size="small" danger type="text"
+                                        icon={<DeleteOutlined />}
+                                        style={{ position: 'absolute', top: 2, right: 2, background: 'rgba(255,255,255,0.85)' }}
+                                        onClick={() => { setImageFile(null); setImagePreview(null); setImageRemoved(true); }}
+                                    />
+                                </div>
+                            ) : (
+                                <div style={{
+                                    width: 96, height: 96, borderRadius: 6, border: '1px dashed #d9d9d9',
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#bbb',
+                                }}>
+                                    <AppstoreOutlined style={{ fontSize: 28 }} />
+                                </div>
+                            )}
+                            <Upload
+                                accept="image/*"
+                                showUploadList={false}
+                                beforeUpload={(file) => {
+                                    const isImage = file.type.startsWith('image/');
+                                    if (!isImage) { message.error('Csak képfájl tölthető fel'); return Upload.LIST_IGNORE; }
+                                    if (file.size > 5 * 1024 * 1024) { message.error('A kép maximum 5 MB lehet'); return Upload.LIST_IGNORE; }
+                                    setImageFile(file);
+                                    setImageRemoved(false);
+                                    const reader = new FileReader();
+                                    reader.onload = e => setImagePreview(e.target?.result as string);
+                                    reader.readAsDataURL(file);
+                                    return false;
+                                }}
+                            >
+                                <Button icon={<UploadOutlined />}>{imagePreview ? 'Csere' : 'Kép feltöltése'}</Button>
+                            </Upload>
+                        </Space>
                     </Form.Item>
 
                     <Form.Item

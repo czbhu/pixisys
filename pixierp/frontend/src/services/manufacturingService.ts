@@ -4,6 +4,8 @@ export interface ProductClass {
     id: number;
     name: string;
     description?: string;
+    image?: string | null;
+    image_url?: string | null;
     is_default: boolean;
     calculators: string[];
     hr_department_names: string[];

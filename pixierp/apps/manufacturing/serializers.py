@@ -34,6 +34,7 @@ class ManufacturingProductAttachmentSerializer(serializers.ModelSerializer):
 class ProductClassSerializer(serializers.ModelSerializer):
     hr_department_names = serializers.SerializerMethodField()
     parent_name = serializers.CharField(source='parent.name', read_only=True)
+    image_url = serializers.SerializerMethodField()
     
     class Meta:
         model = ProductClass
@@ -41,6 +42,16 @@ class ProductClassSerializer(serializers.ModelSerializer):
     
     def get_hr_department_names(self, obj):
         return [dept.name for dept in obj.hr_departments.all()]
+
+    def get_image_url(self, obj):
+        if not obj.image:
+            return None
+        request = self.context.get('request')
+        try:
+            url = obj.image.url
+        except ValueError:
+            return None
+        return request.build_absolute_uri(url) if request else url
 
 
 class ProjectSerializer(serializers.ModelSerializer):

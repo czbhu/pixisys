@@ -15,6 +15,7 @@ interface ProductClass {
   id: number;
   name: string;
   description?: string;
+  image_url?: string | null;
   parent: number | null;
 }
 
@@ -204,11 +205,15 @@ const PrintCatalogPage: React.FC = () => {
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <div style={{
-              width: 56, height: 56, borderRadius: 8, flexShrink: 0,
+              width: 56, height: 56, borderRadius: 8, flexShrink: 0, overflow: 'hidden',
               background: '#fffbe6', border: '1px solid #ffe58f',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}>
-              <FolderOpenOutlined style={{ fontSize: 28, color: '#faad14' }} />
+              {c.image_url ? (
+                <img src={c.image_url} alt={c.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              ) : (
+                <FolderOpenOutlined style={{ fontSize: 28, color: '#faad14' }} />
+              )}
             </div>
             <div style={{ minWidth: 0 }}>
               <Text strong style={{ fontSize: 15, display: 'block' }}>{c.name}</Text>

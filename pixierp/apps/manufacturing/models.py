@@ -218,6 +218,12 @@ class ProductClass(models.Model):
     """Termék osztály"""
     name = models.CharField(max_length=100, verbose_name="Név")
     description = models.TextField(blank=True, verbose_name="Leírás")
+    image = models.ImageField(
+        upload_to='manufacturing/product_classes/',
+        blank=True, null=True,
+        verbose_name="Kategória kép",
+        help_text="A termékkatalógus oldalon megjelenő kategória kép.",
+    )
     is_default = models.BooleanField(default=False, verbose_name="Alapértelmezett")
     calculators = models.JSONField(default=list, blank=True, verbose_name="Kalkulátorok")
     hr_departments = models.ManyToManyField(Department, blank=True, verbose_name="HR osztályok")
