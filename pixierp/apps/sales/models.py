@@ -145,6 +145,7 @@ class CustomerOrder(models.Model):
     show_prices = models.BooleanField(default=True, verbose_name="Árak láthatóak a szállítólevélen")
     invoice_number = models.CharField(max_length=100, blank=True, null=True, verbose_name="Számla szám")
     deadline = models.DateField(null=True, blank=True, verbose_name="Szállítási határidő")
+    ip_address = models.GenericIPAddressField(null=True, blank=True, verbose_name="Megrendelő IP-cím")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -376,6 +377,38 @@ class Quote(models.Model):
         return f"{self.quote_number} - {self.quote_request.title}"
 
 
+def generate_item_quote_number():
+    """Tételenként egyedi ajánlatszám generálása: YYYYMMDD + sorszám.
+    A sorszám a napi prefixre nézve a QuoteRequestItem.quote_number és a
+    QuoteRequest.number értékek közös sorozatából a következő szabad érték."""
+    from django.utils import timezone
+    prefix = timezone.now().strftime('%Y%m%d')
+    seqs = []
+    for val in QuoteRequestItem.objects.filter(
+        quote_number__startswith=prefix
+    ).values_list('quote_number', flat=True):
+        try:
+            seqs.append(int(val[len(prefix):]))
+        except (ValueError, TypeError):
+            pass
+    for val in QuoteRequest.objects.filter(
+        number__startswith=prefix
+    ).values_list('number', flat=True):
+        try:
+            seqs.append(int(val[len(prefix):]))
+        except (ValueError, TypeError):
+            pass
+    seq = (max(seqs) + 1) if seqs else 1
+    candidate = f"{prefix}{seq:02d}"
+    while (
+        QuoteRequestItem.objects.filter(quote_number=candidate).exists()
+        or QuoteRequest.objects.filter(number=candidate).exists()
+    ):
+        seq += 1
+        candidate = f"{prefix}{seq:02d}"
+    return candidate
+
+
 class QuoteRequestItem(models.Model):
     """Árajánlat tételek: kész termék, egyedi gyártás vagy szolgáltatás"""
     ITEM_TYPE_CHOICES = [
@@ -402,12 +435,16 @@ class QuoteRequestItem(models.Model):
     discounted_gross_total = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name="Kedvezményes bruttó összesen")
     item_name = models.CharField(max_length=200, blank=True, default='', verbose_name="Tétel név")
     description = models.TextField(blank=True, verbose_name="Leírás")
+    internal_description = models.TextField(blank=True, default='', verbose_name="Belső leírás")
 
     # Per-item impozíció pillanatkép (független minden más tételtől és a globális presetektől)
     imposition_data = models.JSONField(blank=True, null=True, default=dict, verbose_name="Impozíció adatok")
 
     # Képletek tárolása (pl. 'quantity_formula': '100*1.5')
     formulas = models.JSONField(default=dict, blank=True, null=True, verbose_name="Képletek")
+
+    # Közvetlen gyártási tétel költségtételei (MP nélküli direct flow esetén)
+    cost_items_data = models.JSONField(default=list, blank=True, verbose_name="Közvetlen költségtételek")
 
     # Ordering and Nesting
     sort_order = models.PositiveIntegerField(default=0, verbose_name="Sorrend")
@@ -435,6 +472,10 @@ class QuoteRequestItem(models.Model):
         max_digits=14, decimal_places=6, null=True, blank=True,
         verbose_name="Rögzített árfolyam"
     )
+    quote_number = models.CharField(
+        max_length=50, blank=True, null=True, unique=True,
+        verbose_name="Ajánlatszám"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -460,7 +501,6 @@ class QuoteRequestItem(models.Model):
             qty = self.quantity or 0
             unit_price = self.net_unit_price or 0
             self.net_total = qty * unit_price
-            # apply percent first, then fixed amount capped at net_total
             discounted = self.net_total
             if (self.discount_percent or 0) > 0:
                 discounted = discounted * (1 - float(self.discount_percent) / 100.0)
@@ -471,6 +511,27 @@ class QuoteRequestItem(models.Model):
             self.discounted_gross_total = self.discounted_net_total * (1 + (self.vat_rate or 0) / 100)
         except Exception:
             pass
+        # Ajánlatszám (tételenként egyedi) generálása, ha még nincs
+        if not self.quote_number:
+            # Ha ez az első (és egyetlen) tétel a QR-ban, örökli a QR számát.
+            # Így az ajánlatszám == cikkszám == megrendelésszám ugyanaz marad.
+            try:
+                parent_qr = self.quote_request
+                parent_number = getattr(parent_qr, 'number', None)
+                if parent_number:
+                    sibling_count = QuoteRequestItem.objects.filter(
+                        quote_request=parent_qr
+                    ).exclude(pk=self.pk).count()
+                    if sibling_count == 0:
+                        # Első/egyetlen tétel: QR számát veszi át
+                        if not QuoteRequestItem.objects.filter(
+                            quote_number=parent_number
+                        ).exclude(pk=self.pk).exists():
+                            self.quote_number = parent_number
+            except Exception:
+                pass
+            if not self.quote_number:
+                self.quote_number = generate_item_quote_number()
         super().save(*args, **kwargs)
         # Szinkronizálja a már létező megrendelés tételeket
         self._sync_customer_order_items()
@@ -592,6 +653,32 @@ class QuoteRequestItemAttachment(models.Model):
 
     def __str__(self):
         return f"Attachment for item {self.quote_item_id}: {self.file.name}"
+
+
+class QuoteRequestItemCostAttachment(models.Model):
+    """Csatolmányok a cost_items_data JSON altételeihez (direct QRI, MP nélkül)."""
+    quote_item = models.ForeignKey(QuoteRequestItem, on_delete=models.CASCADE, related_name='cost_attachments')
+    cost_item_local_id = models.IntegerField(verbose_name='Altétel helyi ID (cost_items_data)')
+    file = models.FileField(upload_to='quote_cost_items/%Y/%m/%d/')
+    original_filename = models.CharField(max_length=255, blank=True)
+    file_size = models.IntegerField(null=True, blank=True)
+    remark = models.CharField(max_length=255, blank=True)
+    uploaded_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Direct altétel csatolmány"
+        verbose_name_plural = "Direct altétel csatolmányok"
+        ordering = ['-created_at']
+
+    @property
+    def file_url(self):
+        if self.file:
+            return self.file.url
+        return None
+
+    def __str__(self):
+        return f"CostAtt item={self.quote_item_id} local={self.cost_item_local_id}: {self.original_filename}"
 
 class SearchStat(models.Model):
     ITEM_TYPE_CHOICES = [

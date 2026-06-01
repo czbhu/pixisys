@@ -237,6 +237,7 @@ const PublicQuoteOrder: React.FC = () => {
   const [data, setData] = useState<QuoteData | null>(null);
   const [selectedItems, setSelectedItems] = useState<Set<number>>(new Set());
   const [submitting, setSubmitting] = useState(false);
+  const [orderSuccess, setOrderSuccess] = useState(false);
   const [desiredDate, setDesiredDate] = useState<Dayjs | null>(null);
   const [expandedRowKeys, setExpandedRowKeys] = useState<number[]>([]);
 
@@ -308,8 +309,10 @@ const PublicQuoteOrder: React.FC = () => {
       await axios.post(`${API_BASE_URL}/sales/quote-requests/public/${token}/submit-order/`, {
         items: orderItems,
         ...(desiredDate ? { desired_date: desiredDate.format('YYYY-MM-DD') } : {}),
+        ...(extraTokens ? { extra_tokens: extraTokens } : {}),
       });
       message.success('Megrendelés sikeresen elküldve!');
+      setOrderSuccess(true);
       const now = new Date().toISOString();
       const orderedIds = new Set(orderItems.map(oi => oi.item_id));
       setData(prev => {
@@ -344,6 +347,18 @@ const PublicQuoteOrder: React.FC = () => {
   if (loading) return <div style={{ padding: 24, textAlign: 'center' }}><Spin size="large" /></div>;
   if (error) return <div style={{ padding: 24 }}><Alert type="error" message="Hiba" description={error} /></div>;
   if (!data) return null;
+
+  if (orderSuccess) return (
+    <div style={{ padding: 48, maxWidth: 600, margin: '0 auto', textAlign: 'center' }}>
+      <Alert
+        type="success"
+        showIcon
+        message="Köszönjük a megrendelést!"
+        description="Ha 2 munkanapon belül nem válaszolunk, kérem, hogy keressen minket."
+        style={{ fontSize: 16 }}
+      />
+    </div>
+  );
 
   const hasDiscount = data.items.some(item => item.discount_percent > 0);
   const totalNet = data.items.reduce((sum, item) => {
@@ -516,20 +531,17 @@ const PublicQuoteOrder: React.FC = () => {
           </Col>
         </Row>
 
-        <Title level={2}>Árajánlat</Title>
-        <Descriptions bordered column={2} style={{ marginBottom: 24 }}>
-          <Descriptions.Item label="Árajánlat száma">{data.number}</Descriptions.Item>
-          <Descriptions.Item label="Keltezés">{data.issue_date || '-'}</Descriptions.Item>
-          <Descriptions.Item label="Cím" span={2}>{data.title}</Descriptions.Item>
-          {data.description && (
-            <Descriptions.Item label="Leírás" span={2}>
-              {/<\/?[a-z][\s\S]*>/i.test(data.description)
-                ? <div className="pixi-rich-cell" style={{ wordBreak: 'break-word' }}
-                    dangerouslySetInnerHTML={{ __html: data.description }} />
-                : <div style={{ whiteSpace: 'pre-wrap' }}>{data.description}</div>}
-            </Descriptions.Item>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 24, marginBottom: 16, flexWrap: 'wrap' }}>
+          <Title level={2} style={{ margin: 0 }}>Árajánlat</Title>
+          <span style={{ fontSize: 14, color: '#555' }}>
+            Keltezés: <strong>{data.issue_date || '-'}</strong>
+          </span>
+          {data.valid_until && (
+            <span style={{ fontSize: 14, color: '#555' }}>
+              Érvényes: <strong>{dayjs(data.valid_until).format('YYYY-MM-DD')}</strong>
+            </span>
           )}
-        </Descriptions>
+        </div>
 
         <Paragraph className="no-print" style={{ color: '#ff4d4f', fontWeight: 500 }}>
           {data.partial_order_allowed !== false

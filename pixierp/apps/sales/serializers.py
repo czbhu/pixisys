@@ -97,9 +97,9 @@ class QuoteRequestItemSerializer(serializers.ModelSerializer):
     material_unit_cost_price = serializers.DecimalField(source='material.unit_cost_price', max_digits=12, decimal_places=2, read_only=True, allow_null=True, default=None)
     material_currency = serializers.CharField(source='material.currency', read_only=True, allow_null=True, default=None)
     manufacturing_product_name = serializers.SerializerMethodField()
-    manufacturing_product_code = serializers.CharField(source='manufacturing_product.code', read_only=True)
-    manufacturing_product_description = serializers.CharField(source='manufacturing_product.description', read_only=True)
-    manufacturing_product_internal_description = serializers.CharField(source='manufacturing_product.internal_description', read_only=True)
+    manufacturing_product_code = serializers.SerializerMethodField()
+    manufacturing_product_description = serializers.SerializerMethodField()
+    manufacturing_product_internal_description = serializers.SerializerMethodField()
     manufacturing_product_printshop_params = serializers.SerializerMethodField()
     service_name = serializers.SerializerMethodField()
     service_code = serializers.CharField(source='service.code', read_only=True)
@@ -113,6 +113,7 @@ class QuoteRequestItemSerializer(serializers.ModelSerializer):
     attachments = QuoteRequestItemAttachmentSerializer(many=True, read_only=True)
     is_ordered = serializers.SerializerMethodField()
     ordered_at = serializers.SerializerMethodField()
+    order_ip_address = serializers.SerializerMethodField()
     customer_order_id = serializers.SerializerMethodField()
     delivery_note_number = serializers.SerializerMethodField()
     delivery_note_id = serializers.SerializerMethodField()
@@ -177,6 +178,25 @@ class QuoteRequestItemSerializer(serializers.ModelSerializer):
     def get_manufacturing_product_name(self, obj):
         return self._display_item_name(obj, 'manufacturing_product')
 
+    def get_manufacturing_product_code(self, obj):
+        mp = getattr(obj, 'manufacturing_product', None)
+        if mp:
+            return mp.code
+        # Új metódus: MP nélküli tételnél az ajánlatszámot adjuk vissza
+        return obj.quote_number
+
+    def get_manufacturing_product_description(self, obj):
+        mp = getattr(obj, 'manufacturing_product', None)
+        if mp:
+            return mp.description
+        return obj.description or ''
+
+    def get_manufacturing_product_internal_description(self, obj):
+        mp = getattr(obj, 'manufacturing_product', None)
+        if mp:
+            return mp.internal_description
+        return getattr(obj, 'internal_description', '') or ''
+
     def get_service_name(self, obj):
         return self._display_item_name(obj, 'service')
 
@@ -203,6 +223,19 @@ class QuoteRequestItemSerializer(serializers.ModelSerializer):
         if not coi:
             return None
         return coi.customer_order.created_at
+
+    def get_order_ip_address(self, obj):
+        """Returns the IP address from the first active CustomerOrder, or None."""
+        prefetched = getattr(obj, 'prefetched_active_cois', None)
+        if prefetched is not None:
+            coi = prefetched[0] if prefetched else None
+            return getattr(coi, 'customer_order', None) and coi.customer_order.ip_address or None if coi else None
+        coi = obj.customerorderitem_set.exclude(
+            customer_order__status='cancelled'
+        ).exclude(status='cancelled').select_related('customer_order').order_by('customer_order__created_at').first()
+        if not coi:
+            return None
+        return coi.customer_order.ip_address
 
     def get_customer_order_id(self, obj):
         """Returns the CustomerOrder.id for the first active CustomerOrderItem, or None."""
@@ -531,6 +564,10 @@ class QuoteRequestSerializer(serializers.ModelSerializer):
             return obj.status
         min_status, _ = self._aggregate_order_status(obj)
         if min_status:
+            # Egy frissen leadott megrendelés (tétel 'new') az ajánlat szintjén
+            # 'ordered' (Megrendelve), hogy elkülönüljön a meg nem rendelt 'Új'-tól.
+            if min_status == 'new':
+                return 'ordered'
             return min_status
         if obj.status in self._ORDER_STATUS_LABELS:
             return obj.status
@@ -550,10 +587,13 @@ class QuoteRequestSerializer(serializers.ModelSerializer):
                 effective_status,
                 obj.get_status_display() if hasattr(obj, 'get_status_display') else obj.status,
             )
+        # Frissen leadott megrendelés (tétel 'new') felirata: Megrendelve.
+        if min_status == 'new':
+            return 'Megrendelve (részben)' if is_partial else 'Megrendelve'
         label = self._ORDER_STATUS_LABELS.get(min_status, min_status)
         # Suffix "(részben)" only when status is still 'confirmed' (= just ordered)
         # AND not every RFQ item has been ordered yet.
-        if is_partial and min_status in ('new', 'confirmed'):
+        if is_partial and min_status in ('confirmed',):
             label = f"Megrendelve (részben)"
         return label
 
@@ -830,7 +870,7 @@ class CustomerOrderItemSerializer(serializers.ModelSerializer):
         if qi.manufacturing_product: return qi.manufacturing_product.description
         if qi.service: return qi.service.description
         if qi.material: return ""
-        return ""
+        return qi.description or ""
     
     def get_internal_description(self, obj):
         if not obj.quote_item: return ""
@@ -874,7 +914,7 @@ class CustomerOrderSerializer(serializers.ModelSerializer):
             'confirmed_at', 'production_started_at', 'ready_at',
             'delivery_started_at', 'delivered_at',
             'notes', 'created_by', 'created_at', 'updated_at', 'items', 'extra_works',
-            'invoice_number', 'pending_approval', 'last_rejection'
+            'invoice_number', 'pending_approval', 'last_rejection', 'ip_address'
         ]
     
     def get_pending_approval(self, obj):
@@ -1016,6 +1056,7 @@ class CustomerOrderListItemSerializer(serializers.ModelSerializer):
     internal_description = serializers.SerializerMethodField()
     net_total = serializers.SerializerMethodField()
     supplier_name = serializers.SerializerMethodField()
+    cost_items_data = serializers.SerializerMethodField()
 
     class Meta:
         model = CustomerOrderItem
@@ -1024,7 +1065,7 @@ class CustomerOrderListItemSerializer(serializers.ModelSerializer):
             'description', 'status', 'product_name', 'product_code', 'material_name', 'material_code',
             'manufacturing_product_id', 'manufacturing_product_name', 'manufacturing_product_code',
             'service_name', 'service_code',
-            'product_description', 'internal_description', 'net_total', 'supplier_name'
+            'product_description', 'internal_description', 'net_total', 'supplier_name', 'cost_items_data'
         ]
 
     def _item_name(self, obj):
@@ -1071,7 +1112,7 @@ class CustomerOrderListItemSerializer(serializers.ModelSerializer):
             return qi.manufacturing_product.description or ""
         if getattr(qi, 'service', None):
             return qi.service.description or ""
-        return ""
+        return getattr(qi, 'description', None) or ""
 
     def get_internal_description(self, obj):
         qi = getattr(obj, 'quote_item', None)
@@ -1093,6 +1134,13 @@ class CustomerOrderListItemSerializer(serializers.ModelSerializer):
         except Exception:
             pass
         return None
+
+    def get_cost_items_data(self, obj):
+        qi = getattr(obj, 'quote_item', None)
+        if not qi:
+            return []
+        data = getattr(qi, 'cost_items_data', None)
+        return data if isinstance(data, list) else []
 
 
 class CustomerOrderListSerializer(serializers.ModelSerializer):
@@ -1121,7 +1169,7 @@ class CustomerOrderListSerializer(serializers.ModelSerializer):
             'confirmed_at', 'production_started_at', 'ready_at',
             'delivery_started_at', 'delivered_at',
             'notes', 'created_by', 'created_at', 'updated_at',
-            'invoice_number', 'pending_approval', 'last_rejection'
+            'invoice_number', 'pending_approval', 'last_rejection', 'ip_address'
         ]
 
     def _iter_items(self, obj):

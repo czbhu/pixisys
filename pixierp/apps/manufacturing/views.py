@@ -1249,7 +1249,7 @@ class ManufacturingCostItemViewSet(
 
         return Response({'results': results})
 
-    def _render_full_work_sheet_pdf_bytes(self, ci, highlight_id=None, *, _product=None, _rfq=None, _order=None, _item_name=None):
+    def _render_full_work_sheet_pdf_bytes(self, ci, highlight_id=None, *, _product=None, _rfq=None, _order=None, _item_name=None, _direct_sub_items=None, _direct_item=None):
         """Generate the full two-section (KÜLSŐ + BELSŐ) worksheet PDF for a
         cost item and return the raw bytes.  Raises ImportError if ReportLab /
         qrcode are not installed.
@@ -1283,7 +1283,20 @@ class ManufacturingCostItemViewSet(
             s = _re.sub(r'\n\s*\n+', '\n', s)
             return s.strip()
 
-        product = _product if _product is not None else ci.product
+        def get_direct_field(obj, *keys):
+            if not obj:
+                return None
+            for key in keys:
+                if isinstance(obj, dict):
+                    val = obj.get(key)
+                else:
+                    val = getattr(obj, key, None)
+                if val not in (None, ''):
+                    return val
+            return None
+
+        direct_item = _direct_item
+        product = _product if _product is not None else (ci.product if ci is not None else None)
         if _order is not None:
             order, coi = _order, None
         elif ci is not None:
@@ -1351,6 +1364,8 @@ class ManufacturingCostItemViewSet(
             except Exception:
                 pass
             item_note = strip_html(coi.description or (coi.quote_item.description if coi.quote_item else '') or '')
+        if not item_note and direct_item is not None:
+            item_note = strip_html(get_direct_field(direct_item, 'description', 'internal_description') or '')
 
         # Fallback quantity when there is no resolved customer-order item
         # (e.g. worksheet generated from RFQ context or without sub-items).
@@ -1381,13 +1396,28 @@ class ManufacturingCostItemViewSet(
 
                 if not item_qty_str and ci is not None and ci.quantity is not None:
                     item_qty_str = f"{float(ci.quantity):g} {(ci.unit or '').strip()}".strip()
+
+                if not item_qty_str and direct_item is not None:
+                    dqty = get_direct_field(direct_item, 'quantity')
+                    dunit = get_direct_field(direct_item, 'unit') or ''
+                    if dqty is not None:
+                        try:
+                            item_qty_str = f"{float(dqty):g} {str(dunit).strip()}".strip()
+                        except Exception:
+                            item_qty_str = f"{dqty} {str(dunit).strip()}".strip()
             except Exception:
                 pass
 
-        product_code = getattr(product, 'code', '') or ''
-        product_name = (_item_name or product.name) if product else (_item_name or '')
-        product_internal_desc = strip_html(getattr(product, 'internal_description', '') or '')
-        product_desc = strip_html(getattr(product, 'description', '') or '')
+        if product is not None:
+            product_code = getattr(product, 'code', '') or ''
+            product_name = (_item_name or product.name)
+            product_internal_desc = strip_html(getattr(product, 'internal_description', '') or '')
+            product_desc = strip_html(getattr(product, 'description', '') or '')
+        else:
+            product_code = str(get_direct_field(direct_item, 'product_code', 'code', 'article_number') or '')
+            product_name = str(_item_name or get_direct_field(direct_item, 'item_name', 'product_name', 'manufacturing_product_name', 'material_name', 'service_name', 'name') or '')
+            product_internal_desc = strip_html(str(get_direct_field(direct_item, 'internal_description') or ''))
+            product_desc = strip_html(str(get_direct_field(direct_item, 'product_description', 'description') or ''))
 
         # QR targets
         base_url = getattr(dj_settings, 'FRONTEND_BASE_URL', 'https://erp.pixisys.eu').rstrip('/')
@@ -1470,13 +1500,16 @@ class ManufacturingCostItemViewSet(
         # Sub-items (altételek) — all cost items belonging to the same
         # ManufacturingProduct (parent of the clicked row). Ordered to
         # match the queue page: by queue_position (nulls last), then id.
-        from django.db.models import F
-        sub_items = list(
-            ManufacturingCostItem.objects
-            .select_related('supplier', 'department')
-            .filter(product=product)
-            .order_by(F('queue_position').asc(nulls_last=True), 'id')
-        )
+        if _direct_sub_items is not None:
+            sub_items = list(_direct_sub_items)
+        else:
+            from django.db.models import F
+            sub_items = list(
+                ManufacturingCostItem.objects
+                .select_related('supplier', 'department')
+                .filter(product=product)
+                .order_by(F('queue_position').asc(nulls_last=True), 'id')
+            )
 
         # ── Drawing helpers ─────────────────────────────────────────────
         from reportlab.pdfbase.pdfmetrics import stringWidth
@@ -1656,25 +1689,54 @@ class ManufacturingCostItemViewSet(
                 p.setLineWidth(0.6)
                 p.rect(col_x_box, y - box * 0.5 + 0.1 * cm, box, box, stroke=1, fill=0)
 
-                is_self = (highlight_id and sub.id == highlight_id)
+                sub_id = sub.get('id') if isinstance(sub, dict) else getattr(sub, 'id', None)
+                is_self = (highlight_id and sub_id == highlight_id)
                 if is_self:
                     p.setFont(font_bold, 8)
 
                 name_max = (col_x_qty - col_x_name - 0.2 * cm)
-                name_lines = wrap_to_width(sub.name or '', font_normal, 8, name_max)
+                if isinstance(sub, dict):
+                    sub_name = (
+                        sub.get('name')
+                        or sub.get('item_name')
+                        or sub.get('title')
+                        or sub.get('description')
+                        or ''
+                    )
+                else:
+                    sub_name = getattr(sub, 'name', '')
+                name_lines = wrap_to_width(sub_name or '', font_normal, 8, name_max)
                 p.drawString(col_x_name, y, name_lines[0])
 
                 try:
-                    qty_txt = f"{float(sub.quantity):g} {sub.unit or ''}".strip()
+                    sub_qty = (sub.get('quantity') if isinstance(sub, dict) else getattr(sub, 'quantity', None))
+                    if isinstance(sub, dict) and sub_qty is None:
+                        sub_qty = sub.get('qty')
+                    sub_unit = sub.get('unit', '') if isinstance(sub, dict) else getattr(sub, 'unit', '')
+                    qty_txt = f"{float(sub_qty):g} {sub_unit or ''}".strip()
                 except Exception:
-                    qty_txt = f"{sub.quantity} {sub.unit or ''}".strip()
+                    sub_qty = (sub.get('quantity') if isinstance(sub, dict) else getattr(sub, 'quantity', None))
+                    if isinstance(sub, dict) and sub_qty is None:
+                        sub_qty = sub.get('qty')
+                    sub_unit = sub.get('unit', '') if isinstance(sub, dict) else getattr(sub, 'unit', '')
+                    qty_txt = f"{sub_qty} {sub_unit or ''}".strip()
                 p.drawString(col_x_qty, y, qty_txt)
 
                 if internal:
-                    if sub.is_internal:
-                        supp_txt = f"Belső: {sub.department.name}" if sub.department else "Belső"
-                    elif sub.supplier:
-                        supp_txt = sub.supplier.name
+                    is_internal = sub.get('is_internal') if isinstance(sub, dict) else getattr(sub, 'is_internal', False)
+                    supplier_name = sub.get('supplier_name') if isinstance(sub, dict) else ''
+                    department_name = sub.get('department_name') if isinstance(sub, dict) else ''
+                    if not supplier_name and not isinstance(sub, dict):
+                        supplier_obj = getattr(sub, 'supplier', None)
+                        supplier_name = getattr(supplier_obj, 'name', '') if supplier_obj else ''
+                    if not department_name and not isinstance(sub, dict):
+                        department_obj = getattr(sub, 'department', None)
+                        department_name = getattr(department_obj, 'name', '') if department_obj else ''
+
+                    if is_internal:
+                        supp_txt = f"Belső: {department_name}" if department_name else "Belső"
+                    elif supplier_name:
+                        supp_txt = supplier_name
                     else:
                         supp_txt = '-'
                     p.drawString(col_x_supp, y,
@@ -1689,10 +1751,11 @@ class ManufacturingCostItemViewSet(
                     y -= 0.34 * cm
 
                 # Sub-item notes only on the internal half
-                if internal and sub.notes:
+                sub_notes = sub.get('notes', '') if isinstance(sub, dict) else getattr(sub, 'notes', '')
+                if internal and sub_notes:
                     p.setFont(font_normal, 7)
                     p.setFillGray(0.4)
-                    notes_clean = strip_html(sub.notes)
+                    notes_clean = strip_html(sub_notes)
                     for line in wrap_to_width(f"↳ {notes_clean}", font_normal, 7,
                                               width - col_x_name - right_margin)[:3]:
                         p.drawString(col_x_name, y, line)
@@ -1788,21 +1851,47 @@ class ManufacturingCostItemViewSet(
                 continue
 
             seen = set()
+            seen_direct = set()
             for item in order.items.all():
                 qi = getattr(item, 'quote_item', None)
                 mp = getattr(qi, 'manufacturing_product', None) if qi else None
-                if not mp or mp.id in seen:
-                    continue
-                seen.add(mp.id)
-                ci = (ManufacturingCostItem.objects
-                      .filter(product_id=mp.id)
-                      .order_by(F('queue_position').asc(nulls_last=True), 'id')
-                      .first())
                 try:
-                    if ci:
-                        pdf_bytes = self._render_full_work_sheet_pdf_bytes(ci, highlight_id=0)
+                    if mp and mp.id not in seen:
+                        seen.add(mp.id)
+                        ci = (ManufacturingCostItem.objects
+                              .filter(product_id=mp.id)
+                              .order_by(F('queue_position').asc(nulls_last=True), 'id')
+                              .first())
+                        if ci:
+                            pdf_bytes = self._render_full_work_sheet_pdf_bytes(ci, highlight_id=0)
+                        else:
+                            pdf_bytes = self._render_full_work_sheet_pdf_bytes(None, highlight_id=0, _product=mp, _order=order)
+                    elif qi and qi.id not in seen_direct:
+                        direct_sub_items = qi.cost_items_data if isinstance(qi.cost_items_data, list) else []
+                        direct_sub_items = [
+                            s for s in direct_sub_items
+                            if isinstance(s, dict) and (
+                                (s.get('name') or '').strip()
+                                or (s.get('item_name') or '').strip()
+                                or (s.get('title') or '').strip()
+                                or (s.get('description') or '').strip()
+                            )
+                        ]
+                        if not direct_sub_items:
+                            continue
+                        seen_direct.add(qi.id)
+                        pdf_bytes = self._render_full_work_sheet_pdf_bytes(
+                            None,
+                            highlight_id=0,
+                            _order=order,
+                            _rfq=order.quote_request,
+                            _item_name=qi.item_name or None,
+                            _direct_sub_items=direct_sub_items,
+                            _direct_item=qi,
+                        )
                     else:
-                        pdf_bytes = self._render_full_work_sheet_pdf_bytes(None, highlight_id=0, _product=mp, _order=order)
+                        continue
+
                     if pdf_bytes:
                         all_pdf_pages.append(pdf_bytes)
                 except Exception:
@@ -1854,25 +1943,53 @@ class ManufacturingCostItemViewSet(
                 continue
 
             seen = set()
+            seen_direct = set()
             for item in rfq.items.all():
                 mp = getattr(item, 'manufacturing_product', None)
-                if not mp or mp.id in seen:
-                    continue
-                seen.add(mp.id)
                 rfq_item_name = item.item_name or None
-                ci = (ManufacturingCostItem.objects
-                      .filter(product_id=mp.id)
-                      .order_by(F('queue_position').asc(nulls_last=True), 'id')
-                      .first())
                 try:
-                    if ci:
-                        pdf_bytes = self._render_full_work_sheet_pdf_bytes(ci, highlight_id=0, _item_name=rfq_item_name)
+                    if mp and mp.id not in seen:
+                        seen.add(mp.id)
+                        ci = (ManufacturingCostItem.objects
+                              .filter(product_id=mp.id)
+                              .order_by(F('queue_position').asc(nulls_last=True), 'id')
+                              .first())
+                        if ci:
+                            pdf_bytes = self._render_full_work_sheet_pdf_bytes(ci, highlight_id=0, _item_name=rfq_item_name)
+                        else:
+                            pdf_bytes = self._render_full_work_sheet_pdf_bytes(None, highlight_id=0, _product=mp, _rfq=rfq, _item_name=rfq_item_name)
+                    elif item.id not in seen_direct:
+                        direct_sub_items = item.cost_items_data if isinstance(item.cost_items_data, list) else []
+                        direct_sub_items = [
+                            s for s in direct_sub_items
+                            if isinstance(s, dict) and (
+                                (s.get('name') or '').strip()
+                                or (s.get('item_name') or '').strip()
+                                or (s.get('title') or '').strip()
+                                or (s.get('description') or '').strip()
+                            )
+                        ]
+                        if not direct_sub_items:
+                            continue
+                        seen_direct.add(item.id)
+                        pdf_bytes = self._render_full_work_sheet_pdf_bytes(
+                            None,
+                            highlight_id=0,
+                            _rfq=rfq,
+                            _item_name=rfq_item_name,
+                            _direct_sub_items=direct_sub_items,
+                            _direct_item=item,
+                        )
                     else:
-                        pdf_bytes = self._render_full_work_sheet_pdf_bytes(None, highlight_id=0, _product=mp, _rfq=rfq, _item_name=rfq_item_name)
+                        continue
+
                     if pdf_bytes:
                         all_pdf_pages.append(pdf_bytes)
                 except Exception:
                     continue
+
+        if not all_pdf_pages:
+            return Response({'error': 'Nem sikerült munkalapot generálni.'}, status=404)
 
         if len(all_pdf_pages) == 1:
             merged_bytes = all_pdf_pages[0]
@@ -1909,36 +2026,56 @@ class ManufacturingCostItemViewSet(
         except CustomerOrder.DoesNotExist:
             return Response({'error': 'Megrendelés nem található'}, status=404)
 
-        # Collect distinct manufacturing_product IDs from order items
-        product_ids = []
         seen = set()
+        seen_direct = set()
+        pdf_pages = []
         for item in order.items.all():
             qi = getattr(item, 'quote_item', None)
             mp = getattr(qi, 'manufacturing_product', None) if qi else None
-            if mp and mp.id not in seen:
-                seen.add(mp.id)
-                product_ids.append(mp.id)
-
-        if not product_ids:
-            return Response({'error': 'Ehhez a megrendeléshez nincs nyomtatható altétel munkalap.'}, status=404)
-
-        pdf_pages = []
-        for pid in product_ids:
-            ci = (ManufacturingCostItem.objects
-                  .filter(product_id=pid)
-                  .order_by(F('queue_position').asc(nulls_last=True), 'id')
-                  .first())
-            if not ci:
-                continue
             try:
-                pdf_bytes = self._render_full_work_sheet_pdf_bytes(ci, highlight_id=0)
+                if mp and mp.id not in seen:
+                    seen.add(mp.id)
+                    ci = (ManufacturingCostItem.objects
+                          .filter(product_id=mp.id)
+                          .order_by(F('queue_position').asc(nulls_last=True), 'id')
+                          .first())
+                    if ci:
+                        pdf_bytes = self._render_full_work_sheet_pdf_bytes(ci, highlight_id=0)
+                    else:
+                        pdf_bytes = self._render_full_work_sheet_pdf_bytes(None, highlight_id=0, _product=mp, _order=order)
+                elif qi and qi.id not in seen_direct:
+                    direct_sub_items = qi.cost_items_data if isinstance(qi.cost_items_data, list) else []
+                    direct_sub_items = [
+                        s for s in direct_sub_items
+                        if isinstance(s, dict) and (
+                            (s.get('name') or '').strip()
+                            or (s.get('item_name') or '').strip()
+                            or (s.get('title') or '').strip()
+                            or (s.get('description') or '').strip()
+                        )
+                    ]
+                    if not direct_sub_items:
+                        continue
+                    seen_direct.add(qi.id)
+                    pdf_bytes = self._render_full_work_sheet_pdf_bytes(
+                        None,
+                        highlight_id=0,
+                        _order=order,
+                        _rfq=order.quote_request,
+                        _item_name=qi.item_name or None,
+                        _direct_sub_items=direct_sub_items,
+                        _direct_item=qi,
+                    )
+                else:
+                    continue
+
                 if pdf_bytes:
                     pdf_pages.append(pdf_bytes)
             except Exception:
                 continue
 
         if not pdf_pages:
-            return Response({'error': 'Nem sikerült munkalapot generálni.'}, status=500)
+            return Response({'error': 'Ehhez a megrendeléshez nincs nyomtatható altétel munkalap.'}, status=404)
 
         if len(pdf_pages) == 1:
             merged_bytes = pdf_pages[0]

@@ -395,6 +395,60 @@ interface CustomerOrder {
     setBulkPrintModalOpen(true);
   };
 
+  const printOrderItemWorksheet = async (record: any) => {
+    const productId = record.manufacturing_product_id || record.quote_item?.manufacturing_product;
+    const orderId = record.originalOrder?.id || record.customer_order_id;
+    const qriId = record.quote_item_id || record.quote_item?.id;
+
+    try {
+      let response;
+      if (productId) {
+        response = await api.get(
+          `/manufacturing/cost-items/work_sheet_for_product/?product_id=${productId}`,
+          { responseType: 'blob' }
+        );
+      } else if (orderId && qriId) {
+        response = await api.get(
+          `/sales/customer-orders/${orderId}/item_work_sheet/?item_id=${qriId}`,
+          { responseType: 'blob' }
+        );
+      } else {
+        message.warning('Ehhez a tételhez nincs nyomtatható altétel munkalap.');
+        return;
+      }
+
+      const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
+      window.open(url, '_blank');
+    } catch (e: any) {
+      if (e?.response?.status === 404) {
+        message.warning('Ehhez a tételhez nincs nyomtatható altétel munkalap.');
+      } else {
+        message.error('Hiba a munkalap letöltése során');
+      }
+    }
+  };
+
+  const handleBulkDelete = () => {
+    if (bulkSelectedKeys.length === 0) return;
+    Modal.confirm({
+      title: `${bulkSelectedKeys.length} megrendelés törlése`,
+      content: 'A kijelölt megrendelések véglegesen törlésre kerülnek. A művelet nem visszavonható.',
+      okText: 'Törlés',
+      okType: 'danger',
+      cancelText: 'Mégse',
+      onOk: async () => {
+        try {
+          await api.post('/sales/customer-orders/bulk_delete/', { ids: bulkSelectedKeys });
+          message.success(`${bulkSelectedKeys.length} megrendelés törölve`);
+          setBulkSelectedKeys([]);
+          fetchOrders();
+        } catch {
+          message.error('Hiba a törlés során');
+        }
+      },
+    });
+  };
+
   const exportCsv = () => {
     const data = csvSelectedKeys.length > 0
       ? flattenedItems.filter((it: any) => csvSelectedKeys.includes(it.uniqueId))
@@ -631,10 +685,61 @@ interface CustomerOrder {
       .finally(() => setOrderItemAttsLoaded(prev => ({ ...prev, [coiId]: true })));
   };
 
+  const persistDirectCostItems = async (qriId: number, rows: any[]) => {
+    const normalized = (Array.isArray(rows) ? rows : []).map((ci: any, idx: number) => {
+      const qty = Number(ci?.quantity || 0);
+      const costPrice = Number(ci?.cost_price ?? ci?.unit_price ?? 0);
+      const sellUnit = Number(ci?.selling_unit_price ?? ci?.selling_price ?? 0);
+      return {
+        id: ci?.id,
+        code: ci?.code || '',
+        name: ci?.name || '',
+        type: ci?.type || 'other',
+        ref_id: ci?.ref_id ?? null,
+        quantity: qty,
+        unit: ci?.unit || 'db',
+        cost_price: costPrice,
+        unit_price: Number(ci?.unit_price ?? costPrice),
+        markup_percent: Number(ci?.markup_percent || 0),
+        selling_unit_price: sellUnit,
+        selling_price: Number(ci?.selling_price ?? (sellUnit * qty)),
+        supplier_id: ci?.supplier ?? ci?.supplier_id ?? null,
+        supplier_name: ci?.supplier_name || '',
+        department_id: ci?.department ?? ci?.department_id ?? null,
+        department_name: ci?.department_name || '',
+        is_internal: !!ci?.is_internal,
+        is_per_unit: !!ci?.is_per_unit,
+        currency_code: String(ci?.currency_code || 'HUF').toUpperCase(),
+        sort_order: typeof ci?.sort_order === 'number' ? ci.sort_order : idx,
+        parent_local_id: ci?.parent_local_id ?? null,
+        status: ci?.status || 'new',
+        notes: ci?.notes || '',
+        formulas: ci?.formulas || {},
+        syncQty: !!ci?.syncQty,
+      };
+    });
+    await api.patch(`/sales/quote-request-items/${qriId}/`, { cost_items_data: normalized });
+  };
+
+  const renderDirectCostItemsTable = (qriId: number, rows: any[]) => {
+    if (!qriId || !rows || rows.length === 0) return null;
+    return (
+      <ProductSubItemsTable
+        productId={0}
+        dataSource={rows}
+        qriId={qriId}
+        showNotesAndAttachments
+        onPersistAll={(items: any[]) => persistDirectCostItems(qriId, items)}
+      />
+    );
+  };
+
   // Renders cost-items (altételek) + attachments for a single item-view row
   const renderItemExpand = (record: any) => {
     const coiId = Number(record.id);
     const productId = Number(record.manufacturing_product_id || 0);
+    const qriId = Number(record.quote_item_id || record.quote_item?.id || 0);
+    const directCostItems: any[] = Array.isArray(record.cost_items_data) ? record.cost_items_data : [];
     const orderId = Number(record.originalOrder?.id || 0);
     const atts: any[] = orderItemAtts[coiId] || [];
     const loaded = !!orderItemAttsLoaded[coiId];
@@ -643,7 +748,7 @@ interface CustomerOrder {
     return (
       <div style={{ padding: '8px 16px 12px', background: '#fafafa', borderTop: '1px solid #f0f0f0' }}>
         <Space direction="vertical" style={{ width: '100%' }} size={10}>
-          {productId > 0 && (
+          {(productId > 0 || directCostItems.length > 0) && (
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
                 <span style={{ fontWeight: 500, fontSize: 12, color: '#555' }}>Altételek</span>
@@ -655,17 +760,23 @@ interface CustomerOrder {
                   Tétel megnyitása
                 </Button>
               </div>
-              <div style={{ paddingLeft: 8 }}>
-                <ProductSubItemsTable productId={productId} showNotesAndAttachments />
-              </div>
-              <MaterialNeedsTree
-                manufacturingProductId={productId}
-                quantity={Number(record.quantity || 1)}
-                sourceType="customer_order"
-                sourceId={orderId}
-                sourceNumber={record.originalOrder?.order_number || String(orderId)}
-                sourceItemName={record.product_name || record.manufacturing_product_name || record.material_name || record.service_name || ''}
-              />
+              {productId > 0 ? (
+                <>
+                  <div style={{ paddingLeft: 8 }}>
+                    <ProductSubItemsTable productId={productId} showNotesAndAttachments />
+                  </div>
+                  <MaterialNeedsTree
+                    manufacturingProductId={productId}
+                    quantity={Number(record.quantity || 1)}
+                    sourceType="customer_order"
+                    sourceId={orderId}
+                    sourceNumber={record.originalOrder?.order_number || String(orderId)}
+                    sourceItemName={record.product_name || record.manufacturing_product_name || record.material_name || record.service_name || ''}
+                  />
+                </>
+              ) : (
+                renderDirectCostItemsTable(qriId, directCostItems)
+              )}
             </div>
           )}
           <div>
@@ -1049,6 +1160,10 @@ interface CustomerOrder {
                 expandedRowRender: (r: any) => {
                   const coiId = Number(r.id);
                   const productId = Number(r.quote_item?.manufacturing_product || r.manufacturing_product || 0);
+                  const qriId = Number(r.quote_item_id || r.quote_item?.id || 0);
+                  const directCostItems: any[] = Array.isArray(r.cost_items_data)
+                    ? r.cost_items_data
+                    : (Array.isArray(r.quote_item?.cost_items_data) ? r.quote_item.cost_items_data : []);
                   const atts: any[] = orderItemAtts[coiId] || [];
                   const loaded = !!orderItemAttsLoaded[coiId];
                   const uploading = (orderItemAttUploading[coiId] || 0) > 0;
@@ -1056,7 +1171,7 @@ interface CustomerOrder {
                   return (
                     <div style={{ padding: '8px 16px 12px', background: '#fafafa', borderTop: '1px solid #f0f0f0' }}>
                       <Space direction="vertical" style={{ width: '100%' }} size={10}>
-                        {productId > 0 && (
+                        {(productId > 0 || directCostItems.length > 0) && (
                           <div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
                               <span style={{ fontWeight: 500, fontSize: 12, color: '#555' }}>Altételek</span>
@@ -1068,17 +1183,23 @@ interface CustomerOrder {
                                 Tétel megnyitása
                               </Button>
                             </div>
-                            <div style={{ paddingLeft: 8 }}>
-                              <ProductSubItemsTable productId={productId} showNotesAndAttachments />
-                            </div>
-                            <MaterialNeedsTree
-                              manufacturingProductId={productId}
-                              quantity={Number(r.quantity || 1)}
-                              sourceType="customer_order"
-                              sourceId={Number(record.id || 0)}
-                              sourceNumber={record.order_number || String(record.id || '')}
-                              sourceItemName={r.product_name || r.manufacturing_product_name || r.material_name || r.name || ''}
-                            />
+                            {productId > 0 ? (
+                              <>
+                                <div style={{ paddingLeft: 8 }}>
+                                  <ProductSubItemsTable productId={productId} showNotesAndAttachments />
+                                </div>
+                                <MaterialNeedsTree
+                                  manufacturingProductId={productId}
+                                  quantity={Number(r.quantity || 1)}
+                                  sourceType="customer_order"
+                                  sourceId={Number(record.id || 0)}
+                                  sourceNumber={record.order_number || String(record.id || '')}
+                                  sourceItemName={r.product_name || r.manufacturing_product_name || r.material_name || r.name || ''}
+                                />
+                              </>
+                            ) : (
+                              renderDirectCostItemsTable(qriId, directCostItems)
+                            )}
                           </div>
                         )}
                         <div>
@@ -1801,24 +1922,7 @@ interface CustomerOrder {
             <Button
               icon={<PrinterOutlined />}
               size="small"
-              onClick={async () => {
-                const productId = record.manufacturing_product_id || record.quote_item?.manufacturing_product;
-                if (!productId) { message.warning('Ehhez a tételhez nincs nyomtatható altétel munkalap.'); return; }
-                try {
-                  const response = await api.get(
-                    `/manufacturing/cost-items/work_sheet_for_product/?product_id=${productId}`,
-                    { responseType: 'blob' }
-                  );
-                  const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
-                  window.open(url, '_blank');
-                } catch (e: any) {
-                  if (e?.response?.status === 404) {
-                    message.warning('Ehhez a tételhez nincs nyomtatható altétel munkalap.');
-                  } else {
-                    message.error('Hiba a munkalap letöltése során');
-                  }
-                }
-              }}
+              onClick={() => printOrderItemWorksheet(record)}
             />
           </Tooltip>
           {(record.manufacturing_product_name || record.quote_item?.manufacturing_product) && (
@@ -2169,20 +2273,7 @@ interface CustomerOrder {
         <Button icon={<EyeOutlined />} size="small" onClick={() => navigate(`/sales/customer-orders/${record.originalOrder.id}`)} />
       </Tooltip>
       <Tooltip title="Tétel munkalap">
-        <Button icon={<PrinterOutlined />} size="small" onClick={async () => {
-          const productId = record.manufacturing_product_id || record.quote_item?.manufacturing_product;
-          if (!productId) { message.warning('Ehhez a tételhez nincs nyomtatható altétel munkalap.'); return; }
-          try {
-            const res = await api.get(`/manufacturing/cost-items/work_sheet_for_product/?product_id=${productId}`, { responseType: 'blob' });
-            window.open(window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' })), '_blank');
-          } catch (e: any) {
-            if (e?.response?.status === 404) {
-              message.warning('Ehhez a tételhez nincs nyomtatható altétel munkalap.');
-            } else {
-              message.error('Hiba a munkalap letöltése során');
-            }
-          }
-        }} />
+        <Button icon={<PrinterOutlined />} size="small" onClick={() => printOrderItemWorksheet(record)} />
       </Tooltip>
       <Tooltip title="Munkaóra indítása">
         <Button icon={<FieldTimeOutlined />} size="small" onClick={() => {
@@ -2558,6 +2649,14 @@ interface CustomerOrder {
           >
             Munkalap nyomtatása
           </Button>
+          <Button
+            size="small"
+            danger
+            icon={<DeleteOutlined />}
+            onClick={handleBulkDelete}
+          >
+            Törlés
+          </Button>
         </div>
       )}
       {useCardLayout ? renderMobileCards() : (
@@ -2574,7 +2673,9 @@ interface CustomerOrder {
           loading={loading}
           size="small"
           expandable={isItemsView ? {
-            rowExpandable: (record: any) => !!(record.manufacturing_product_id),
+            // Allow expand for all item rows so attachments are always reachable.
+            // Altétel content remains conditional inside renderItemExpand (productId > 0).
+            rowExpandable: (record: any) => !!record?.id,
             expandedRowKeys: itemsViewExpandedKeys,
             onExpand: (expanded: boolean, record: any) => {
               if (expanded) {

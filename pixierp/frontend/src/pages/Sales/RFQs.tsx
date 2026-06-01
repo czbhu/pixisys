@@ -105,6 +105,7 @@ const RFQs: React.FC = () => {
   const [copyItemContacts, setCopyItemContacts] = useState<any[]>([]);
   const [copyItemNextNumber, setCopyItemNextNumber] = useState<string>('');
   const [copyItemUserName, setCopyItemUserName] = useState<string>('');
+  const [copyItemLoading, setCopyItemLoading] = useState(false);
   // Ctrl+V paste support in create modal
   useClipboardImagePaste(handleCreateModalPaste, createOpen);
   const [nextNumber, setNextNumber] = useState<string>('');
@@ -480,7 +481,7 @@ const RFQs: React.FC = () => {
                   <div style={{ fontWeight: 500 }}>
                     {r.product_name || r.material_name || r.manufacturing_product_name || r.service_name || r.name || r.description || '-'}
                   </div>
-                  <div style={{ fontSize: 12, color: '#666' }}>{r.product_code || r.material_code || r.manufacturing_product_code || r.service_code || '-'}</div>
+                  <div style={{ fontSize: 12, color: '#666' }}>{r.quote_number || r.product_code || r.material_code || r.manufacturing_product_code || r.service_code || ''}</div>
                 </div>
               ),
             },
@@ -606,7 +607,7 @@ const RFQs: React.FC = () => {
             },
           ]}
           expandable={{
-            rowExpandable: (r: any) => !!(r.item_type === 'manufacturing' && r.manufacturing_product),
+            rowExpandable: (r: any) => !!(r.item_type === 'manufacturing'),
             expandedRowRender: (r: any) => (
               <div style={{ padding: '8px 0 8px 28px' }}>
                 <ProductSubItemsTable productId={Number(r.manufacturing_product)} onStatusChange={loadData} />
@@ -865,6 +866,25 @@ const RFQs: React.FC = () => {
     return <Tag color={meta.color}>{label || meta.text}</Tag>;
   };
 
+  const renderOrderMeta = (r: any) => {
+    const orderedAt = r.ordered_at;
+    const ip = r.order_ip_address;
+    if (!orderedAt && !ip) return null;
+    let dtStr = '';
+    if (orderedAt) {
+      try {
+        const d = new Date(orderedAt);
+        dtStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+      } catch { dtStr = String(orderedAt).slice(0,16).replace('T',' '); }
+    }
+    return (
+      <div style={{ fontSize: 10, color: '#888', lineHeight: 1.4, marginTop: 1 }}>
+        {dtStr && <div>{dtStr}</div>}
+        {ip && <div>{ip}</div>}
+      </div>
+    );
+  };
+
   const renderRfqStatusControl = (record: any, rfqId: number) => {
     const currentStatus = getDisplayStatus(record);
     const currentLabel = record?.effective_status_label || RFQ_STATUS_META[currentStatus]?.text || currentStatus;
@@ -909,6 +929,7 @@ const RFQs: React.FC = () => {
         {(currentStatus === 'invoiced' && record?.invoice_number) && (
           <span style={{ fontSize: 11, color: '#52c41a', lineHeight: 1.2 }}>{record.invoice_number}</span>
         )}
+        {renderOrderMeta(record)}
       </div>
     );
   };
@@ -987,6 +1008,7 @@ const RFQs: React.FC = () => {
         {(invoiceNum && topStatus === 'invoiced') && (
           <span style={{ fontSize: 11, color: '#52c41a', lineHeight: 1.2 }}>{invoiceNum}</span>
         )}
+        {renderOrderMeta(r)}
       </div>
     );
   };
@@ -1132,6 +1154,25 @@ const RFQs: React.FC = () => {
               sourceItemName={r.manufacturing_product_name || r.product_name || r.name || ''}
             />
           </>
+        )}
+        {!isMfg && r.item_type === 'manufacturing' && (
+          <div style={{ marginBottom: 8 }}>
+            <ProductSubItemsTable
+              productId={0}
+              dataSource={r.cost_items_data || []}
+              showNotesAndAttachments
+              qriId={r.id}
+              onPersistAll={async (updatedItems) => {
+                await salesService.updateQuoteRequestItem(r.id, { cost_items_data: updatedItems } as any);
+                setRfqs(prev => prev.map((rfq: any) => ({
+                  ...rfq,
+                  items: (rfq.items || []).map((it: any) =>
+                    it.id === r.id ? { ...it, cost_items_data: updatedItems } : it
+                  ),
+                })));
+              }}
+            />
+          </div>
         )}
         <div style={{ marginTop: 12, borderTop: '1px solid #f0f0f0', paddingTop: 8 }}>
           <div style={{ fontSize: 12, color: '#888', marginBottom: 6, fontWeight: 500 }}>Csatolmányok</div>
@@ -1408,37 +1449,56 @@ const RFQs: React.FC = () => {
             }
           }
         } else if (it.item_type === 'manufacturing') {
-          let manuRefId = it.ref_id;
           if ((it as any).pendingManuPayload && it.ref_id < 0) {
+            // ── Új metódus: QRI közvetlenül létrehozva, ManufacturingProduct nélkül ──
             try {
               const { _costItemsState: _cs, _currency: _cur, _costCurrency: _cc, ...manuPayload } = (it as any).pendingManuPayload;
-              const createdProduct = await manufacturingService.createProduct(manuPayload);
-              manuRefId = createdProduct.id;
+              const createdItem = await salesService.createDirectManufacturingItem(rfqId, {
+                name: it.name || '',
+                quantity: it.quantity,
+                description: it.description || '',
+                internal_description: manuPayload.internal_description || '',
+                quantity_unit: it.unit || 'db',
+                net_unit_price: it.net_unit_price || 0,
+                vat_rate: it.vat_rate || 27,
+                discount_percent: (it as any).discount_percent || 0,
+                discount_amount: (it as any).discount_amount || 0,
+              });
+              if (createdItem?.id && it.files?.length) {
+                for (const f of it.files) {
+                  const key = (f as any)?.uid || (f as any)?.name;
+                  const remark = (it as any).fileRemarks ? (it as any).fileRemarks[key] : undefined;
+                  try { await salesService.uploadQuoteRequestItemAttachment(createdItem.id, f as any, remark); } catch {}
+                }
+              }
             } catch {
               message.error(`Egyedi gyártás létrehozása sikertelen: ${it.name}`);
               return;
             }
-          } else if (it.ref_id > 0) {
-            // Duplicate the manufacturing product so the copy is fully independent
-            try {
-              const dup = await manufacturingService.duplicateProduct(it.ref_id);
-              manuRefId = dup.id;
-              // If the RFQ item has a custom name (e.g. set via item_name in a previous RFQ),
-              // rename the duplicate to match — the original product name may differ.
-              if (it.name && it.name !== dup.name) {
-                try { await manufacturingService.patchProduct(manuRefId, { name: it.name }); } catch {}
+          } else {
+            let manuRefId = it.ref_id;
+            if (it.ref_id > 0) {
+              // Duplicate the manufacturing product so the copy is fully independent
+              try {
+                const dup = await manufacturingService.duplicateProduct(it.ref_id);
+                manuRefId = dup.id;
+                // If the RFQ item has a custom name (e.g. set via item_name in a previous RFQ),
+                // rename the duplicate to match — the original product name may differ.
+                if (it.name && it.name !== dup.name) {
+                  try { await manufacturingService.patchProduct(manuRefId, { name: it.name }); } catch {}
+                }
+              } catch {
+                message.error(`Egyedi gyártás másolása sikertelen: ${it.name}`);
+                return;
               }
-            } catch {
-              message.error(`Egyedi gyártás másolása sikertelen: ${it.name}`);
-              return;
             }
-          }
-          const createdItem = await salesService.addRfqManufacturingItem(rfqId, manuRefId, it.name || '', it.quantity, it.description || '', it.unit, it.net_unit_price, it.vat_rate, (it as any).discount_percent, (it as any).discount_amount);
-          if (createdItem?.id && it.files?.length) {
-            for (const f of it.files) {
-              const key = (f as any)?.uid || (f as any)?.name;
-              const remark = (it as any).fileRemarks ? (it as any).fileRemarks[key] : undefined;
-              try { await salesService.uploadQuoteRequestItemAttachment(createdItem.id, f as any, remark); } catch {}
+            const createdItem = await salesService.addRfqManufacturingItem(rfqId, manuRefId, it.name || '', it.quantity, it.description || '', it.unit, it.net_unit_price, it.vat_rate, (it as any).discount_percent, (it as any).discount_amount);
+            if (createdItem?.id && it.files?.length) {
+              for (const f of it.files) {
+                const key = (f as any)?.uid || (f as any)?.name;
+                const remark = (it as any).fileRemarks ? (it as any).fileRemarks[key] : undefined;
+                try { await salesService.uploadQuoteRequestItemAttachment(createdItem.id, f as any, remark); } catch {}
+              }
             }
           }
         } else {
@@ -1824,28 +1884,27 @@ const RFQs: React.FC = () => {
       setCopyItemIssueDate(today);
       setCopyItemDeadline(null);
       setCopyItemValidityDays(rfqRecord.validity_days || 30);
-      setCopyItemProjectId(rfqRecord.project?.id ?? null);
+      setCopyItemProjectId(rfqRecord.project ?? rfqRecord.project_id ?? null);
       setCopyItemCompanyId(rfqRecord.company?.id ?? null);
       const rfqContacts: any[] = rfqRecord.contacts || [];
       setCopyItemContactIds(rfqContacts.map((c: any) => c.id));
       setCopyItemContacts(rfqContacts);
       const uName = user?.first_name && user?.last_name ? `${user.last_name} ${user.first_name}` : user?.username || '';
       setCopyItemUserName(uName);
+      // Open modal immediately — fetch data in background
+      setCopyItemLoading(true);
+      setCopyItemModalOpen(true);
+      const companyId = rfqRecord.company?.id;
       try {
-        const [currs, nn] = await Promise.all([
+        const [currs, nn, companyList] = await Promise.all([
           manufacturingService.getCurrencies(),
           salesService.getNextQuoteRequestNumber(today.format('YYYY-MM-DD')),
+          crmService.getCompanies({ is_customer: true, compact: true }).catch(() => []),
         ]);
         setCurrencyList(currs);
         const def = currs.find((c: any) => c.is_default);
         if (def?.code && !rfqRecord.currency_code) setCurrency(def.code.toUpperCase());
         setCopyItemNextNumber(nn.number || '');
-      } catch {}
-      try {
-        const companyId = rfqRecord.company?.id;
-        const [companyList] = await Promise.all([
-          crmService.getCompanies({ is_customer: true, compact: true }).catch(() => []),
-        ]);
         const all: any[] = ((companyList as any).results ?? companyList) || [];
         if (companyId && !all.find((c: any) => String(c.id) === String(companyId))) {
           try { const co = await crmService.getCompany(companyId); all.unshift(co); } catch {}
@@ -1861,7 +1920,7 @@ const RFQs: React.FC = () => {
           });
         }
       } catch {}
-      setCopyItemModalOpen(true);
+      setCopyItemLoading(false);
       return;
     }
     form.resetFields();
@@ -1975,26 +2034,52 @@ const RFQs: React.FC = () => {
       if (p.item_type === 'product') {
         await salesService.addRfqProductItem(rfq.id, p.ref_id!, p.name || '', p.quantity || 1, (p as any).description || '', p.unit || 'db', p.net_unit_price || 0, p.vat_rate || 27, (p as any).discount_percent, (p as any).discount_amount, p.ref_id!);
       } else if (p.item_type === 'manufacturing') {
-        let manuRefId = p.ref_id!;
         if ((p as any).pendingManuPayload && p.ref_id! < 0) {
-          // mode='add' deferred path: the product hasn't been created yet — create it now
-          const { _costItemsState: _cs, _currency: _cur, _costCurrency: _cc, ...manuPayload } = (p as any).pendingManuPayload;
-          const createdProduct = await manufacturingService.createProduct(manuPayload);
-          manuRefId = createdProduct.id;
-        } else if (p.ref_id! > 0) {
-          // Safety fallback: always duplicate the source product so the new item is fully independent
-          try {
-            const dup = await manufacturingService.duplicateProduct(p.ref_id!);
-            manuRefId = dup.id;
-            if (p.name && p.name !== dup.name) {
-              try { await manufacturingService.patchProduct(manuRefId, { name: p.name }); } catch {}
+          // ── Pending (deferred) item: ManufacturingProduct nélkül ──
+          const { _costItemsState: costState, _currency: _cur, _costCurrency: _cc, ...manuPayload } = (p as any).pendingManuPayload;
+          await salesService.createDirectManufacturingItem(rfq.id, {
+            name: p.name || '',
+            quantity: p.quantity || 1,
+            description: (p as any).description || '',
+            internal_description: manuPayload.internal_description || '',
+            quantity_unit: p.unit || 'db',
+            net_unit_price: p.net_unit_price || 0,
+            vat_rate: p.vat_rate || 27,
+            discount_percent: (p as any).discount_percent || 0,
+            discount_amount: (p as any).discount_amount || 0,
+            cost_items: costState || [],
+          });
+        } else if (!p.ref_id) {
+          // ── Direkt tétel másolása (quoteItemId útvonal, ref_id=null) ──
+          await salesService.createDirectManufacturingItem(rfq.id, {
+            name: p.name || '',
+            quantity: p.quantity || 1,
+            description: (p as any).description || '',
+            internal_description: (p as any).internal_description || '',
+            quantity_unit: p.unit || 'db',
+            net_unit_price: p.net_unit_price || 0,
+            vat_rate: p.vat_rate || 27,
+            discount_percent: (p as any).discount_percent || 0,
+            discount_amount: (p as any).discount_amount || 0,
+            cost_items: (p as any).cost_items_data || [],
+          });
+        } else {
+          let manuRefId = p.ref_id!;
+          if (p.ref_id! > 0) {
+            // Safety fallback: always duplicate the source product so the new item is fully independent
+            try {
+              const dup = await manufacturingService.duplicateProduct(p.ref_id!);
+              manuRefId = dup.id;
+              if (p.name && p.name !== dup.name) {
+                try { await manufacturingService.patchProduct(manuRefId, { name: p.name }); } catch {}
+              }
+            } catch {
+              message.error(`Egyedi gyártás másolása sikertelen: ${p.name}`);
+              return;
             }
-          } catch {
-            message.error(`Egyedi gyártás másolása sikertelen: ${p.name}`);
-            return;
           }
+          await salesService.addRfqManufacturingItem(rfq.id, manuRefId, p.name || '', p.quantity || 1, (p as any).description || '', p.unit || 'db', p.net_unit_price || 0, p.vat_rate || 27, (p as any).discount_percent, (p as any).discount_amount);
         }
-        await salesService.addRfqManufacturingItem(rfq.id, manuRefId, p.name || '', p.quantity || 1, (p as any).description || '', p.unit || 'db', p.net_unit_price || 0, p.vat_rate || 27, (p as any).discount_percent, (p as any).discount_amount);
       } else {
         await salesService.addRfqServiceItem(rfq.id, p.ref_id!, p.name || '', p.quantity || 1, (p as any).description || '', p.unit || 'db', p.net_unit_price || 0, p.vat_rate || 27, (p as any).discount_percent, (p as any).discount_amount);
       }
@@ -2604,7 +2689,7 @@ const RFQs: React.FC = () => {
 
         const invoiceItems: any[] = group.items.map((item: any) => ({
           description: item.product_name || item.material_name || item.manufacturing_product_name || item.service_name || 'Tétel',
-          product_code_value: item.product_code || item.material_code || item.manufacturing_product_code || item.service_code || '',
+          product_code_value: item.quote_number || item.product_code || item.material_code || item.manufacturing_product_code || item.service_code || '',
           quantity: parseFloat(item.quantity),
           unit_price: parseFloat(item.net_unit_price),
           vat_rate: parseFloat(item.vat_rate),
@@ -2987,7 +3072,7 @@ const RFQs: React.FC = () => {
         }}
         rowClassName={(r: any) => { const st = getDisplayStatus(r); return st !== 'new' ? `rfq-row-${st}` : ''; }} rowSelection={{ selectedRowKeys: bulkSelectedKeys, onChange: (keys) => setBulkSelectedKeys(keys), columnWidth: 32 }} expandable={{
           columnWidth: 24,
-          rowExpandable: (r: any) => (r.sub_items?.length > 0) || (r.item_type === 'manufacturing' && !!r.manufacturing_product),
+          rowExpandable: (r: any) => (r.sub_items?.length > 0) || r.item_type === 'manufacturing',
           expandedRowRender: renderExpandedItemRow,
           onExpand: (expanded: boolean, record: any) => {
             // ?light=1 esetén a tétel-csatolmányok nincsenek előtöltve — igény szerint töltjük be
@@ -3047,6 +3132,7 @@ const RFQs: React.FC = () => {
                   const updated = sendRfqList.map((item, i) => i === sendRfqIndex ? { ...item, sent: true } : item);
                   setSendRfqList(updated);
                   message.success('E-mail elküldve');
+                  loadData();
                   const nextAfter = updated.findIndex((item, i) => i > sendRfqIndex && !item.sent);
                   const anyUnsent = updated.findIndex(item => !item.sent);
                   if (nextAfter !== -1) {
@@ -3397,11 +3483,6 @@ const RFQs: React.FC = () => {
           <div style={{ background: '#f0f5ff', border: '1px solid #d6e4ff', borderRadius: 8, padding: '8px 14px 4px', marginBottom: 10 }}>
             <div style={{ fontSize: 11, fontWeight: 600, color: '#2f54eb', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Alap adatok</div>
             <Row gutter={[8, 4]}>
-              <Col xs={24} md={3}>
-                <Form.Item label="Ajánlatszám" style={{ marginBottom: 6 }}>
-                  <Input value={nextNumber || ''} readOnly style={{ width: '100%' }} />
-                </Form.Item>
-              </Col>
               <Col xs={24} md={6}>
                 <Form.Item label="Rögzítette" style={{ marginBottom: 6 }}>
                   <Input value={currentUserName || ''} readOnly style={{ width: '100%' }} />
@@ -4206,7 +4287,7 @@ const RFQs: React.FC = () => {
                 vat_rate: it.vat_rate,
                 gross_total: ((Number(it.quantity) || 0) * (Number(it.net_unit_price) || 0)) * (1 + (Number(it.vat_rate) || 0) / 100),
                 product_code: (it.item_type === 'product' || !it.item_type) ? it.code : undefined,
-                manufacturing_product_code: it.item_type === 'manufacturing' ? it.code : undefined,
+                manufacturing_product_code: it.item_type === 'manufacturing' && (it.ref_id || 0) > 0 ? it.code : undefined,
                 service_code: it.item_type === 'service' ? it.code : undefined,
                 manufacturing_product: (it as any).manufacturing_product,
               } as any;
@@ -4327,6 +4408,7 @@ const RFQs: React.FC = () => {
           return c ? { id: c.id, name: c.name } : undefined;
         })()}
         rfqCurrency={currency}
+        hideCodeField
         onCancel={() => { setSelectorOpen(false); setEditIdx(null); }}
         onAdd={(p: SelectedItemPayload) => {
           // Use functional updater so findIndex always sees the latest committed state,
@@ -4368,7 +4450,7 @@ const RFQs: React.FC = () => {
             item_type: newItems[editIdx].item_type, 
             ref_id: newItems[editIdx].ref_id, 
             name: newItems[editIdx].name,
-            code: (newItems[editIdx] as any).product_code || (newItems[editIdx] as any).code || (newItems[editIdx] as any).manufacturing_product?.code || (newItems[editIdx].item_type === 'manufacturing' ? 'EGYEDI' : undefined),
+            code: (newItems[editIdx] as any).product_code || (newItems[editIdx] as any).code || (newItems[editIdx] as any).manufacturing_product?.code || undefined,
             _fromHistory: !!(newItems[editIdx] as any)._fromHistory,
         } : undefined) : undefined}
         initialManuPayload={editIdx !== null && newItems[editIdx]?.item_type === 'manufacturing' ? cloneDraftRfqItem((newItems[editIdx] as any).pendingManuPayload) : undefined}
@@ -4387,24 +4469,24 @@ const RFQs: React.FC = () => {
         <Modal
           title="Tétel másolása új árajánlatba"
           open={copyItemModalOpen}
-          onCancel={() => { setCopyItemModalOpen(false); setCopySourceItem(null); setCopySourceRfq(null); }}
+          onCancel={() => { setCopyItemModalOpen(false); setCopySourceItem(null); setCopySourceRfq(null); setCopyItemLoading(false); }}
           footer={[
-            <Button key="cancel" onClick={() => { setCopyItemModalOpen(false); setCopySourceItem(null); setCopySourceRfq(null); }}>Mégse</Button>,
-            <Button key="save" type="primary" onClick={() => copyItemSaveRef.current?.save(false)}>Létrehozás</Button>,
+            <Button key="cancel" onClick={() => { setCopyItemModalOpen(false); setCopySourceItem(null); setCopySourceRfq(null); setCopyItemLoading(false); }}>Mégse</Button>,
+            <Button key="save" type="primary" loading={copyItemLoading} disabled={copyItemLoading} onClick={() => copyItemSaveRef.current?.save(false)}>Létrehozás</Button>,
           ]}
           width={isMobile ? '100vw' : 1100}
           maskClosable={false}
           destroyOnHidden
         >
+          {copyItemLoading && (
+            <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(255,255,255,0.65)', zIndex: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 8, pointerEvents: 'none' }}>
+              <Spin tip="Betöltés..." size="large" />
+            </div>
+          )}
           {/* ── Alap adatok ── */}
           <div style={{ background: '#f0f5ff', border: '1px solid #d6e4ff', borderRadius: 8, padding: '8px 14px 4px', marginBottom: 10 }}>
             <div style={{ fontSize: 11, fontWeight: 600, color: '#2f54eb', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Alap adatok</div>
             <Row gutter={[8, 4]}>
-              <Col xs={24} md={4}>
-                <Form.Item label="Ajánlatszám" style={{ marginBottom: 6 }}>
-                  <Input value={copyItemNextNumber} readOnly style={{ width: '100%' }} />
-                </Form.Item>
-              </Col>
               <Col xs={24} md={6}>
                 <Form.Item label="Rögzítette" style={{ marginBottom: 6 }}>
                   <Input value={copyItemUserName} readOnly style={{ width: '100%' }} />
@@ -4601,12 +4683,13 @@ const RFQs: React.FC = () => {
             mode='add'
             defaultType={copySourceItem.item_type || 'manufacturing'}
             rfqCurrency={currency}
-            onCancel={() => { setCopyItemModalOpen(false); setCopySourceItem(null); setCopySourceRfq(null); }}
+            hideCodeField
+            onCancel={() => { setCopyItemModalOpen(false); setCopySourceItem(null); setCopySourceRfq(null); setCopyItemLoading(false); }}
             onAdd={handleCopyItemSave}
             initialSelection={{
               item_type: copySourceItem.item_type || 'manufacturing',
               ref_id: copySourceItem.manufacturing_product || copySourceItem.product || copySourceItem.service || copySourceItem.ref_id,
-              name: copySourceItem.manufacturing_product_name || copySourceItem.product_name || copySourceItem.service_name || copySourceItem.name || '',
+              name: copySourceItem.manufacturing_product_name || copySourceItem.item_name || copySourceItem.product_name || copySourceItem.service_name || copySourceItem.name || '',
             }}
             initialValues={{
               quantity: Number(copySourceItem.quantity) || 1,
@@ -4614,8 +4697,10 @@ const RFQs: React.FC = () => {
               net_unit_price: Number(copySourceItem.net_unit_price) || 0,
               vat_rate: Number(copySourceItem.vat_rate) || 27,
               description: copySourceItem.description || '',
+              internal_description: copySourceItem.internal_description || '',
               discount_percent: Number(copySourceItem.discount_percent || 0),
               discount_amount: Number(copySourceItem.discount_amount || 0),
+              cost_items_data: copySourceItem.cost_items_data || [],
             }}
             initialFormulas={copySourceItem.formulas || {}}
             quoteItemId={copySourceItem.id}
@@ -4697,7 +4782,7 @@ const RFQs: React.FC = () => {
                 render: (v: string, r: any) => (
                   <div>
                     <div style={{ fontWeight: 500 }}>{v || '-'}</div>
-                    {r.code && <div style={{ fontSize: 11, color: '#999' }}>{r.code}</div>}
+                    {(r.quote_number || r.code) && <div style={{ fontSize: 11, color: '#999' }}>{r.quote_number || r.code}</div>}
                   </div>
                 ),
               },

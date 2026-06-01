@@ -382,7 +382,12 @@ const RFQDetail: React.FC = () => {
         (payload as any).formulas || {},
       );
     } else if (payload.item_type === 'manufacturing') {
-      createdItem = await salesService.addRfqManufacturingItem(qid, payload.ref_id, payload.name || '', payload.quantity, payload.description || '', payload.unit, payload.net_unit_price, payload.vat_rate, (payload as any).discount_percent, (payload as any).discount_amount, (payload as any).formulas || {});
+      if ((payload as any)._directCreated) {
+        // Új metódus: a QRI már létrehozva, csak frissítünk
+        createdItem = (payload as any)._directCreated;
+      } else {
+        createdItem = await salesService.addRfqManufacturingItem(qid, payload.ref_id, payload.name || '', payload.quantity, payload.description || '', payload.unit, payload.net_unit_price, payload.vat_rate, (payload as any).discount_percent, (payload as any).discount_amount, (payload as any).formulas || {});
+      }
     } else {
       createdItem = await salesService.addRfqServiceItem(qid, payload.ref_id, payload.name || '', payload.quantity, payload.description || '', payload.unit, payload.net_unit_price, payload.vat_rate, (payload as any).discount_percent, (payload as any).discount_amount, (payload as any).formulas || {});
     }
@@ -451,11 +456,13 @@ const RFQDetail: React.FC = () => {
         net_unit_price: payload.net_unit_price != null ? parseFloat(Number(payload.net_unit_price).toFixed(2)) : payload.net_unit_price,
         vat_rate: payload.vat_rate,
         description: payload.description,
+        internal_description: (payload as any).internal_description ?? undefined,
         discount_percent: (payload as any).discount_percent,
         discount_amount: (payload as any).discount_amount,
         formulas: (payload as any).formulas || {},
         is_rate_locked: !!(payload as any).is_rate_locked,
         locked_exchange_rate: (payload as any).is_rate_locked ? ((payload as any).locked_exchange_rate ?? null) : null,
+        cost_items_data: (payload as any).cost_items_data ?? undefined,
       };
       if (payload.item_type === 'product') {
         patch.item_type = 'product';
@@ -758,11 +765,6 @@ const RFQDetail: React.FC = () => {
           <div style={{ background: '#f0f5ff', border: '1px solid #d6e4ff', borderRadius: 8, padding: '8px 14px 4px', marginBottom: 10 }}>
             <div style={{ fontSize: 11, fontWeight: 600, color: '#2f54eb', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Alap adatok</div>
             <Row gutter={[8, 4]}>
-              <Col xs={24} md={3}>
-                <Form.Item label="Ajánlatszám" name="number" style={{ marginBottom: 6 }}>
-                  <Input disabled />
-                </Form.Item>
-              </Col>
               <Col xs={24} md={5}>
                 <Form.Item label="Rögzítette" name="created_by_name" style={{ marginBottom: 6 }}>
                   <Input readOnly />
@@ -1093,8 +1095,8 @@ const RFQDetail: React.FC = () => {
 
 
         {/* ── Tételek ──────────────────────────────────────────────────── */}
-        {!editContext && (
-        <div style={{ background: '#e6f4ff', border: '1px solid #91caff', borderRadius: 8, padding: '8px 14px 4px', marginBottom: 10 }}>
+        {/* Projekt választó – mindig látható, edit módban is */}
+        <div style={{ background: '#e6f4ff', border: '1px solid #91caff', borderRadius: 8, padding: '8px 14px 4px', marginBottom: editContext ? 10 : 0, borderBottomLeftRadius: editContext ? 8 : 0, borderBottomRightRadius: editContext ? 8 : 0, borderBottom: editContext ? undefined : 'none' }}>
           <div style={{ fontSize: 11, fontWeight: 600, color: '#0958d9', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Tételek</div>
           <Row gutter={[8, 4]} style={{ marginBottom: 6 }}>
             <Col xs={24} md={24}>
@@ -1114,7 +1116,14 @@ const RFQDetail: React.FC = () => {
                     }
                   }}
                 >
-                  {(projects || []).filter((p: any) => p.status === 'open').map((p: any) => {
+                  {(projects || []).filter((p: any) => {
+                    if (p.status !== 'open') return false;
+                    const rfqCompanyId = rfq?.company?.id ?? null;
+                    // Csak a saját cég projektjei és a cég nélküliek
+                    if (!p.company) return true;
+                    if (!rfqCompanyId) return true;
+                    return p.company === rfqCompanyId;
+                  }).map((p: any) => {
                     const co = p.company_name || '';
                     const coShort = co.length > 15 ? co.slice(0, 15) + '…' : co;
                     const label = co ? `${co} – ${p.name}` : p.name;
@@ -1128,6 +1137,9 @@ const RFQDetail: React.FC = () => {
               </Form.Item>
             </Col>
           </Row>
+        </div>
+        {!editContext && (
+        <div style={{ background: '#e6f4ff', border: '1px solid #91caff', borderTopLeftRadius: 0, borderTopRightRadius: 0, borderRadius: 8, borderTop: 'none', padding: '8px 14px 4px', marginBottom: 10 }}>
           <div style={{ marginTop: 6 }}>
             <ItemsTable
               items={rfq.items || []}
@@ -1187,17 +1199,21 @@ const RFQDetail: React.FC = () => {
             onAdd={async (p) => onEditSelected(p)}
             rfqId={Number(id)}
             rfqCurrency={activeCurrency}
-            initialSelection={{ item_type: editContext.item.item_type, ref_id: (editContext.item.product || editContext.item.manufacturing_product || editContext.item.service) as number, name: (editContext.item.product_name || editContext.item.manufacturing_product_name || editContext.item.service_name) }}
+            hideCodeField
+            initialSelection={{ item_type: editContext.item.item_type, ref_id: (editContext.item.product || editContext.item.manufacturing_product || editContext.item.service) as number, name: (editContext.item.product_name || editContext.item.manufacturing_product_name || editContext.item.service_name || editContext.item.item_name) }}
             initialValues={{
               quantity: Number(editContext.item.quantity),
               unit: editContext.item.unit,
               net_unit_price: Number(editContext.item.net_unit_price),
               vat_rate: Number(editContext.item.vat_rate),
               description: editContext.item.description,
+              internal_description: editContext.item.internal_description || '',
               discount_percent: Number(editContext.item.discount_percent || 0),
               discount_amount: Number(editContext.item.discount_amount || 0),
               is_rate_locked: !!editContext.item.is_rate_locked,
               locked_exchange_rate: editContext.item.locked_exchange_rate != null ? Number(editContext.item.locked_exchange_rate) : null,
+              quote_number: editContext.item.quote_number || null,
+              cost_items_data: editContext.item.cost_items_data || [],
             }}
             initialFormulas={editContext.item.formulas || {}}
             quoteItemId={editContext.item.id}

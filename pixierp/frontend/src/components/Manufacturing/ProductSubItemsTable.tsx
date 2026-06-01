@@ -91,6 +91,12 @@ interface Props {
   onStatusChange?: () => void;
   /** Increment to force a fresh reload of cost items from the API (e.g. after external bulk status change). */
   reloadTrigger?: number;
+  /** Pre-loaded cost items (bypasses API fetch — used for direct QRI items without ManufacturingProduct). */
+  dataSource?: ProductSubItem[];
+  /** If provided, all save operations call this callback instead of individual MP/cost-item API endpoints. */
+  onPersistAll?: (items: ProductSubItem[]) => Promise<void>;
+  /** QuoteRequestItem ID — if set alongside dataSource, enables attachment upload via /sales/quote-request-items/{id}/cost-item-attachments/ */
+  qriId?: number;
 }
 
 export const ProductSubItemsTable: React.FC<Props> = ({
@@ -104,6 +110,9 @@ export const ProductSubItemsTable: React.FC<Props> = ({
   defaultExpandAllRows = false,
   onStatusChange,
   reloadTrigger,
+  dataSource,
+  onPersistAll,
+  qriId,
 }) => {
   const [loading, setLoading] = useState(!initialProduct);
   const [saving, setSaving] = useState(false);
@@ -133,14 +142,18 @@ export const ProductSubItemsTable: React.FC<Props> = ({
     fd.append('file', file);
     const remark = subItemAttRemarkRef.current[ciId] || '';
     if (remark) fd.append('remark', remark);
-    api.post(`/manufacturing/cost-items/${ciId}/attachments/`, fd, { headers: { 'Content-Type': 'multipart/form-data' } })
+    const uploadUrl = qriId
+      ? `/sales/quote-request-items/${qriId}/cost-item-attachments/`
+      : `/manufacturing/cost-items/${ciId}/attachments/`;
+    if (qriId) fd.append('cost_item_local_id', String(ciId));
+    api.post(uploadUrl, fd, { headers: { 'Content-Type': 'multipart/form-data' } })
       .then(res => {
         setSubItemAtts(prev => ({ ...prev, [ciId]: [res.data, ...(prev[ciId] || [])] }));
         message.success('Kép feltöltve');
       })
       .catch(() => message.error('Feltöltés sikertelen'))
       .finally(() => setSubItemAttUploading(prev => ({ ...prev, [ciId]: Math.max(0, (prev[ciId] || 0) - 1) })));
-  }, []);
+  }, [qriId]);
   useClipboardImagePaste(handlePasteFile, expandedSubItems.length > 0);
   // suppliers
   const [suppliers, setSuppliers] = useState<any[]>([]);
@@ -164,14 +177,19 @@ export const ProductSubItemsTable: React.FC<Props> = ({
 
   const handleSupplierChange = async (id: number, supplierId: number | null) => {
     const prev = items;
-    setItems(items.map(it => {
+    const next = items.map(it => {
       if (it.id !== id) return it;
       const sup = suppliers.find(s => s.id === supplierId);
       return { ...it, supplier: supplierId, supplier_name: sup?.name || '' };
-    }));
+    });
+    setItems(next);
     setSupplierPopoverOpen(null);
     try {
-      await api.patch(`/manufacturing/cost-items/${id}/`, { supplier: supplierId });
+      if (onPersistAll) {
+        await onPersistAll(next);
+      } else {
+        await api.patch(`/manufacturing/cost-items/${id}/`, { supplier: supplierId });
+      }
     } catch {
       message.error('Beszállító frissítése sikertelen');
       setItems(prev);
@@ -180,13 +198,18 @@ export const ProductSubItemsTable: React.FC<Props> = ({
 
   const handleInternalChange = async (id: number, isInternal: boolean, deptId?: number | null) => {
     const prev = items;
-    setItems(items.map(it => {
+    const next = items.map(it => {
       if (it.id !== id) return it;
       const dept = departments.find(d => d.id === deptId);
       return { ...it, is_internal: isInternal, department: deptId ?? null, department_name: dept?.name || '', supplier: isInternal ? null : it.supplier, supplier_name: isInternal ? '' : it.supplier_name };
-    }));
+    });
+    setItems(next);
     try {
-      await api.patch(`/manufacturing/cost-items/${id}/`, { is_internal: isInternal, department: deptId ?? null, supplier: isInternal ? null : undefined });
+      if (onPersistAll) {
+        await onPersistAll(next);
+      } else {
+        await api.patch(`/manufacturing/cost-items/${id}/`, { is_internal: isInternal, department: deptId ?? null, supplier: isInternal ? null : undefined });
+      }
     } catch {
       message.error('Frissítés sikertelen');
       setItems(prev);
@@ -214,9 +237,9 @@ export const ProductSubItemsTable: React.FC<Props> = ({
       markup_percent: Number(c.markup_percent) || 0,
       selling_unit_price: Number(c.selling_unit_price) || 0,
       selling_price: Number(c.selling_price) || 0,
-      supplier: c.supplier ?? null,
+      supplier: c.supplier ?? c.supplier_id ?? null,
       supplier_name: c.supplier_name || c.supplier_info?.name || '',
-      department: c.department ?? null,
+      department: c.department ?? c.department_id ?? null,
       department_name: c.department_name || c.department_info?.name || '',
       is_internal: !!c.is_internal,
       is_per_unit: !!c.is_per_unit,
@@ -230,6 +253,11 @@ export const ProductSubItemsTable: React.FC<Props> = ({
   };
 
   useEffect(() => {
+    if (dataSource !== undefined) {
+      setItems(mapCostItems(dataSource));
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
     (async () => {
       try {
@@ -261,9 +289,20 @@ export const ProductSubItemsTable: React.FC<Props> = ({
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [productId, reloadTrigger]);
+  }, [productId, reloadTrigger, dataSource]);
 
   const persist = async (next: ProductSubItem[]) => {
+    if (onPersistAll) {
+      setSaving(true);
+      try {
+        await onPersistAll(next);
+      } catch {
+        message.error('Mentés sikertelen');
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
     if (!productInfo) return;
     setSaving(true);
     try {
@@ -368,14 +407,19 @@ export const ProductSubItemsTable: React.FC<Props> = ({
       };
       const supObj = suppliers.find(s => s.id === patch.supplier);
       const deptObj = departments.find(d => d.id === patch.department);
-      setItems(prev => prev.map(it => it.id === editingSubItem.id ? {
+      const updatedItems = items.map(it => it.id === editingSubItem.id ? {
         ...it,
         ...patch,
         supplier_name: supObj?.name || '',
         department_name: deptObj?.name || '',
-      } : it));
+      } : it);
+      setItems(updatedItems);
       setEditModalVisible(false);
-      await api.patch(`/manufacturing/cost-items/${editingSubItem.id}/`, patch);
+      if (onPersistAll) {
+        await onPersistAll(updatedItems);
+      } else {
+        await api.patch(`/manufacturing/cost-items/${editingSubItem.id}/`, patch);
+      }
       message.success('Altétel mentve');
     } catch (e: any) {
       if (e?.errorFields) return; // validation error
@@ -385,10 +429,15 @@ export const ProductSubItemsTable: React.FC<Props> = ({
 
   const handleStatusChange = async (id: number, newStatus: string) => {
     const prev = items;
-    setItems(items.map(it => it.id === id ? { ...it, status: newStatus } : it));
+    const next = items.map(it => it.id === id ? { ...it, status: newStatus } : it);
+    setItems(next);
     try {
-      await api.patch(`/manufacturing/cost-items/${id}/`, { status: newStatus });
-      onStatusChange?.();
+      if (onPersistAll) {
+        await onPersistAll(next);
+      } else {
+        await api.patch(`/manufacturing/cost-items/${id}/`, { status: newStatus });
+        onStatusChange?.();
+      }
     } catch (e) {
       console.error(e);
       message.error('Státusz frissítése sikertelen');
@@ -553,10 +602,15 @@ export const ProductSubItemsTable: React.FC<Props> = ({
                 if (!isOpen) {
                   setExpandedSubItems(prev => [...prev, ciId]);
                   if (!subItemAttsLoaded[ciId]) {
-                    api.get(`/manufacturing/cost-items/${ciId}/attachments/`)
-                      .then(res => setSubItemAtts(prev => ({ ...prev, [ciId]: res.data || [] })))
-                      .catch(() => setSubItemAtts(prev => ({ ...prev, [ciId]: [] })))
-                      .finally(() => setSubItemAttsLoaded(prev => ({ ...prev, [ciId]: true })));
+                    const attUrl = qriId
+                      ? `/sales/quote-request-items/${qriId}/cost-item-attachments/?local_id=${ciId}`
+                      : `/manufacturing/cost-items/${ciId}/attachments/`;
+                    if (qriId || !onPersistAll) {
+                      api.get(attUrl)
+                        .then(res => setSubItemAtts(prev => ({ ...prev, [ciId]: res.data || [] })))
+                        .catch(() => setSubItemAtts(prev => ({ ...prev, [ciId]: [] })))
+                        .finally(() => setSubItemAttsLoaded(prev => ({ ...prev, [ciId]: true })));
+                    }
                   }
                 } else {
                   setExpandedSubItems(prev => prev.filter(id => id !== ciId));
@@ -606,8 +660,14 @@ export const ProductSubItemsTable: React.FC<Props> = ({
                 <Space>
                   <Button size="small" type="primary" onClick={async () => {
                     try {
-                      await api.patch(`/manufacturing/cost-items/${ciId}/notes/`, { notes: editingNotesVal });
-                      setItems(prev => prev.map(it => it.id === ciId ? { ...it, notes: editingNotesVal } as any : it));
+                      if (onPersistAll) {
+                        const updatedItems = items.map(it => it.id === ciId ? { ...it, notes: editingNotesVal } as any : it);
+                        setItems(updatedItems);
+                        await onPersistAll(updatedItems);
+                      } else {
+                        await api.patch(`/manufacturing/cost-items/${ciId}/notes/`, { notes: editingNotesVal });
+                        setItems(prev => prev.map(it => it.id === ciId ? { ...it, notes: editingNotesVal } as any : it));
+                      }
                       setEditingNotesId(null);
                     } catch { message.error('Mentés sikertelen'); }
                   }}>Mentés</Button>
@@ -625,6 +685,7 @@ export const ProductSubItemsTable: React.FC<Props> = ({
           </div>
 
           {/* Csatolmányok */}
+          {(qriId || !onPersistAll) && (
           <div>
             <div style={{ fontWeight: 500, fontSize: 12, color: '#555', marginBottom: 6 }}>Csatolmányok</div>
             <Space direction="vertical" style={{ width: '100%' }} size={6}>
@@ -643,7 +704,11 @@ export const ProductSubItemsTable: React.FC<Props> = ({
                   const fd = new FormData();
                   fd.append('file', f);
                   if (attRemark) fd.append('remark', attRemark);
-                  api.post(`/manufacturing/cost-items/${ciId}/attachments/`, fd, { headers: { 'Content-Type': 'multipart/form-data' } })
+                  const uploadUrl = qriId
+                    ? `/sales/quote-request-items/${qriId}/cost-item-attachments/`
+                    : `/manufacturing/cost-items/${ciId}/attachments/`;
+                  if (qriId) fd.append('cost_item_local_id', String(ciId));
+                  api.post(uploadUrl, fd, { headers: { 'Content-Type': 'multipart/form-data' } })
                     .then(res => {
                       setSubItemAtts(prev => ({ ...prev, [ciId]: [res.data, ...(prev[ciId] || [])] }));
                       setSubItemAttRemark(prev => ({ ...prev, [ciId]: '' }));
@@ -667,12 +732,12 @@ export const ProductSubItemsTable: React.FC<Props> = ({
                   {atts.map((att: any) => (
                     <Space key={att.id} size={4} align="center">
                       <a
-                                      href={att.file_url}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      style={{ fontSize: 12 }}
-                                      onClick={(e) => { if (isPdf(att.file_url)) { e.preventDefault(); openPdfPreview(att.file_url); } }}
-                                    >{att.original_filename}</a>
+                        href={att.file_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{ fontSize: 12 }}
+                        onClick={(e) => { if (isPdf(att.file_url)) { e.preventDefault(); openPdfPreview(att.file_url); } }}
+                      >{att.original_filename}</a>
                       {att.file_size ? <span style={{ fontSize: 11, color: '#999' }}>{formatBytes(att.file_size)}</span> : null}
                       {editingSubAttRemarkId === att.id ? (
                         <Space size={4}>
@@ -684,7 +749,10 @@ export const ProductSubItemsTable: React.FC<Props> = ({
                             onChange={e => setEditingSubAttRemarkVal(e.target.value)}
                             onPressEnter={async () => {
                               try {
-                                const res = await api.patch(`/manufacturing/cost-items/${ciId}/attachments/${att.id}/remark/`, { remark: editingSubAttRemarkVal });
+                                const remarkUrl = qriId
+                                  ? `/sales/quote-request-items/${qriId}/cost-item-attachments/${att.id}/`
+                                  : `/manufacturing/cost-items/${ciId}/attachments/${att.id}/remark/`;
+                                const res = await api.patch(remarkUrl, { remark: editingSubAttRemarkVal });
                                 setSubItemAtts(prev => ({ ...prev, [ciId]: (prev[ciId] || []).map((a: any) => a.id === att.id ? { ...a, remark: res.data.remark } : a) }));
                                 setEditingSubAttRemarkId(null);
                               } catch { message.error('Mentés sikertelen'); }
@@ -692,7 +760,10 @@ export const ProductSubItemsTable: React.FC<Props> = ({
                           />
                           <Button size="small" type="primary" onClick={async () => {
                             try {
-                              const res = await api.patch(`/manufacturing/cost-items/${ciId}/attachments/${att.id}/remark/`, { remark: editingSubAttRemarkVal });
+                              const remarkUrl = qriId
+                                ? `/sales/quote-request-items/${qriId}/cost-item-attachments/${att.id}/`
+                                : `/manufacturing/cost-items/${ciId}/attachments/${att.id}/remark/`;
+                              const res = await api.patch(remarkUrl, { remark: editingSubAttRemarkVal });
                               setSubItemAtts(prev => ({ ...prev, [ciId]: (prev[ciId] || []).map((a: any) => a.id === att.id ? { ...a, remark: res.data.remark } : a) }));
                               setEditingSubAttRemarkId(null);
                             } catch { message.error('Mentés sikertelen'); }
@@ -711,7 +782,10 @@ export const ProductSubItemsTable: React.FC<Props> = ({
                       <Button type="text" danger size="small" icon={<DeleteOutlined />}
                         onClick={async () => {
                           try {
-                            await api.delete(`/manufacturing/cost-items/${ciId}/attachments/${att.id}/`);
+                            const deleteUrl = qriId
+                              ? `/sales/quote-request-items/${qriId}/cost-item-attachments/${att.id}/`
+                              : `/manufacturing/cost-items/${ciId}/attachments/${att.id}/`;
+                            await api.delete(deleteUrl);
                             setSubItemAtts(prev => ({ ...prev, [ciId]: (prev[ciId] || []).filter((a: any) => a.id !== att.id) }));
                           } catch { message.error('Törlés sikertelen'); }
                         }}
@@ -722,6 +796,7 @@ export const ProductSubItemsTable: React.FC<Props> = ({
               )}
             </Space>
           </div>
+          )}
         </Space>
       </div>
     );
@@ -742,10 +817,15 @@ export const ProductSubItemsTable: React.FC<Props> = ({
           if (expanded) {
             setExpandedSubItems(prev => [...prev, record.id]);
             if (!subItemAttsLoaded[record.id]) {
-              api.get(`/manufacturing/cost-items/${record.id}/attachments/`)
-                .then(res => setSubItemAtts(prev => ({ ...prev, [record.id]: res.data || [] })))
-                .catch(() => setSubItemAtts(prev => ({ ...prev, [record.id]: [] })))
-                .finally(() => setSubItemAttsLoaded(prev => ({ ...prev, [record.id]: true })));
+              const attUrl = qriId
+                ? `/sales/quote-request-items/${qriId}/cost-item-attachments/?local_id=${record.id}`
+                : `/manufacturing/cost-items/${record.id}/attachments/`;
+              if (qriId || !onPersistAll) {
+                api.get(attUrl)
+                  .then(res => setSubItemAtts(prev => ({ ...prev, [record.id]: res.data || [] })))
+                  .catch(() => setSubItemAtts(prev => ({ ...prev, [record.id]: [] })))
+                  .finally(() => setSubItemAttsLoaded(prev => ({ ...prev, [record.id]: true })));
+              }
             }
           } else {
             setExpandedSubItems(prev => prev.filter(id => id !== record.id));

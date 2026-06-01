@@ -280,6 +280,33 @@ const CustomerOrderDetail: React.FC = () => {
         discount_percent: patch.discount_percent,
       };
       await api.patch(`/sales/customer-order-items/${editContext.item.id}/`, coiPatch);
+      // Keep the underlying quote item in sync for direct manufacturing rows (cost_items_data, formulas, locked rate, etc.)
+      const qiId = editContext.item.quote_item?.id;
+      if (qiId) {
+        const qiPatch: any = {
+          item_name: payload.name,
+          quantity: payload.quantity,
+          unit: payload.unit,
+          net_unit_price: payload.net_unit_price,
+          vat_rate: payload.vat_rate,
+          description: payload.description,
+          internal_description: (payload as any).internal_description ?? undefined,
+          discount_percent: (payload as any).discount_percent,
+          discount_amount: (payload as any).discount_amount,
+          formulas: (payload as any).formulas || {},
+          is_rate_locked: !!(payload as any).is_rate_locked,
+          locked_exchange_rate: (payload as any).is_rate_locked ? ((payload as any).locked_exchange_rate ?? null) : null,
+          cost_items_data: (payload as any).cost_items_data ?? undefined,
+        };
+        if (payload.item_type === 'product') {
+          qiPatch.item_type = 'product'; qiPatch.product = payload.ref_id; qiPatch.manufacturing_product = null; qiPatch.service = null;
+        } else if (payload.item_type === 'manufacturing') {
+          qiPatch.item_type = 'manufacturing'; qiPatch.manufacturing_product = payload.ref_id; qiPatch.product = null; qiPatch.service = null;
+        } else if (payload.item_type === 'service') {
+          qiPatch.item_type = 'service'; qiPatch.service = payload.ref_id; qiPatch.product = null; qiPatch.manufacturing_product = null;
+        }
+        await salesService.updateQuoteRequestItem(qiId, qiPatch);
+      }
       // Also update attachments on the underlying quote_item
       if ((payload as any).files && (payload as any).files.length) {
         const qiId = editContext.item.quote_item?.id;
@@ -461,6 +488,7 @@ const CustomerOrderDetail: React.FC = () => {
         <div style={{ marginBottom: 8 }}>
           <Space>
             {rfq?.assignee_names ? (<span style={{ color: '#888' }}><TeamOutlined /> {rfq.assignee_names}</span>) : null}
+            {order?.ip_address ? (<span style={{ color: '#888' }}>Megrendelő IP: {order.ip_address}</span>) : null}
           </Space>
         </div>
 
@@ -841,8 +869,13 @@ const CustomerOrderDetail: React.FC = () => {
                 net_unit_price: Number(editContext.item.net_unit_price),
                 vat_rate: Number(editContext.item.vat_rate),
                 description: editContext.item.description,
+                internal_description: editContext.item.quote_item?.internal_description || '',
                 discount_percent: Number(editContext.item.discount_percent || 0),
                 discount_amount: Number(editContext.item.discount_amount || 0),
+                is_rate_locked: !!editContext.item.quote_item?.is_rate_locked,
+                locked_exchange_rate: editContext.item.quote_item?.locked_exchange_rate ?? null,
+                quote_number: editContext.item.quote_item?.quote_number || null,
+                cost_items_data: editContext.item.quote_item?.cost_items_data || [],
               }}
               quoteItemId={editContext.item.quote_item?.id}
             />

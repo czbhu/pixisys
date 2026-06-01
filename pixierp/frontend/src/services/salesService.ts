@@ -347,6 +347,43 @@ export const salesService = {
         return response.data;
     },
 
+    /** Új metódus: QRI közvetlenül, ManufacturingProduct nélkül */
+    async createDirectManufacturingItem(id: number, data: {
+        name: string;
+        quantity: number;
+        description?: string;
+        internal_description?: string;
+        quantity_unit?: string;
+        net_unit_price?: number;
+        vat_rate?: number;
+        discount_percent?: number;
+        discount_amount?: number;
+        formulas?: Record<string, string | null>;
+        cost_items?: any[];
+    }) {
+        const response = await api.post(`/sales/quote-requests/${id}/create_manufacturing_item/`, {
+            ...data,
+            direct: true,
+        });
+        return response.data;
+    },
+
+    /** Új metódus: QRI közvetlen szerkesztése (MP nélküli tételeknél) */
+    async updateQuoteItem(rfqId: number, itemId: number, data: {
+        item_name?: string;
+        description?: string;
+        internal_description?: string;
+        net_unit_price?: number;
+        quantity?: number;
+        unit?: string;
+        vat_rate?: number;
+        discount_percent?: number;
+        discount_amount?: number;
+    }) {
+        const response = await api.patch(`/sales/quote-requests/${rfqId}/update_item/${itemId}/`, data);
+        return response.data;
+    },
+
     async addRfqServiceItem(
         id: number,
         serviceId: number,
@@ -454,7 +491,7 @@ export const salesService = {
         return response.data;
     },
     // Quote request items CRUD
-    async updateQuoteRequestItem(itemId: number, data: Partial<{ item_name: string; quantity: number; unit: string; net_unit_price: number; vat_rate: number; description: string; discount_percent: number; discount_amount: number; imposition_data: any; formulas: Record<string, string | null> }>) {
+    async updateQuoteRequestItem(itemId: number, data: Partial<{ item_name: string; internal_description: string; quantity: number; unit: string; net_unit_price: number; vat_rate: number; description: string; discount_percent: number; discount_amount: number; imposition_data: any; formulas: Record<string, string | null>; cost_items_data: any[] }>) {
         const response = await api.patch(`/sales/quote-request-items/${itemId}/`, data);
         return response.data;
     },

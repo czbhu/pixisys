@@ -30,7 +30,8 @@ interface Item {
   product?: number | null;
   manufacturing_product?: number | null;
   service?: number | null;
-  quote_item?: { product?: number | null; manufacturing_product?: number | null; service?: number | null } | null;
+  quote_item?: { product?: number | null; manufacturing_product?: number | null; service?: number | null; quote_number?: string | null } | null;
+  quote_number?: string | null;
   product_code?: string;
   product_name?: string;
   material_code?: string;
@@ -401,7 +402,8 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
         const meta = treeMeta.get(r.id);
         const manufacturingProductId = Number(r.manufacturing_product || r.quote_item?.manufacturing_product || 0);
         // Fix display logic for code and name, falling back correctly
-        const code = r.product_code || r.material_code || r.manufacturing_product_code || r.service_code || (r.item_type === 'manufacturing' ? 'EGYEDI' : '-');
+        // Ajánlatszám (= cikkszám = megrendelésszám) – ugyanaz végig a tételnél
+        const code = r.quote_number || r.quote_item?.quote_number || r.product_code || r.material_code || r.manufacturing_product_code || r.service_code || '';
         const name = r.product_name || r.material_name || r.manufacturing_product_name || r.service_name || r.description || 'Névtelen';
 
         const base = (

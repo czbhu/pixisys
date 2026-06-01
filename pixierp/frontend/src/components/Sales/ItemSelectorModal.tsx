@@ -69,7 +69,7 @@ interface ItemSelectorModalProps {
   allowCreate?: boolean;
   mode?: 'add' | 'edit';
   initialSelection?: { item_type: ItemType; ref_id: number; name?: string; code?: string; _fromHistory?: boolean };
-  initialValues?: Partial<{ quantity: number; unit: string; net_unit_price: number; cost_price: number; vat_rate: number; description: string; discount_percent: number; discount_amount: number; cost_type: string; customer_order_item: number | null; is_rate_locked: boolean; locked_exchange_rate: number | null }>;
+  initialValues?: Partial<{ quantity: number; unit: string; net_unit_price: number; cost_price: number; vat_rate: number; description: string; internal_description: string; discount_percent: number; discount_amount: number; cost_type: string; customer_order_item: number | null; is_rate_locked: boolean; locked_exchange_rate: number | null; quote_number: string | null; cost_items_data: any[] }>;
   initialFormulas?: Record<string, string | null>;
   customer?: { id: any; name: string; company_id?: any };
   rfqId?: number;
@@ -87,6 +87,8 @@ interface ItemSelectorModalProps {
   expandCosts?: boolean;
   /** When true, renders content without a Modal wrapper — for inline panel use inside a Drawer */
   renderInline?: boolean;
+  /** When true, hides the code/cikkszám field entirely (used for quote item contexts where code = auto-generated ajánlatszám) */
+  hideCodeField?: boolean;
   /** When provided, hides the inline footer buttons and exposes doSave via this ref */
   saveRef?: React.MutableRefObject<{ save: (keepOpen: boolean) => Promise<void> } | null>;
 }
@@ -123,7 +125,7 @@ const { Search } = Input;
 
 const defaultVat = 27;
 
-export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defaultType = 'product', onCancel, onAdd, allowCreate = true, mode = 'add', initialSelection, initialValues, initialFormulas, customer, rfqId, rfqCurrency, initialManuPayload, quoteItemId, showCostTypeField, orderItems, expandCosts, renderInline = false, saveRef }) => {
+export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defaultType = 'product', onCancel, onAdd, allowCreate = true, mode = 'add', initialSelection, initialValues, initialFormulas, customer, rfqId, rfqCurrency, initialManuPayload, quoteItemId, showCostTypeField, orderItems, expandCosts, renderInline = false, hideCodeField = false, saveRef }) => {
   const navigate = useNavigate();
   const screens = Grid.useBreakpoint();
   const isMobile = !screens.md;
@@ -497,9 +499,57 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
   // so that saving creates a new independent product instead of patching the original.
   useEffect(() => {
     if (!open) return;
-    const isAddWithPreload = mode === 'add' && (initialSelection?.ref_id ?? 0) > 0 && initialSelection?.item_type === 'manufacturing';
+    const isAddWithPreload = mode === 'add' && initialSelection?.item_type === 'manufacturing';
     if (mode !== 'edit' && !isAddWithPreload) return;
-    if (!initialSelection || initialSelection.item_type !== 'manufacturing' || !initialSelection.ref_id) return;
+    if (!initialSelection || initialSelection.item_type !== 'manufacturing') return;
+    // New-style direct item: no ManufacturingProduct, populate manuForm from initialValues
+    if (!initialSelection.ref_id) {
+      if (mode === 'add') {
+        // Copy flow: preload form from initialValues
+        setManuFormInitialValues({
+          name: initialSelection.name || '',
+          description: initialValues?.description || '',
+          internal_description: initialValues?.internal_description || '',
+          manu_quantity: Number(initialValues?.quantity) || 1,
+          quantity_unit: initialValues?.unit || 'db',
+          manu_net_unit_price: Number(initialValues?.net_unit_price) || 0,
+          manu_net_total: (Number(initialValues?.quantity) || 1) * (Number(initialValues?.net_unit_price) || 0),
+        });
+        if (initialValues?.cost_items_data && initialValues.cost_items_data.length > 0) {
+          const loadedItems: CostItem[] = initialValues.cost_items_data.map((ci: any, idx: number) => ({
+            ...ci,
+            id: ci.id ?? -(idx + 1),
+          }));
+          setManuCostItems(loadedItems);
+          setSyncQtyRows(new Set(loadedItems.filter(i => i.syncQty).map(i => i.id)));
+          setManuPriceFromCalc(loadedItems.length > 0);
+        }
+      } else if (mode === 'edit' && quoteItemId) {
+        setManuFormInitialValues({
+          name: initialSelection.name || '',
+          code: initialValues?.quote_number || '',
+          description: initialValues?.description || '',
+          internal_description: initialValues?.internal_description || '',
+          manu_quantity: Number(initialValues?.quantity) || 1,
+          quantity_unit: initialValues?.unit || 'db',
+          manu_net_unit_price: Number(initialValues?.net_unit_price) || 0,
+          manu_net_total: (Number(initialValues?.quantity) || 1) * (Number(initialValues?.net_unit_price) || 0),
+        });
+        if (initialValues?.is_rate_locked != null) setIsRateLocked(!!initialValues.is_rate_locked);
+        if (initialValues?.locked_exchange_rate != null) setLockedExchangeRate(Number(initialValues.locked_exchange_rate));
+        // Load saved cost items for direct (no-MP) items
+        if (initialValues?.cost_items_data && initialValues.cost_items_data.length > 0) {
+          const loadedItems: CostItem[] = initialValues.cost_items_data.map((ci: any, idx: number) => ({
+            ...ci,
+            id: ci.id ?? -(idx + 1),
+          }));
+          setManuCostItems(loadedItems);
+          setSyncQtyRows(new Set(loadedItems.filter(i => i.syncQty).map(i => i.id)));
+          setManuPriceFromCalc(loadedItems.length > 0);
+        }
+      }
+      return;
+    }
     let cancelled = false;
     (async () => {
       try {
@@ -566,7 +616,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           // otherwise manufacturing product name) — NOT the manufacturing master's name.
           // This prevents the master name from silently overwriting a custom item_name.
           name: (quoteItemId && initialSelection?.name) ? initialSelection.name : p.name,
-          code: p.code,
+          code: (mode === 'edit' && initialValues?.quote_number) ? initialValues.quote_number : p.code,
           description: p.description || '',
           internal_description: p.internal_description || '',
           manu_quantity: displayQty,
@@ -1277,9 +1327,40 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         cost_currency: manuCostCurrencyId || null,
       };
 
+      // ── Új metódus: quoteItemId beállítva, de nincs ManufacturingProduct ────
+      // A QRI-t közvetlenül frissítjük, nem kell MP PATCH
+      if (quoteItemId && !effectiveManuId) {
+        const unit = translateUnit(v.quantity_unit || 'db');
+        const directPayload: any = {
+          item_type: 'manufacturing',
+          ref_id: null,
+          name: v.name,
+          unit,
+          base_price: netUnitPriceForRfq,
+          quantity: productQtyForPayload,
+          net_unit_price: netUnitPriceForRfq,
+          vat_rate: Number(form.getFieldValue('vat_rate')) || defaultVat,
+          description: v.description || '',
+          internal_description: v.internal_description || '',
+          discount_percent: Number(form.getFieldValue('discount_percent')) || 0,
+          discount_amount: Number(form.getFieldValue('discount_amount')) || 0,
+          is_rate_locked: isRateLocked,
+          locked_exchange_rate: isRateLocked ? lockedExchangeRate : null,
+          cost_items_data: manuCostItems.map(ci => ({ ...ci, syncQty: syncQtyRows.has(ci.id) })),
+          keepOpen,
+          files: manuPendingFiles,
+          fileRemarks: manuPendingFileRemarks,
+        };
+        await onAdd(directPayload);
+        message.success('Tétel mentve');
+        setManuPendingFiles([]);
+        setManuPendingFileRemarks({});
+        if (!keepOpen) setLastSavedAt(dayjs());
+        return;
+      }
+
       if (isEdit && effectiveManuId! > 0) {
         if (!rfqId) {
-          // ── Editing a history-loaded item in a new (unsaved) RFQ: defer ─────
           // Do NOT patch the original product. Store the edited data as a pending
           // payload so a brand-new independent product is created when the RFQ is saved.
           const tempId = -Date.now();
@@ -1317,6 +1398,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         const { status: _s, ...patchPayload } = payload as any;
         if (quoteItemId) {
           delete patchPayload.name;
+          delete patchPayload.code; // quote_number kerül a code mezőbe edit módban, ne írjuk felül a gyártási termék kódját
         }
         const updated = await manufacturingService.patchProduct(effectiveManuId!, patchPayload);
         message.success('Egyedi gyártás mentve');
@@ -1392,82 +1474,46 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         message.success('Egyedi gyártás módosítva (az ajánlat mentésekor kerül a rendszerbe)');
 
       } else if (rfqId) {
-        // ── New product, existing RFQ → create immediately ───────────────
-        const created = await manufacturingService.createProduct(payload);
-        message.success('Egyedi gyártás létrehozva és hozzáadva');
-
-        setManuProducts(prev => [created, ...prev]);
-        setManuExistingProducts(prev => [created, ...prev]);
-
-        // Set code in form so it's visible and won't be regenerated on save
-        manuForm.setFieldsValue({ code: created.code });
-
-        // Fill RFQ item form (price converted to RFQ currency)
-        const unit = translateUnit(created.quantity_unit || 'db');
-        form.setFieldsValue({
-          unit,
-          net_unit_price: netUnitPriceForRfq,
-          quantity: created.quantity || 1,
+        // ── Új metódus: QRI közvetlenül létrehozva, ManufacturingProduct nélkül ──
+        const created = await salesService.createDirectManufacturingItem(rfqId, {
+          name: v.name,
+          quantity: productQtyForPayload,
+          description: v.description || '',
+          internal_description: v.internal_description || '',
+          quantity_unit: v.quantity_unit || 'db',
+          net_unit_price: parseFloat(netUnitPriceForPayload.toFixed(2)),
+          vat_rate: Number(form.getFieldValue('vat_rate')) || defaultVat,
+          discount_percent: Number(form.getFieldValue('discount_percent')) || 0,
+          discount_amount: Number(form.getFieldValue('discount_amount')) || 0,
+          cost_items: manuCostItems.map(ci => ({ ...ci, syncQty: syncQtyRows.has(ci.id) })),
         });
+        message.success('Egyedi tétel létrehozva');
 
-        setSelected({ ...created, __type: 'manufacturing' });
-        setManuCreatedId(created.id);
-
-        // Build cost items shaped for QuoteRequestCost (convert each row to base currency via its exchange rate)
-        const productQty = productQtyForPayload;
-        const costItemsForRfq = manuCostItems.map(ci => {
-          const itemQty = (Number(ci.quantity) || 0) * (ci.is_per_unit ? productQty : 1);
-          const costPrice = Number(ci.cost_price) || 0;
-          const rowCurrObj = ci.currency_code
-            ? manuCurrencies.find(c => c.id === ci.currency_id || c.code.toUpperCase() === (ci.currency_code as string).toUpperCase())
-            : manuCurrencies.find(c => c.id === manuCostCurrencyId || c.code.toUpperCase() === manuCostCurrencyCode.toUpperCase());
-          const rowRate = (rowCurrObj && rowCurrObj.exchange_rate > 0) ? rowCurrObj.exchange_rate : 1;
-          const costPriceBase = costPrice * rowRate;
-          return {
-            code: '',
-            name: `${created.code || created.name} – ${ci.name}`,
-            quantity: itemQty,
-            unit: ci.unit || 'db',
-            net_unit_price: costPriceBase,
-            net_total: itemQty * costPriceBase,
-            supplier: ci.supplier_id || null,
-            is_stock: false,
-          };
-        });
-
-        // Add to RFQ as item via onAdd
+        // QRI már létrehozva a backenden — csak jelzünk a szülőnek hogy frissítsen
+        const unit = translateUnit(created.unit || v.quantity_unit || 'db');
+        form.setFieldsValue({ unit, net_unit_price: netUnitPriceForRfq, quantity: productQtyForPayload });
         try {
-          const rfqPayload: SelectedItemPayload = {
+          await onAdd({
             item_type: 'manufacturing',
-            ref_id: created.id,
-            name: created.name,
-            code: created.code,
+            ref_id: null as any,
+            name: created.item_name || v.name,
             unit,
-            base_price: created.net_unit_price || 0,
-            quantity: created.quantity || 1,
+            base_price: netUnitPriceForRfq,
+            quantity: productQtyForPayload,
             net_unit_price: netUnitPriceForRfq,
-            vat_rate: 27,
-            description: created.description || '',
-            manuCostItems: costItemsForRfq,
+            vat_rate: Number(form.getFieldValue('vat_rate')) || defaultVat,
+            description: v.description || '',
             is_rate_locked: isRateLocked,
             locked_exchange_rate: isRateLocked ? lockedExchangeRate : null,
-          };
-          await onAdd({ ...rfqPayload, files: manuPendingFiles, fileRemarks: manuPendingFileRemarks, keepOpen } as any);
+            _directCreated: created,
+            files: manuPendingFiles,
+            fileRemarks: manuPendingFileRemarks,
+            keepOpen,
+          } as any);
           setManuPendingFiles([]);
           setManuPendingFileRemarks({});
         } catch (addErr) {
-          message.warning('A gyártás létrejött, de az ajánlat tételhez adása nem sikerült');
-        }
-
-        // POST cost items to the QuoteRequestCost API directly
-        if (costItemsForRfq.length > 0) {
-          for (const ci of costItemsForRfq) {
-            try {
-              await salesService.createQuoteRequestCost({ ...ci, quote_request: rfqId });
-            } catch (e) {
-              // continue
-            }
-          }
+          message.warning('A tétel létrejött, de a frissítés nem sikerült');
         }
         // Form stays open for editing — do NOT reset
 
@@ -1514,7 +1560,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
             item_type: 'manufacturing',
             ref_id: tempId,
             name: v.name,
-            code: v.code,
+            code: undefined,
             unit,
             base_price: netUnitPriceForRfq,
             quantity: productQtyForPayload,
@@ -2137,10 +2183,20 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
                         </div>
                       </div>
                     </div>
-                    <Form.Item label="Cikkszám" name="code" style={{ flex: '1 1 auto', marginBottom: 8, minWidth: 120 }}>
-                      <Input placeholder="Auto-generál, ha üres" />
-                    </Form.Item>
-                    <Button style={{ marginBottom: 8, flexShrink: 0 }} onClick={manuGenerateCode}>Generál</Button>
+                    {hideCodeField ? (
+                      mode === 'edit' ? (
+                        <Form.Item label="Ajánlatszám" name="code" style={{ flex: '1 1 auto', marginBottom: 8, minWidth: 120 }}>
+                          <Input readOnly style={{ background: '#fafafa', color: '#595959' }} />
+                        </Form.Item>
+                      ) : null
+                    ) : (
+                      <>
+                        <Form.Item label="Cikkszám" name="code" style={{ flex: '1 1 auto', marginBottom: 8, minWidth: 120 }}>
+                          <Input placeholder="Auto-generál, ha üres" />
+                        </Form.Item>
+                        <Button style={{ marginBottom: 8, flexShrink: 0 }} onClick={manuGenerateCode}>Generál</Button>
+                      </>
+                    )}
                   </div>
 
                   <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>

@@ -295,7 +295,8 @@ def _build_items_table_html(items_qs, currency_symbol=''):
                getattr(item.service, 'name', None) or ''
         code = getattr(item.manufacturing_product, 'code', None) or \
                getattr(item.material, 'code', None) or \
-               getattr(item.service, 'code', None) or ''
+               getattr(item.service, 'code', None) or \
+               getattr(item, 'quote_number', None) or ''
         description = item.description or ''
         qty = item.quantity
         unit = item.unit or ''
@@ -924,24 +925,69 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def create_manufacturing_item(self, request, pk=None):
-        """Új gyártási tétel létrehozása és hozzárendelése az ajánlatkéréshez"""
+        """Új gyártási tétel létrehozása és hozzárendelése az ajánlatkéréshez.
+
+        Ha direct=True, akkor NEM jön létre ManufacturingProduct — a QuoteRequestItem
+        az elsődleges entitás (új metódus). Ha direct=False (alapértelmezett), a régi
+        metódus szerint ManufacturingProduct is létrejön (kivezetés alatt).
+        """
         qr = self.get_object()
+        direct = request.data.get('direct', False)
 
         name = request.data.get('name')
         quantity = request.data.get('quantity')
-        deadline = request.data.get('deadline')  # YYYY-MM-DD
+        deadline = request.data.get('deadline')  # YYYY-MM-DD (régi metódusnál kötelező)
 
-        if not name or quantity is None or not deadline:
-            return Response({'error': 'name, quantity, deadline kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        if not name or quantity is None:
+            return Response({'error': 'name és quantity kötelező'}, status=status.HTTP_400_BAD_REQUEST)
 
         # Opcionális mezők
         description = request.data.get('description', '')
         internal_description = request.data.get('internal_description', '')
         quantity_unit = request.data.get('quantity_unit', 'db')
+        net_unit_price = request.data.get('net_unit_price', 0)
+        vat_rate = request.data.get('vat_rate', 27)
+        discount_percent = request.data.get('discount_percent', 0)
+        discount_amount = request.data.get('discount_amount', 0)
+        formulas = request.data.get('formulas') or {}
+        cost_items = request.data.get('cost_items') or []
+
+        if direct:
+            # ── ÚJ METÓDUS: csak QuoteRequestItem, ManufacturingProduct nélkül ──
+            from decimal import Decimal
+            try:
+                net_unit_price_d = Decimal(str(net_unit_price if net_unit_price not in (None, '') else 0))
+            except Exception:
+                net_unit_price_d = Decimal('0')
+            try:
+                quantity_d = Decimal(str(quantity))
+            except Exception:
+                quantity_d = Decimal('1')
+            item = QuoteRequestItem.objects.create(
+                quote_request=qr,
+                item_type='manufacturing',
+                item_name=name,
+                quantity=quantity_d,
+                unit=quantity_unit,
+                net_unit_price=net_unit_price_d,
+                vat_rate=vat_rate,
+                discount_percent=discount_percent,
+                discount_amount=discount_amount,
+                description=description,
+                internal_description=internal_description,
+                formulas=formulas if isinstance(formulas, dict) else {},
+                cost_items_data=cost_items if isinstance(cost_items, list) else [],
+            )
+            QuoteLog.objects.create(quote=qr, user=request.user, action=f'Egyedi tétel létrehozva: {name}')
+            return Response(QuoteRequestItemSerializer(item, context={'request': request}).data, status=status.HTTP_201_CREATED)
+
+        # ── RÉGI METÓDUS (kivezetés alatt): ManufacturingProduct + QuoteRequestItem ──
+        if not deadline:
+            return Response({'error': 'deadline kötelező (régi metódus)'}, status=status.HTTP_400_BAD_REQUEST)
+
         product_class_id = request.data.get('product_class_id')
         project_id = request.data.get('project_id')
         contact_id = request.data.get('contact_id')
-        net_unit_price = request.data.get('net_unit_price', 0)
         currency_id = request.data.get('currency_id')
 
         mp_kwargs = {
@@ -971,14 +1017,12 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                 pass
         if currency_id:
             try:
-                # only set if exists
                 Currency.objects.get(id=int(currency_id))
                 mp_kwargs['currency_id'] = int(currency_id)
             except Exception:
                 pass
 
         mp = ManufacturingProduct.objects.create(**mp_kwargs)
-
         item = QuoteRequestItem.objects.create(
             quote_request=qr,
             item_type='manufacturing',
@@ -986,7 +1030,7 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             quantity=quantity,
             unit=quantity_unit,
             net_unit_price=net_unit_price,
-            description=description
+            description=description,
         )
         QuoteLog.objects.create(quote=qr, user=request.user, action=f'Egyedi gyártás létrehozva és hozzáadva: {mp.name}')
         return Response(QuoteRequestItemSerializer(item, context={'request': request}).data, status=status.HTTP_201_CREATED)
@@ -1367,6 +1411,9 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         )
         if qr.status not in ('ordered', 'invoiced'):
             _apply_quote_request_status(qr, 'sent')
+        for _aqr in additional_qrs:
+            if _aqr.status not in ('ordered', 'invoiced'):
+                _apply_quote_request_status(_aqr, 'sent')
         QuoteLog.objects.create(quote=qr, user=request.user, action='Ajánlat kiküldve e-mailben')
         return Response({'status': 'sent'})
 
@@ -2744,52 +2791,62 @@ def public_order_view(request, token: str):
 @permission_classes([AllowAny])
 @authentication_classes([])
 def public_submit_order(request, token: str):
-    """Publikus megrendelés beküldése"""
+    """Publikus megrendelés beküldése – kezeli az extra_tokens QR tételeit is"""
     qr = get_object_or_404(QuoteRequest, public_token=token)
     if qr.public_expires_at and timezone.now() > qr.public_expires_at:
         return Response({'error': 'Link lejárt'}, status=410)
-    # Érvényesség lejárt ellenőrzés
     if qr.valid_until and qr.valid_until < timezone.now().date():
         return Response({'error': 'Az ajánlat érvényessége lejárt, megrendelés nem lehetséges.'}, status=410)
-    
+
     items_data = request.data.get('items', [])
     if not items_data:
         return Response({'error': 'Nincs megrendelendő tétel'}, status=400)
-    
-    # Ellenőrizzük, hogy az összes tétel létezik-e
-    item_ids = [item['item_id'] for item in items_data]
-    valid_items = qr.items.filter(id__in=item_ids)
-    if valid_items.count() != len(item_ids):
-        return Response({'error': 'Érvénytelen tétel azonosító'}, status=400)
 
-    # Már megrendelt tételek elutasítása
-    already_ordered_ids = list(
-        valid_items.filter(customerorderitem__isnull=False)
-        .exclude(customerorderitem__customer_order__status='cancelled')
-        .values_list('id', flat=True).distinct()
-    )
-    if already_ordered_ids:
-        return Response({'error': f'A következő tételek már meg vannak rendelve: {already_ordered_ids}'}, status=409)
-    
-    # Megrendelés létrehozása
+    # Extra token QR-ek betöltése
+    extra_tokens_raw = request.data.get('extra_tokens', '')
+    accessible_qrs = {qr.id: qr}
+    if extra_tokens_raw:
+        for t in extra_tokens_raw.split(','):
+            t = t.strip()
+            if t and t != token:
+                try:
+                    extra_qr = QuoteRequest.objects.get(public_token=t)
+                    if extra_qr.valid_until and extra_qr.valid_until < timezone.now().date():
+                        continue  # lejárt extra QR kihagyása
+                    accessible_qrs[extra_qr.id] = extra_qr
+                except QuoteRequest.DoesNotExist:
+                    pass
+
+    # Tételek hozzárendelése a megfelelő QR-hez
+    items_by_qr = {}  # qr_id -> {'qr': ..., 'items': [item_data, ...]}
+    for item_data in items_data:
+        item_id = item_data['item_id']
+        owner_qr = None
+        for q in accessible_qrs.values():
+            if q.items.filter(id=item_id).exists():
+                owner_qr = q
+                break
+        if not owner_qr:
+            return Response({'error': f'Érvénytelen tétel azonosító: {item_id}'}, status=400)
+        grp = items_by_qr.setdefault(owner_qr.id, {'qr': owner_qr, 'items': []})
+        grp['items'].append(item_data)
+
+    # Már megrendelt tételek ellenőrzése (összes csoport)
+    for grp in items_by_qr.values():
+        grp_qr = grp['qr']
+        grp_ids = [d['item_id'] for d in grp['items']]
+        already = list(
+            grp_qr.items.filter(id__in=grp_ids, customerorderitem__isnull=False)
+            .exclude(customerorderitem__customer_order__status='cancelled')
+            .exclude(customerorderitem__status='cancelled')
+            .values_list('id', flat=True).distinct()
+        )
+        if already:
+            return Response({'error': f'A következő tételek már meg vannak rendelve: {already}'}, status=409)
+
     from django.db import transaction
-    
-    # Megrendelésszám generálás
-    today = timezone.now().date()
-    date_str = today.strftime('%Y%m%d')
-    last_order = CustomerOrder.objects.filter(
-        order_number__startswith=f'O{date_str}'
-    ).order_by('-order_number').first()
-    
-    if last_order:
-        last_seq = int(last_order.order_number[len(f'O{date_str}'):])
-        new_seq = last_seq + 1
-    else:
-        new_seq = 1
-    
-    order_number = f'O{date_str}{new_seq:02d}'
-    
-    # Optional desired delivery date from customer
+
+    # Szállítási határidő
     deadline_raw = request.data.get('desired_date') or None
     deadline_val = None
     if deadline_raw:
@@ -2799,117 +2856,163 @@ def public_submit_order(request, token: str):
         except Exception:
             pass
 
-    order_details = []
-    
+    notes_val = request.data.get('notes', '')
+    _order_ip = _get_ip(request)
+    all_order_numbers = []
+    all_order_details = []
+
     try:
         with transaction.atomic():
-            # Megrendelés létrehozása
-            order = CustomerOrder.objects.create(
-                quote_request=qr,
-                order_number=order_number,
-                status='new',
-                notes=request.data.get('notes', ''),
-                deadline=deadline_val,
-                # created_by None, mivel publikus
-            )
-            for item_data in items_data:
-                item = qr.items.get(id=item_data['item_id'])
-                quantity = item_data['quantity']
-                
-                CustomerOrderItem.objects.create(
-                    customer_order=order,
-                    quote_item=item,
-                    quantity=quantity,
-                    unit=item.unit,
-                    net_unit_price=item.net_unit_price,
-                    vat_rate=item.vat_rate,
-                    discount_percent=item.discount_percent,
-                    description=item.description
-                )
-                
-                # Tétel megnevezés feloldása típus szerint
-                if item.product:
-                    item_megnevezes = item.product.name
-                elif item.manufacturing_product:
-                    item_megnevezes = item.manufacturing_product.name
-                elif item.service:
-                    item_megnevezes = item.service.name
-                elif item.material:
-                    item_megnevezes = item.material.name
-                elif item.description:
-                    item_megnevezes = item.description[:100]
+            today = timezone.now().date()
+            date_str = today.strftime('%Y%m%d')
+
+            for grp in items_by_qr.values():
+                grp_qr = grp['qr']
+
+                # Megrendelésszám: meglévő aktív rendelést reuse-oljuk ugyanehhez az RFQ-hoz
+                rfq_num = grp_qr.number or grp_qr.request_number or f"QR{grp_qr.id}"
+                existing_order = CustomerOrder.objects.filter(
+                    quote_request=grp_qr
+                ).exclude(status='cancelled').first()
+                if existing_order:
+                    order = existing_order
+                    order_number = existing_order.order_number
+                    if notes_val:
+                        order.notes = notes_val
+                    if deadline_val:
+                        order.deadline = deadline_val
+                    order.save(update_fields=['notes', 'deadline'])
+                    # Remove old COIs so we can recreate with fresh quantities
+                    order.items.all().delete()
                 else:
-                    item_megnevezes = 'Tétel'
-                line = f"- {item_megnevezes}: {quantity} {item.unit}"
-                if item.description and item.description != item_megnevezes:
-                    line += f"\n    Leírás: {item.description[:200]}"
-                order_details.append(line)
-            
-            # Státusz frissítés - megrendelve (NEM archív!)
-            qr.status = 'ordered'
-            qr.save(update_fields=['status'])
+                    order_number = rfq_num
+                    # Safety: avoid conflict with other QRs
+                    conflict_qs = CustomerOrder.objects.exclude(status='cancelled').exclude(quote_request=grp_qr)
+                    if conflict_qs.filter(order_number=order_number).exists():
+                        suffix = 2
+                        order_number = f"{rfq_num}-{suffix}"
+                        while conflict_qs.filter(order_number=order_number).exists():
+                            suffix += 1
+                            order_number = f"{rfq_num}-{suffix}"
+                    order = CustomerOrder.objects.create(
+                        quote_request=grp_qr,
+                        order_number=order_number,
+                        status='new',
+                        notes=notes_val,
+                        deadline=deadline_val,
+                        ip_address=_order_ip or None,
+                    )
 
-        # Napló bejegyzés (IP-vel)
-        _order_ip = _get_ip(request)
-        QuoteLog.objects.create(
-            quote=qr, user=None,
-            action=f'Ügyfél megrendelést küldött be (megrendelésszám: {order_number})',
-            ip_address=_order_ip or None,
-        )
+                order_details = []
+                for item_data in grp['items']:
+                    item = grp_qr.items.get(id=item_data['item_id'])
+                    quantity = item_data['quantity']
+                    CustomerOrderItem.objects.create(
+                        customer_order=order,
+                        quote_item=item,
+                        quantity=quantity,
+                        unit=item.unit,
+                        net_unit_price=item.net_unit_price,
+                        vat_rate=item.vat_rate,
+                        discount_percent=item.discount_percent,
+                        description=item.description,
+                    )
+                    # item_status frissítés
+                    item.item_status = 'ordered'
+                    item.save(update_fields=['item_status'])
 
-        # Email küldés (csak sikeres tranzakció esetén)
-        from django.core.mail import get_connection, EmailMultiAlternatives
-        from apps.core.models import EmailServerConfig
-        
-        email_body = f"""Új megrendelés érkezett a publikus megrendelő felületen keresztül.
+                    if item.product:
+                        item_megnevezes = item.product.name
+                    elif item.manufacturing_product:
+                        item_megnevezes = item.manufacturing_product.name
+                    elif item.service:
+                        item_megnevezes = item.service.name
+                    elif item.material:
+                        item_megnevezes = item.material.name
+                    elif item.description:
+                        item_megnevezes = item.description[:100]
+                    else:
+                        item_megnevezes = 'Tétel'
+                    line = f"- {item_megnevezes}: {quantity} {item.unit}"
+                    if item.description and item.description != item_megnevezes:
+                        line += f"\n    Leírás: {item.description[:200]}"
+                    order_details.append(line)
 
-Ajánlat megnevezése: {qr.title}
-Árajánlat száma: {qr.number or qr.request_number}
-Megrendelésszám: {order_number}
+                # QR státusz → ordered
+                grp_qr.status = 'ordered'
+                grp_qr.save(update_fields=['status'])
 
-Megrendelt tételek:
-{chr(10).join(order_details)}
-{f'{chr(10)}Kért szállítási határidő: {deadline_raw}' if deadline_raw else ''}
-{f'{chr(10)}Megjegyzés: {request.data.get("notes", "").strip()}' if request.data.get('notes', '').strip() else ''}
-"""
-        # EmailServerConfig használata
-        email_config = EmailServerConfig.objects.filter(is_active=True).first()
-        if email_config:
-            connection = get_connection(
-                backend='django.core.mail.backends.smtp.EmailBackend',
-                host=email_config.smtp_host,
-                port=email_config.smtp_port,
-                username=email_config.smtp_username,
-                password=email_config.smtp_password,
-                use_tls=email_config.smtp_use_tls,
-                use_ssl=email_config.smtp_use_ssl,
-                fail_silently=False,
-                timeout=10,
+                all_order_numbers.append(order_number)
+                all_order_details.extend(order_details)
+
+        # Napló + email (tranzakción kívül)
+        combined_numbers = ', '.join(all_order_numbers)
+        for grp in items_by_qr.values():
+            grp_qr = grp['qr']
+            QuoteLog.objects.create(
+                quote=grp_qr, user=None,
+                action=f'Ügyfél megrendelést küldött be (megrendelésszám: {combined_numbers})',
+                ip_address=_order_ip or None,
             )
-            
-            from_email = f"{email_config.from_name} <{email_config.from_email}>" if email_config.from_name else email_config.from_email
-            recipient = qr.created_by.email if qr.created_by and qr.created_by.email else 'admin@pixisys.eu'
-            
-            msg = EmailMultiAlternatives(
-                subject=f'Új megrendelés: {order_number} ({qr.number or qr.request_number})',
-                body=email_body,
-                from_email=from_email,
-                to=[recipient],
-                connection=connection
-            )
-            msg.send()
-            try:
-                from apps.core.email_utils import archive_to_imap_sent
-                archive_to_imap_sent(email_config, msg)
-            except Exception:
-                pass
+
+        # Email értesítés
+        try:
+            from django.core.mail import get_connection, EmailMultiAlternatives
+            from apps.core.models import EmailServerConfig
+            email_config = EmailServerConfig.objects.filter(is_active=True).first()
+            if email_config:
+                _customer_name = (
+                    getattr(qr.company, 'name', None) or
+                    ', '.join([c.name for c in qr.contacts.all() if c.name]) or
+                    'Ismeretlen'
+                )
+                _currency_symbol = getattr(getattr(qr, 'currency', None), 'symbol', '') or ''
+                _ordered_ids = [d['item_id'] for grp in items_by_qr.values() for d in grp['items']]
+                _items_qs_notif = QuoteRequestItem.objects.filter(id__in=_ordered_ids).order_by('sort_order', 'id')
+                _items_table_html = _build_items_table_html(_items_qs_notif, _currency_symbol)
+                email_body_html = (
+                    f'<p>Új megrendelés érkezett a publikus megrendelő felületen keresztül.</p>'
+                    f'<p><strong>Ügyfél neve:</strong> {_customer_name}</p>'
+                    f'{_items_table_html}'
+                )
+                email_body_plain = (
+                    f'Új megrendelés érkezett a publikus megrendelő felületen keresztül.'
+                    f'\n\nÜgyfél neve: {_customer_name}'
+                )
+                connection = get_connection(
+                    backend='django.core.mail.backends.smtp.EmailBackend',
+                    host=email_config.smtp_host,
+                    port=email_config.smtp_port,
+                    username=email_config.smtp_username,
+                    password=email_config.smtp_password,
+                    use_tls=email_config.smtp_use_tls,
+                    use_ssl=email_config.smtp_use_ssl,
+                    fail_silently=False,
+                    timeout=10,
+                )
+                from_email = f"{email_config.from_name} <{email_config.from_email}>" if email_config.from_name else email_config.from_email
+                recipient = qr.created_by.email if qr.created_by and qr.created_by.email else 'admin@pixisys.eu'
+                msg = EmailMultiAlternatives(
+                    subject=f'Új megrendelés: {combined_numbers} ({qr.number or qr.request_number})',
+                    body=email_body_plain,
+                    from_email=from_email,
+                    to=[recipient],
+                    connection=connection,
+                )
+                msg.attach_alternative(email_body_html, 'text/html')
+                msg.send()
+                try:
+                    from apps.core.email_utils import archive_to_imap_sent
+                    archive_to_imap_sent(email_config, msg)
+                except Exception:
+                    pass
+        except Exception as email_err:
+            print(f"Email küldési hiba: {email_err}")
 
     except Exception as e:
-        # Ha hiba van, logoljuk és error-t dobunk, de a tranzakció rollbackel
         print(f"Hiba a megrendelés létrehozásakor: {e}")
         return Response({'error': 'Hiba történt a megrendelés feldolgozása során.'}, status=500)
-    qr.save(update_fields=['status'])
-    
+
     return Response({'success': True, 'message': 'Megrendelés sikeresen rögzítve'})
 
 
@@ -5134,6 +5237,19 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
     def destroy(self, request, *args, **kwargs):
         order = self.get_object()
         qr = order.quote_request
+        # Reset item_status on all QuoteRequestItems belonging to this order before deletion
+        try:
+            for coi in order.items.select_related('quote_item').all():
+                qi = coi.quote_item
+                if qi and qi.item_status == 'ordered':
+                    still_ordered = qi.customerorderitem_set.exclude(
+                        customer_order=order
+                    ).exclude(customer_order__status='cancelled').exclude(status='cancelled').exists()
+                    if not still_ordered:
+                        qi.item_status = 'quoted'
+                        qi.save(update_fields=['item_status'])
+        except Exception:
+            pass
         response = super().destroy(request, *args, **kwargs)
         # Ha törlés után nincs aktív megrendelés, az RFQ visszaáll 'quoted' státuszra
         try:
@@ -5700,6 +5816,38 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
             'latest_orders': latest_data,
         })
 
+    @action(detail=False, methods=['post'], url_path='bulk_delete')
+    def bulk_delete(self, request):
+        """Delete multiple CustomerOrders by ID list, resetting item statuses."""
+        ids = request.data.get('ids', [])
+        if not ids:
+            return Response({'error': 'Nincs megadva törlendő azonosító.'}, status=status.HTTP_400_BAD_REQUEST)
+        orders = list(CustomerOrder.objects.filter(id__in=ids))
+        deleted_count = 0
+        for order in orders:
+            qr = order.quote_request
+            for coi in order.items.select_related('quote_item').all():
+                qi = coi.quote_item
+                if qi and qi.item_status == 'ordered':
+                    still_ordered = qi.customerorderitem_set.exclude(
+                        customer_order=order
+                    ).exclude(customer_order__status='cancelled').exclude(status='cancelled').exists()
+                    if not still_ordered:
+                        qi.item_status = 'quoted'
+                        qi.save(update_fields=['item_status'])
+            order._log_user = request.user
+            order._log_request = request
+            order.delete()
+            deleted_count += 1
+            try:
+                if qr and qr.status == 'ordered':
+                    if not qr.customer_orders.exclude(status='cancelled').exists():
+                        qr.status = 'quoted'
+                        qr.save(update_fields=['status'])
+            except Exception:
+                pass
+        return Response({'deleted': deleted_count})
+
 
 class CustomerOrderItemViewSet(viewsets.ModelViewSet):
     queryset = CustomerOrderItem.objects.all()
@@ -5744,6 +5892,36 @@ class CustomerOrderItemViewSet(viewsets.ModelViewSet):
         item.remark = request.data.get('remark', '')
         item.save(update_fields=['remark'])
         return Response({'remark': item.remark})
+
+    def destroy(self, request, *args, **kwargs):
+        """Delete COI; reset QuoteRequestItem status and delete parent order if it becomes empty."""
+        item = self.get_object()
+        quote_item = item.quote_item
+        parent_order = item.customer_order
+        response = super().destroy(request, *args, **kwargs)
+        # Reset QuoteRequestItem.item_status if no other active orders remain
+        try:
+            if quote_item:
+                still_ordered = quote_item.customerorderitem_set.exclude(
+                    customer_order__status='cancelled'
+                ).exclude(status='cancelled').exists()
+                if not still_ordered and quote_item.item_status == 'ordered':
+                    quote_item.item_status = 'quoted'
+                    quote_item.save(update_fields=['item_status'])
+                qr = quote_item.quote_request
+                if qr and qr.status == 'ordered':
+                    if not qr.items.filter(item_status='ordered').exists():
+                        qr.status = 'quoted'
+                        qr.save(update_fields=['status'])
+        except Exception:
+            pass
+        # Delete parent CustomerOrder if it has no items left
+        try:
+            if parent_order and parent_order.pk and not parent_order.items.exists():
+                parent_order.delete()
+        except Exception:
+            pass
+        return response
 
     @action(detail=True, methods=['get', 'post'], url_path='attachments')
     def attachments(self, request, pk=None):
