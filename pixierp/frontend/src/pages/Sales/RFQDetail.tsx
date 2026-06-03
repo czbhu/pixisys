@@ -1345,7 +1345,28 @@ const RFQDetail: React.FC = () => {
           columns={[
             { title: 'Dátum', dataIndex: 'created_at', render: (d: string) => new Date(d).toLocaleString('hu-HU') },
             { title: 'Felhasználó', dataIndex: 'user_name' },
-            { title: 'Művelet', dataIndex: 'action' },
+            {
+              title: 'Művelet',
+              dataIndex: 'action',
+              render: (action: string, row: any) => {
+                const changes: Record<string, { old: any; new: any }> = row.meta?.changes;
+                if (!changes || Object.keys(changes).length === 0) return action;
+                const tooltipContent = (
+                  <div>
+                    {Object.entries(changes).map(([field, { old: oldVal, new: newVal }]) => (
+                      <div key={field}>
+                        <b>{field}:</b> {String(oldVal) || '–'} → {String(newVal) || '–'}
+                      </div>
+                    ))}
+                  </div>
+                );
+                return (
+                  <Tooltip title={tooltipContent}>
+                    <span style={{ borderBottom: '1px dashed #aaa', cursor: 'help' }}>{action}</span>
+                  </Tooltip>
+                );
+              },
+            },
           ] as any}
           dataSource={logs}
         />

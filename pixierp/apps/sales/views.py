@@ -2342,6 +2342,7 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                 'who_name': who_name,
                 'what': log.action,
                 'category': 'log',
+                'meta': log.meta or {},
             })
 
         # 3. Email logs (árajánlat e-mail kiküldve) — fresh query to avoid deferred field conflict

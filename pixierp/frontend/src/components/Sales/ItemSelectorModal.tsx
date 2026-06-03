@@ -146,6 +146,10 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
   const [pendingFileRemarks, setPendingFileRemarks] = useState<Record<string, string>>({});
   // Képletek a fő tétel formhoz (quantity, net_unit_price, discount_percent, discount_amount)
   const [itemFormFormulas, setItemFormFormulas] = useState<Record<string, string | null>>({});
+  const savedPriceFromCalc = useMemo(() => {
+    const raw = (initialFormulas as any)?._price_from_cost_calc;
+    return typeof raw === 'boolean' ? raw : undefined;
+  }, [initialFormulas]);
 
   // Inline manufacturing form state
   const [manuForm] = Form.useForm();
@@ -418,7 +422,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
     setManuDimensionsPerUnit(true);
     setManuCalculatedVolumes({ unit: 0, total: 0 });
     setManuCalculatedTotalDims(null);
-    setManuPriceFromCalc(true);
+    setManuPriceFromCalc(mode === 'edit' ? (savedPriceFromCalc ?? false) : true);
     setManuPendingFiles([]);
     setManuPendingFileRemarks({});
     setExistingAttachments([]);
@@ -465,7 +469,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         setItemFormFormulas(initialFormulas);
       }
     }
-  }, [open, defaultType, mode, quoteItemId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [open, defaultType, mode, quoteItemId, savedPriceFromCalc]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!open || !initialSelection) return;
@@ -482,17 +486,26 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         setSelected(rec);
         let unit = rec.unit || rec.quantity_unit || (initialSelection.item_type === 'service' ? 'óra' : 'db');
         unit = translateUnit(unit);
-        const price = rec.base_price ?? rec.net_unit_price ?? rec.unit_selling_price ?? form.getFieldValue('net_unit_price');
+        const savedEditPrice = (mode === 'edit' && initialValues?.net_unit_price != null)
+          ? Number(initialValues.net_unit_price)
+          : null;
+        const price = (savedEditPrice != null && isFinite(savedEditPrice))
+          ? savedEditPrice
+          : (rec.base_price ?? rec.net_unit_price ?? rec.unit_selling_price ?? form.getFieldValue('net_unit_price'));
         const cost = getRecordCostPrice(rec);
         const priceNum = Number(price) || 0;
         const markup = (priceNum > 0 && cost > 0) ? parseFloat((((priceNum / cost) - 1) * 100).toFixed(2)) : 0;
-        form.setFieldsValue({ unit, net_unit_price: price, cost_price: cost, markup_percent: markup });
+        const patch: any = { unit, net_unit_price: price, cost_price: cost, markup_percent: markup };
+        if (mode === 'edit' && initialValues?.quantity != null) {
+          patch.quantity = Number(initialValues.quantity) || 0;
+        }
+        form.setFieldsValue(patch);
       } else {
         setSelected({ id: initialSelection.ref_id, name: initialSelection.name, code: initialSelection.code });
       }
     };
     pickFromLists();
-  }, [open, products, manuProducts, services, initialSelection]);
+  }, [open, products, manuProducts, services, initialSelection, mode, initialValues]);
 
   // When editing an existing manufacturing item, fetch full product (incl. cost_items) and pre-fill the inline form.
   // Also runs when mode='add' with an existing ref_id (copy flow) — pre-fills the form but does NOT set manuCreatedId,
@@ -545,8 +558,8 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           }));
           setManuCostItems(loadedItems);
           setSyncQtyRows(new Set(loadedItems.filter(i => i.syncQty).map(i => i.id)));
-          setManuPriceFromCalc(loadedItems.length > 0);
         }
+        setManuPriceFromCalc(savedPriceFromCalc ?? false);
       }
       return;
     }
@@ -581,7 +594,11 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           // Restore syncQtyRows from persisted syncQty flags
           const syncSet = new Set(items.filter(i => i.syncQty).map(i => i.id));
           setSyncQtyRows(syncSet);
-          if (typeof p.price_from_cost_calc === 'boolean') {
+          if (mode === 'edit') {
+            if (savedPriceFromCalc !== undefined) setManuPriceFromCalc(savedPriceFromCalc);
+            else if (typeof p.price_from_cost_calc === 'boolean') setManuPriceFromCalc(p.price_from_cost_calc);
+            else setManuPriceFromCalc(false);
+          } else if (typeof p.price_from_cost_calc === 'boolean') {
             setManuPriceFromCalc(p.price_from_cost_calc);
           } else {
             setManuPriceFromCalc(items.length > 0);
@@ -601,16 +618,18 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         if (cancelled || !p) return;
         const qty = Number(p.quantity) || 1;
         const unitPrice = Number(p.net_unit_price) || 0;
-        // Always use the manufacturing product's own sell-currency price (p.net_unit_price).
-        // initialValues.net_unit_price is in RFQ currency and must NOT be used here — it
-        // would show e.g. 133 HUF in an EUR price field when currencies differ.
+        // In edit mode, preserve the saved RFQ item unit price to avoid
+        // overriding with manufacturing master price (which can be 0).
+        const savedEditUnitPrice = ((mode === 'edit' || !!quoteItemId) && initialValues?.net_unit_price != null)
+          ? Number(initialValues.net_unit_price)
+          : null;
         const savedQty = ((mode === 'edit' || !!quoteItemId) && initialValues?.quantity != null && Number(initialValues.quantity) > 0)
           ? Number(initialValues.quantity)
           : null;
         const displayQty = savedQty ?? qty;
-        const displayPrice = unitPrice;
+        const displayPrice = (savedEditUnitPrice != null && isFinite(savedEditUnitPrice)) ? savedEditUnitPrice : unitPrice;
         // Store for defensive effect below (handles race where form ends up 0)
-        manuInitialPriceRef.current = unitPrice;
+        manuInitialPriceRef.current = displayPrice;
         setManuFormInitialValues({
           // When editing an RFQ item, use the item's saved display name (item_name if set,
           // otherwise manufacturing product name) — NOT the manufacturing master's name.
@@ -693,7 +712,11 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           setSyncQtyRows(syncSet);
         }
         // Restore saved checkbox state; fall back to heuristic for legacy records
-        if (typeof p.price_from_cost_calc === 'boolean') {
+        if (mode === 'edit' || !!quoteItemId) {
+          if (savedPriceFromCalc !== undefined) setManuPriceFromCalc(savedPriceFromCalc);
+          else if (typeof p.price_from_cost_calc === 'boolean') setManuPriceFromCalc(p.price_from_cost_calc);
+          else setManuPriceFromCalc(false);
+        } else if (typeof p.price_from_cost_calc === 'boolean') {
           setManuPriceFromCalc(p.price_from_cost_calc);
         } else {
           setManuPriceFromCalc(unitPrice === 0 && items.length > 0);
@@ -1272,6 +1295,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
       const _rfqCurrObj = rfqCurrency ? manuCurrencies.find(c => c.code.toUpperCase() === rfqCurrency.toUpperCase()) : null;
       const _rfqCurrRate = (_rfqCurrObj && _rfqCurrObj.exchange_rate > 0) ? _rfqCurrObj.exchange_rate : 1;
       const netUnitPriceForRfq = parseFloat((netUnitPriceForPayload * _sellCurrRate / _rfqCurrRate).toFixed(4));
+      const calcFormulas = { ...(itemFormFormulas || {}), _price_from_cost_calc: manuPriceFromCalc } as Record<string, any>;
 
       const payload = {
         name: v.name,
@@ -1344,6 +1368,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           internal_description: v.internal_description || '',
           discount_percent: Number(form.getFieldValue('discount_percent')) || 0,
           discount_amount: Number(form.getFieldValue('discount_amount')) || 0,
+          formulas: calcFormulas,
           is_rate_locked: isRateLocked,
           locked_exchange_rate: isRateLocked ? lockedExchangeRate : null,
           cost_items_data: manuCostItems.map(ci => ({ ...ci, syncQty: syncQtyRows.has(ci.id) })),
@@ -1387,6 +1412,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
             description: v.description || '',
             discount_percent: Number(form.getFieldValue('discount_percent')) || 0,
             discount_amount: Number(form.getFieldValue('discount_amount')) || 0,
+            formulas: calcFormulas,
             pendingManuPayload: deferredPayload,
             is_rate_locked: isRateLocked,
             locked_exchange_rate: isRateLocked ? lockedExchangeRate : null,
@@ -1432,6 +1458,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           description: updated.description || '',
           discount_percent: Number(form.getFieldValue('discount_percent')) || 0,
           discount_amount: Number(form.getFieldValue('discount_amount')) || 0,
+          formulas: calcFormulas,
           is_rate_locked: isRateLocked,
           locked_exchange_rate: isRateLocked ? lockedExchangeRate : null,
         };
@@ -1466,6 +1493,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           description: v.description || '',
           discount_percent: Number(form.getFieldValue('discount_percent')) || 0,
           discount_amount: Number(form.getFieldValue('discount_amount')) || 0,
+          formulas: calcFormulas,
           pendingManuPayload: deferredPayload,
           is_rate_locked: isRateLocked,
           locked_exchange_rate: isRateLocked ? lockedExchangeRate : null,
@@ -1485,6 +1513,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           vat_rate: Number(form.getFieldValue('vat_rate')) || defaultVat,
           discount_percent: Number(form.getFieldValue('discount_percent')) || 0,
           discount_amount: Number(form.getFieldValue('discount_amount')) || 0,
+          formulas: calcFormulas,
           cost_items: manuCostItems.map(ci => ({ ...ci, syncQty: syncQtyRows.has(ci.id) })),
         });
         message.success('Egyedi tétel létrehozva');
@@ -1503,6 +1532,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
             net_unit_price: netUnitPriceForRfq,
             vat_rate: Number(form.getFieldValue('vat_rate')) || defaultVat,
             description: v.description || '',
+            formulas: calcFormulas,
             is_rate_locked: isRateLocked,
             locked_exchange_rate: isRateLocked ? lockedExchangeRate : null,
             _directCreated: created,
@@ -1567,6 +1597,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
             net_unit_price: netUnitPriceForRfq,
             vat_rate: 27,
             description: v.description || '',
+            formulas: calcFormulas,
             manuCostItems: costItemsForRfq,
             pendingManuPayload: deferredPayload,
             is_rate_locked: isRateLocked,

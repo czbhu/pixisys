@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Modal, Table, Tag, Spin, Empty } from 'antd';
+import { Modal, Table, Tag, Spin, Empty, Tooltip } from 'antd';
 import dayjs from 'dayjs';
 import api from '../services/api';
 
@@ -9,6 +9,7 @@ interface TimelineEvent {
   who_name: string;
   what: string;
   category: string;
+  meta?: { changes?: Record<string, { old: any; new: any }> };
 }
 
 interface ActivityLogModalProps {
@@ -93,24 +94,42 @@ const ActivityLogModal: React.FC<ActivityLogModalProps> = ({
       title: 'Mit csinált?',
       dataIndex: 'what',
       key: 'what',
-      render: (what: string, record: TimelineEvent) => (
-        <span>
-          <Tag color={categoryColors[record.category] || 'default'} style={{ marginRight: 6 }}>
-            {record.category === 'rfq' ? 'Létrehozás' :
-             record.category === 'email' ? 'E-mail' :
-             record.category === 'order' ? 'Megrendelés' :
-             record.category === 'production' ? 'Gyártás' :
-             record.category === 'ready' ? 'Kész' :
-             record.category === 'delivery' || record.category === 'delivered' ? 'Szállítás' :
-             record.category === 'delivery_note' ? 'Szállítólevél' :
-             record.category === 'delivery_confirmed' ? 'Visszaigazolás' :
-             record.category === 'invoice' ? 'Számla' :
-             record.category === 'cost_item' ? 'Gyártási tétel' :
-             record.category === 'log' ? 'Napló' : record.category}
-          </Tag>
-          {what}
-        </span>
-      ),
+      render: (what: string, record: TimelineEvent) => {
+        const changes = record.meta?.changes;
+        const hasChanges = changes && Object.keys(changes).length > 0;
+        const label = (
+          record.category === 'rfq' ? 'Létrehozás' :
+          record.category === 'email' ? 'E-mail' :
+          record.category === 'order' ? 'Megrendelés' :
+          record.category === 'production' ? 'Gyártás' :
+          record.category === 'ready' ? 'Kész' :
+          record.category === 'delivery' || record.category === 'delivered' ? 'Szállítás' :
+          record.category === 'delivery_note' ? 'Szállítólevél' :
+          record.category === 'delivery_confirmed' ? 'Visszaigazolás' :
+          record.category === 'invoice' ? 'Számla' :
+          record.category === 'cost_item' ? 'Gyártási tétel' :
+          record.category === 'log' ? 'Napló' : record.category
+        );
+        const tag = <Tag color={categoryColors[record.category] || 'default'} style={{ marginRight: 6 }}>{label}</Tag>;
+        if (!hasChanges) return <span>{tag}{what}</span>;
+        const tooltipContent = (
+          <div>
+            {Object.entries(changes!).map(([field, { old: oldVal, new: newVal }]) => (
+              <div key={field}>
+                <b>{field}:</b> {String(oldVal) || '–'} → {String(newVal) || '–'}
+              </div>
+            ))}
+          </div>
+        );
+        return (
+          <span>
+            {tag}
+            <Tooltip title={tooltipContent}>
+              <span style={{ borderBottom: '1px dashed #aaa', cursor: 'help' }}>{what}</span>
+            </Tooltip>
+          </span>
+        );
+      },
     },
   ];
 

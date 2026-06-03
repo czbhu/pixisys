@@ -584,6 +584,7 @@ class QuoteLog(models.Model):
     action = models.CharField(max_length=200)
     created_at = models.DateTimeField(auto_now_add=True)
     ip_address = models.GenericIPAddressField(null=True, blank=True, verbose_name="IP cím")
+    meta = models.JSONField(default=dict, blank=True, null=True, verbose_name="Metaadatok")
 
     class Meta:
         verbose_name = "Árajánlat napló"
