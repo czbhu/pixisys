@@ -1780,6 +1780,7 @@ const BankStatements = () => {
         setImportPct(95, 'Előnézet megnyitása');
         setShowPreviewModal(true);
         navigate(importPreviewUrl);
+        setFiles([]);
       } else {
         setImportPct(25, 'XML/STM feldolgozás indítása');
         const res = await bankStatementsAPI.importStmDryRun(selectedCompanyId, files, { skipExisting });
@@ -1857,6 +1858,7 @@ const BankStatements = () => {
         setStmPreview(preview);
         setShowPreviewModal(true);
         navigate(importPreviewUrl);
+        setFiles([]);
         applyAutoAllocationToPreview(preview);
       }
       setImportPct(100, 'Kész');
