@@ -97,13 +97,25 @@ const SortArrow = styled.span`
 `;
 
 const Tr = styled.tr`
-  &:hover { background-color: #f8f9fa; }
+  &:hover { background-color: rgba(0,0,0,0.03); }
 `;
+
+const ARREARS_ROW_STYLE = {
+  overdue:        { background: '#fffde7', color: '#2c3e50' },
+  arrears_notice: { background: '#fff176', color: '#2c3e50' },
+  reminder_1:     { background: '#ffebee', color: '#2c3e50' },
+  reminder_2:     { background: '#ffcdd2', color: '#2c3e50' },
+  legal_letter:   { background: '#f3e5f5', color: '#2c3e50' },
+  payment_order:  { background: '#e1bee7', color: '#2c3e50' },
+  litigation:     { background: '#212121', color: '#ffffff' },
+  won:            { background: '#e8f5e9', color: '#1b5e20' },
+  lost:           { background: '#ffebee', color: '#b71c1c' },
+};
 
 const Td = styled.td`
   padding: 12px;
   border-bottom: 1px solid #ecf0f1;
-  color: #2c3e50;
+  color: inherit;
 `;
 
 const StatusTag = styled.span`
@@ -211,9 +223,12 @@ export default function Arrears() {
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState([]);
   const [statusFilter, setStatusFilter] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [sending, setSending] = useState(false);
   const headerSelectRef = useRef(null);
+  const lastCheckedIndexRef = useRef(-1); // shift-select anchor
+  const sortedRowsRef = useRef([]);
 
   // Sort state
   const [sortKey, setSortKey] = useState(null);
@@ -226,7 +241,13 @@ export default function Arrears() {
 
   // Email modal
   const [emailModalOpen, setEmailModalOpen] = useState(false);
-  const [emailModalData, setEmailModalData] = useState(null); // { from, to, subject, body, customerId, invoiceId, advanceStatus }
+  const [emailModalData, setEmailModalData] = useState(null); // { from, to, subject, body, customerId, invoiceIds[], advanceStatus }
+
+  // Bulk email queue (one entry per customer)
+  const [bulkEmailQueue, setBulkEmailQueue] = useState([]); // [{ customerName, invoiceIds[] }]
+  const [bulkEmailIndex, setBulkEmailIndex] = useState(0);
+  const [bulkEmailSentSet, setBulkEmailSentSet] = useState(new Set());
+  const [bulkEmailLoading, setBulkEmailLoading] = useState(false);
 
   // Manual status picker (long press)
   const [statusPickerRow, setStatusPickerRow] = useState(null); // row.id
@@ -302,9 +323,11 @@ export default function Arrears() {
 
   // Sorted rows
   const sortedRows = useMemo(() => {
-    if (!sortKey) return rows;
-    const dir = sortDir === 'asc' ? 1 : -1;
-    return [...rows].sort((a, b) => {
+    const allRows = rows;
+    const base = (() => {
+      if (!sortKey) return allRows;
+      const dir = sortDir === 'asc' ? 1 : -1;
+      return [...allRows].sort((a, b) => {
       let av, bv;
       switch (sortKey) {
         case 'num': av = a.invoice_number || ''; bv = b.invoice_number || ''; break;
@@ -320,11 +343,45 @@ export default function Arrears() {
       if (typeof av === 'number') return (av - bv) * dir;
       return String(av).localeCompare(String(bv), 'hu') * dir;
     });
-  }, [rows, sortKey, sortDir]);
+    })();
+    if (!searchTerm.trim()) return base;
+    const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const terms = norm(searchTerm).split(/\s+/).filter(Boolean);
+    return base.filter((r) => {
+      const haystack = norm([
+        r.invoice_number,
+        r.customer?.name,
+        r.notes,
+        r.due_date,
+        r.issue_date,
+        r.delivery_date,
+      ].join(' '));
+      return terms.every((t) => haystack.includes(t));
+    });
+  }, [rows, sortKey, sortDir, searchTerm]);
 
   const selectedCount = selectedIds.size;
   const selectedVisibleCount = sortedRows.filter((r) => selectedIds.has(String(r.id))).length;
   const allVisibleSelected = sortedRows.length > 0 && selectedVisibleCount === sortedRows.length;
+
+  // Keep ref in sync so handleRowCheckbox always sees current sorted rows
+  sortedRowsRef.current = sortedRows;
+
+  const handleRowCheckbox = useCallback((id, idx, e) => {
+    if (e.shiftKey && lastCheckedIndexRef.current >= 0) {
+      const start = Math.min(lastCheckedIndexRef.current, idx);
+      const end = Math.max(lastCheckedIndexRef.current, idx);
+      const rangeIds = sortedRowsRef.current.slice(start, end + 1).map(r => String(r.id));
+      setSelectedIds(prev => new Set([...prev, ...rangeIds]));
+    } else {
+      setSelectedIds(prev => {
+        const next = new Set(prev);
+        if (next.has(id)) next.delete(id); else next.add(id);
+        return next;
+      });
+    }
+    lastCheckedIndexRef.current = idx;
+  }, []);
 
   useEffect(() => {
     if (!headerSelectRef.current) return;
@@ -334,11 +391,13 @@ export default function Arrears() {
   const toggleHeaderSelection = () => {
     if (selectedCount > 0) {
       setSelectedIds(new Set());
+      lastCheckedIndexRef.current = -1;
       return;
     }
     const next = new Set();
     sortedRows.forEach((r) => next.add(String(r.id)));
     setSelectedIds(next);
+    lastCheckedIndexRef.current = -1;
   };
 
   const currentNextStatus = useMemo(() => NEXT_STATUS[statusFilter] || null, [statusFilter]);
@@ -374,7 +433,7 @@ export default function Arrears() {
   // Open email modal for individual row
   const openRowEmail = async (row, targetStatus) => {
     try {
-      const params = { company_id: companyId, invoice_id: row.id };
+      const params = { company_id: companyId, invoice_ids: String(row.id) };
       if (targetStatus) params.target_status = targetStatus;
       const res = await invoiceAPI.getArrearsEmailCompose(params);
       const d = res.data;
@@ -386,12 +445,93 @@ export default function Arrears() {
         subject: d.subject || '',
         body: d.body || '',
         customerId: d.customer_id,
-        invoiceId: String(row.id),
+        customerName: d.customer_name || '',
+        invoiceIds: [String(row.id)],
+        invoices: d.invoices || [{ id: String(row.id), invoice_number: d.invoice_number || '' }],
+        advanceStatus: targetStatus || '',
+      });
+      setBulkEmailQueue([]);
+      setBulkEmailIndex(0);
+      setBulkEmailSentSet(new Set());
+      setEmailModalOpen(true);
+    } catch (e) {
+      toast.error(e?.response?.data?.error || 'E-mail előkészítés sikertelen');
+    }
+  };
+
+  // Open bulk email flow: group selected rows by customer, build queue, load first
+  const openBulkEmailFlow = async (targetStatus) => {
+    if (!selectedIds.size) { toast.info('Nincs kijelölt számla'); return; }
+    // Group selected rows by customer id
+    const byCustomer = {};
+    for (const row of sortedRows) {
+      if (!selectedIds.has(String(row.id))) continue;
+      const cid = String(row.customer?.id || row.customer_id || '');
+      if (!byCustomer[cid]) byCustomer[cid] = { customerName: row.customer?.name || '', invoiceIds: [] };
+      byCustomer[cid].invoiceIds.push(String(row.id));
+    }
+    const queue = Object.values(byCustomer);
+    if (!queue.length) return;
+    setBulkEmailQueue(queue);
+    setBulkEmailIndex(0);
+    setBulkEmailSentSet(new Set());
+    // Load first customer's email compose
+    setBulkEmailLoading(true);
+    try {
+      const first = queue[0];
+      const params = { company_id: companyId, invoice_ids: first.invoiceIds.join(',') };
+      if (targetStatus) params.target_status = targetStatus;
+      const res = await invoiceAPI.getArrearsEmailCompose(params);
+      const d = res.data;
+      setEmailModalData({
+        from: d.from || '',
+        to: d.to || [],
+        cc: [],
+        bcc: [],
+        subject: d.subject || '',
+        body: d.body || '',
+        customerId: d.customer_id,
+        customerName: d.customer_name || first.customerName,
+        invoiceIds: first.invoiceIds,
+        invoices: d.invoices || first.invoiceIds.map(id => ({ id, invoice_number: '' })),
         advanceStatus: targetStatus || '',
       });
       setEmailModalOpen(true);
     } catch (e) {
       toast.error(e?.response?.data?.error || 'E-mail előkészítés sikertelen');
+    } finally {
+      setBulkEmailLoading(false);
+    }
+  };
+
+  // Navigate bulk email queue to a specific index
+  const navigateBulkEmail = async (newIndex) => {
+    const entry = bulkEmailQueue[newIndex];
+    if (!entry) return;
+    setBulkEmailIndex(newIndex);
+    setBulkEmailLoading(true);
+    try {
+      const params = { company_id: companyId, invoice_ids: entry.invoiceIds.join(',') };
+      if (emailModalData?.advanceStatus) params.target_status = emailModalData.advanceStatus;
+      const res = await invoiceAPI.getArrearsEmailCompose(params);
+      const d = res.data;
+      setEmailModalData(prev => ({
+        ...prev,
+        from: d.from || '',
+        to: d.to || [],
+        cc: [],
+        bcc: [],
+        subject: d.subject || '',
+        body: d.body || '',
+        customerId: d.customer_id,
+        customerName: d.customer_name || entry.customerName,
+        invoiceIds: entry.invoiceIds,
+        invoices: d.invoices || entry.invoiceIds.map(id => ({ id, invoice_number: '' })),
+      }));
+    } catch (e) {
+      toast.error(e?.response?.data?.error || 'E-mail előkészítés sikertelen');
+    } finally {
+      setBulkEmailLoading(false);
     }
   };
 
@@ -430,18 +570,38 @@ export default function Arrears() {
     try {
       await invoiceAPI.sendArrearsSingleEmail({
         company_id: companyId,
-        invoice_id: emailModalData.invoiceId,
+        invoice_ids: emailModalData?.invoiceIds || [],
         from: emailData.from,
         to: emailData.to,
         cc: emailData.cc || [],
         bcc: emailData.bcc || [],
         subject: emailData.subject,
         body: emailData.body,
-        advance_status: emailModalData.advanceStatus || '',
+        advance_status: emailModalData?.advanceStatus || '',
       });
       toast.success('E-mail elküldve');
-      setEmailModalOpen(false);
-      await loadRows();
+      // Mark current as sent in bulk queue
+      if (bulkEmailQueue.length > 1) {
+        setBulkEmailSentSet(prev => new Set([...prev, bulkEmailIndex]));
+        // Auto-advance to next unsent
+        const nextUnsent = bulkEmailQueue.findIndex((_, i) => i > bulkEmailIndex && !bulkEmailSentSet.has(i));
+        if (nextUnsent !== -1) {
+          navigateBulkEmail(nextUnsent);
+        } else {
+          const anyUnsent = bulkEmailQueue.findIndex((_, i) => !bulkEmailSentSet.has(i) && i !== bulkEmailIndex);
+          if (anyUnsent !== -1) {
+            navigateBulkEmail(anyUnsent);
+          } else {
+            setEmailModalOpen(false);
+            setBulkEmailQueue([]);
+            await loadRows();
+          }
+        }
+      } else {
+        setEmailModalOpen(false);
+        setBulkEmailQueue([]);
+        await loadRows();
+      }
     } catch (e) {
       throw e; // EmailModal handles the error display
     }
@@ -484,6 +644,19 @@ export default function Arrears() {
       <Header>
         <Title>Kintlévőség</Title>
         <Toolbar>
+          <input
+            type="text"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            placeholder="Keresés számlaszám, ügyfél vagy megjegyzés alapján..."
+            style={{
+              padding: '8px 12px',
+              border: '1px solid #ddd',
+              borderRadius: 4,
+              fontSize: 14,
+              minWidth: 360,
+            }}
+          />
           <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={{ padding: '8px 10px' }}>
             <option value="">Összes státusz</option>
             {STATUS_ORDER.map((s) => (
@@ -496,6 +669,23 @@ export default function Arrears() {
       </Header>
 
       <TableWrap>
+        {/* Bulk email icon buttons — visible when rows are selected */}
+        {selectedCount > 0 && (
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', padding: '10px 14px', background: '#f0f7ff', borderBottom: '1px solid #d0e8ff', alignItems: 'center' }}>
+            <span style={{ fontSize: 13, color: '#555', marginRight: 4 }}>E-mail küldése kijelöltéknek ({selectedCount} számla):</span>
+            {STATUS_ORDER.filter(s => NEXT_STATUS[s.key] !== undefined || s.key === 'overdue').map(s => (
+              <button
+                key={s.key}
+                disabled={bulkEmailLoading || sending}
+                onClick={() => openBulkEmailFlow(s.key === 'overdue' ? '' : NEXT_STATUS[s.key] || s.key)}
+                title={s.label}
+                style={{ padding: '5px 10px', fontSize: 12, border: '1px solid #3498db', borderRadius: 4, background: '#fff', color: '#1a6ea8', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}
+              >
+                📧 {s.label}
+              </button>
+            ))}
+          </div>
+        )}
         <Table>
           <Thead>
             <tr>
@@ -517,30 +707,42 @@ export default function Arrears() {
             </tr>
           </Thead>
           <tbody>
-            {sortedRows.map((row) => {
+            {sortedRows.map((row, rowIndex) => {
               const rowNextStatus = row.next_status || NEXT_STATUS[row.arrears_status] || null;
               const currentStatus = row.arrears_status;
               const hasCurrent = !!NEXT_STATUS[currentStatus] || currentStatus === 'overdue';
+              const rowStyle = ARREARS_ROW_STYLE[currentStatus] || {};
               return (
-                <Tr key={row.id}>
+                <Tr key={row.id} style={rowStyle}>
                   <Td>
                     <input
                       type="checkbox"
                       checked={selectedIds.has(String(row.id))}
-                      onChange={(e) => {
-                        const next = new Set(selectedIds);
-                        if (e.target.checked) next.add(String(row.id)); else next.delete(String(row.id));
-                        setSelectedIds(next);
-                      }}
+                      onClick={(e) => handleRowCheckbox(String(row.id), rowIndex, e)}
+                      onChange={() => {}}
                     />
                   </Td>
                   <Td>{row.invoice_number}</Td>
                   <Td>{row.customer?.name || '-'}</Td>
                   <Td>{formatDate(row.issue_date)}</Td>
                   <Td>{formatDate(row.delivery_date)}</Td>
-                  <Td>{formatDate(row.due_date)}</Td>
+                  <Td>
+                    <div>{formatDate(row.due_date)}</div>
+                    {row.days_overdue > 0 && (
+                      <div style={{ fontSize: 12, color: 'inherit', opacity: 0.75, marginTop: 2 }}>
+                        {row.days_overdue} napja lejárt
+                      </div>
+                    )}
+                  </Td>
                   <Td>{paymentMethodLabel(row.payment_method)}</Td>
-                  <Td>{formatAmount(row.total_gross_amount, row.currency)}</Td>
+                  <Td>
+                    <div>{formatAmount(row.total_gross_amount, row.currency)}</div>
+                    {Number(row.amount_paid || 0) > 0 && Number(row.remaining_amount || 0) > 0 && (
+                      <div style={{ fontSize: 12, color: '#b42318', marginTop: 2, fontWeight: 600 }}>
+                        Hátralék: {formatAmount(row.remaining_amount, row.currency)}
+                      </div>
+                    )}
+                  </Td>
                   <Td>
                     <StatusPickerWrap>
                       <StatusTag
@@ -609,22 +811,53 @@ export default function Arrears() {
       {!loading && sortedRows.length === 0 && (
         <div style={{ padding: 16 }}>Nincs megjeleníthető lejárt számla.</div>
       )}
-      <div style={{ padding: '12px 16px', color: '#6c757d' }}>{selectedCount} kiválasztva</div>
+      <div style={{ padding: '12px 16px', color: '#6c757d' }}>{selectedCount} sor kijelölve</div>
 
       {emailModalOpen && emailModalData && (
         <EmailModal
-          isOpen={emailModalOpen}
-          onClose={() => setEmailModalOpen(false)}
-          onSend={sendEmailFromModal}
-          defaultFrom={emailModalData.from}
-          defaultTo={Array.isArray(emailModalData.to) ? emailModalData.to : (emailModalData.to ? [emailModalData.to] : [])}
-          defaultCc={emailModalData.cc || []}
-          defaultBcc={emailModalData.bcc || []}
-          defaultSubject={emailModalData.subject}
-          defaultBody={emailModalData.body}
-          customerId={emailModalData.customerId}
-          invoiceId={emailModalData.invoiceId}
-        />
+            isOpen={emailModalOpen}
+            onClose={() => { setEmailModalOpen(false); setBulkEmailQueue([]); }}
+            onSend={sendEmailFromModal}
+            defaultFrom={emailModalData.from}
+            defaultTo={Array.isArray(emailModalData.to) ? emailModalData.to : (emailModalData.to ? [emailModalData.to] : [])}
+            defaultCc={emailModalData.cc || []}
+            defaultBcc={emailModalData.bcc || []}
+            defaultSubject={emailModalData.subject}
+            defaultBody={emailModalData.body}
+            customerId={emailModalData.customerId}
+            attachments={emailModalData.invoices || []}
+            headerExtra={bulkEmailQueue.length > 1 ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <button
+                  onClick={() => navigateBulkEmail(bulkEmailIndex - 1)}
+                  disabled={bulkEmailIndex === 0 || bulkEmailLoading}
+                  style={{ padding: '3px 10px', fontSize: 16, border: '1px solid #ccc', borderRadius: 4, background: '#fff', cursor: bulkEmailIndex === 0 ? 'not-allowed' : 'pointer' }}
+                >←</button>
+                <span style={{ fontWeight: 600, minWidth: 50, textAlign: 'center', fontSize: 13 }}>{bulkEmailIndex + 1} / {bulkEmailQueue.length}</span>
+                <button
+                  onClick={() => navigateBulkEmail(bulkEmailIndex + 1)}
+                  disabled={bulkEmailIndex === bulkEmailQueue.length - 1 || bulkEmailLoading}
+                  style={{ padding: '3px 10px', fontSize: 16, border: '1px solid #ccc', borderRadius: 4, background: '#fff', cursor: bulkEmailIndex === bulkEmailQueue.length - 1 ? 'not-allowed' : 'pointer' }}
+                >→</button>
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                  {bulkEmailQueue.map((entry, i) => (
+                    <button key={i} onClick={() => navigateBulkEmail(i)}
+                      style={{
+                        padding: '2px 8px', fontSize: 11, borderRadius: 10,
+                        border: `1px solid ${i === bulkEmailIndex ? '#3498db' : '#ccc'}`,
+                        background: bulkEmailSentSet.has(i) ? '#d4f8d4' : i === bulkEmailIndex ? '#ddeeff' : '#fff',
+                        color: i === bulkEmailIndex ? '#1a6ea8' : '#333',
+                        cursor: 'pointer', fontWeight: i === bulkEmailIndex ? 700 : 400,
+                      }}
+                    >
+                      {entry.customerName || `Ügyfél ${i + 1}`}{bulkEmailSentSet.has(i) ? ' ✓' : ''}
+                    </button>
+                  ))}
+                </div>
+                {bulkEmailLoading && <span style={{ fontSize: 12, color: '#888' }}>Betöltés...</span>}
+              </div>
+            ) : null}
+          />
       )}
     </Container>
   );

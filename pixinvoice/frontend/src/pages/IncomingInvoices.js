@@ -569,6 +569,7 @@ export default function IncomingInvoices({ externalOutgoing = false }) {
   const [batchesLoading, setBatchesLoading] = useState(false);
   const [batchItemSaving, setBatchItemSaving] = useState({});
   const [itemAmountDrafts, setItemAmountDrafts] = useState({});
+  const [expandedBatches, setExpandedBatches] = useState({});
   const [showPaymentHistory, setShowPaymentHistory] = useState(false);
   const searchTimer = useRef(null);
   const headerSelectRef = useRef(null);
@@ -2793,11 +2794,19 @@ export default function IncomingInvoices({ externalOutgoing = false }) {
                         </div>
                       </div>
                       <div style={{ marginTop:10 }}>
-                        <div style={{ fontWeight:600, marginBottom:6 }}>Tételek</div>
-                        {(b.items && b.items.length > 0) ? (
-                          <table style={{ width:'100%', borderCollapse:'collapse' }}>
-                            <thead>
-                              <tr>
+                        <button
+                          onClick={() => setExpandedBatches(prev => ({ ...prev, [b.id]: !prev[b.id] }))}
+                          style={{ background:'none', border:'none', cursor:'pointer', fontWeight:600, fontSize:13, padding:'4px 0', display:'flex', alignItems:'center', gap:6, color:'#2c3e50' }}
+                        >
+                          <span style={{ fontSize:11 }}>{expandedBatches[b.id] ? '▼' : '▶'}</span>
+                          Tételek ({b.items ? b.items.length : 0} db)
+                        </button>
+                        {expandedBatches[b.id] && (
+                          <>
+                            {(b.items && b.items.length > 0) ? (
+                              <table style={{ width:'100%', borderCollapse:'collapse', marginTop:6 }}>
+                                <thead>
+                                  <tr>
                                 <th style={{textAlign:'left', padding:6, borderBottom:'1px solid #eee'}}>#</th>
                                 <th style={{textAlign:'left', padding:6, borderBottom:'1px solid #eee'}}>Eladó</th>
                                 <th style={{textAlign:'left', padding:6, borderBottom:'1px solid #eee'}}>Számlaszám</th>
@@ -2838,8 +2847,20 @@ export default function IncomingInvoices({ externalOutgoing = false }) {
                               ))}
                             </tbody>
                           </table>
-                        ) : (
-                          <SmallMuted>Nincs tétel.</SmallMuted>
+                            ) : (
+                              <SmallMuted>Nincs tétel.</SmallMuted>
+                            )}
+                            {batchTab === 'completed' && (
+                              <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
+                                <IconButton onClick={() => exportBatch(b.id, b.name)} title="Újra exportálás (CSV)">
+                                  <FileDown size={14}/> Újra CSV export
+                                </IconButton>
+                                <IconButton onClick={() => exportBatchBankFile(b)} title="Újra banki export (SEPA XML)">
+                                  <FileDown size={14}/> Újra Bank export
+                                </IconButton>
+                              </div>
+                            )}
+                          </>
                         )}
                       </div>
                     </div>

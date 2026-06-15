@@ -103,9 +103,9 @@ from django.conf import settings
 from apps.manufacturing.models import ManufacturingCostItem, ManufacturingProductAttachment
 
 
-def _bump_search_stat(item_type: str, ref_id: int):
+def _bump_search_stat(item_type: str, ref_id: int, user=None):
     try:
-        stat, _ = SearchStat.objects.get_or_create(item_type=item_type, ref_id=int(ref_id))
+        stat, _ = SearchStat.objects.get_or_create(item_type=item_type, ref_id=int(ref_id), user=user)
         stat.count = (stat.count or 0) + 1
         stat.save(update_fields=["count", "last_hit"])
     except Exception:
@@ -186,6 +186,16 @@ def _apply_customer_order_status(order, new_status, changed_at=None):
             if mp_ids:
                 from apps.manufacturing.models import ManufacturingCostItem
                 ManufacturingCostItem.objects.filter(product_id__in=mp_ids).exclude(status='cancelled').update(status=new_status)
+            # Propagate status to cost_items_data sub-items for direct manufacturing items
+            for item in active_items:
+                qi = getattr(item, 'quote_item', None)
+                if qi and qi.manufacturing_product_id is None and isinstance(qi.cost_items_data, list) and qi.cost_items_data:
+                    updated = [
+                        {**ci, 'status': new_status} if ci.get('status') != 'cancelled' else ci
+                        for ci in qi.cost_items_data
+                    ]
+                    if updated != qi.cost_items_data:
+                        type(qi).objects.filter(id=qi.id).update(cost_items_data=updated)
 
     # When order is marked delivered, confirm all associated unconfirmed DeliveryNotes
     if new_status == 'delivered':
@@ -252,10 +262,41 @@ def _apply_customer_order_status_tree(order, new_status, changed_at=None):
 
 
 def _apply_quote_request_status(qr, new_status, changed_at=None):
-    """Apply an RFQ status and mirror order-like statuses to linked orders."""
+    """Apply an RFQ status and mirror order-like statuses to linked orders.
+    If status is in_production (or any order-sync status) and no CustomerOrder
+    exists yet, one is created automatically so the item appears in the queue."""
     active_orders = list(qr.customer_orders.exclude(status='cancelled').prefetch_related('items'))
 
-    if new_status in RFQ_ORDER_SYNC_STATUSES and active_orders:
+    if new_status in RFQ_ORDER_SYNC_STATUSES:
+        # Auto-create CustomerOrder if none exists yet
+        if not active_orders:
+            try:
+                from .models import CustomerOrder, CustomerOrderItem
+                from django.utils import timezone as tz
+                rfq_num = qr.number or qr.request_number or f"QR{qr.id}"
+                while CustomerOrder.objects.filter(order_number=rfq_num).exists():
+                    rfq_num = rfq_num + "_1"
+                order = CustomerOrder.objects.create(
+                    quote_request=qr,
+                    order_number=rfq_num,
+                    status='new',
+                    created_by=getattr(qr, 'created_by', None),
+                )
+                for it in qr.items.exclude(item_type='').all():
+                    CustomerOrderItem.objects.create(
+                        customer_order=order,
+                        quote_item=it,
+                        quantity=it.quantity,
+                        unit=it.unit or 'db',
+                        net_unit_price=it.net_unit_price or 0,
+                        vat_rate=it.vat_rate or 27,
+                        description=it.description or '',
+                        status='new',
+                    )
+                active_orders = [order]
+            except Exception:
+                pass  # don't block status change if order creation fails
+
         for order in active_orders:
             _apply_customer_order_status_tree(order, new_status, changed_at=changed_at)
         stored_status = 'ordered'
@@ -310,6 +351,15 @@ def _build_items_table_html(items_qs, currency_symbol=''):
             except Exception:
                 return str(val)
 
+        def fmt2(val):
+            try:
+                f = float(val)
+                if f == int(f):
+                    return '{:,.0f}'.format(f).replace(',', '\u00a0')
+                return '{:,.2f}'.format(f).replace(',', '\u00a0')
+            except Exception:
+                return str(val)
+
         rows.append(
             '<tr>'
             '<td style="border:1px solid #ddd;padding:6px 10px;">' + str(name) + '</td>'
@@ -317,8 +367,8 @@ def _build_items_table_html(items_qs, currency_symbol=''):
             '<td style="border:1px solid #ddd;padding:6px 10px;">' + str(description) + '</td>'
             '<td style="border:1px solid #ddd;padding:6px 10px;text-align:right;">' + fmt(qty) + '</td>'
             '<td style="border:1px solid #ddd;padding:6px 10px;">' + str(unit) + '</td>'
-            '<td style="border:1px solid #ddd;padding:6px 10px;text-align:right;">' + fmt(net_unit) + ((' ' + cur) if cur else '') + '</td>'
-            '<td style="border:1px solid #ddd;padding:6px 10px;text-align:right;">' + fmt(net_total) + ((' ' + cur) if cur else '') + '</td>'
+            '<td style="border:1px solid #ddd;padding:6px 10px;text-align:right;">' + fmt2(net_unit) + ((' ' + cur) if cur else '') + '</td>'
+            '<td style="border:1px solid #ddd;padding:6px 10px;text-align:right;">' + fmt2(net_total) + ((' ' + cur) if cur else '') + '</td>'
             '</tr>'
         )
     rows_html = ''.join(rows)
@@ -867,9 +917,9 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             formulas=formulas if isinstance(formulas, dict) else {},
         )
         if material:
-            _bump_search_stat('product', material.id)
+            _bump_search_stat('product', material.id, user=request.user)
         elif product:
-            _bump_search_stat('product', product.id)
+            _bump_search_stat('product', product.id, user=request.user)
         QuoteLog.objects.create(quote=qr, user=request.user, action=f'Termék hozzáadva: {product_name}')
         return Response(QuoteRequestItemSerializer(item, context={'request': request}).data, status=status.HTTP_201_CREATED)
 
@@ -916,7 +966,7 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             description=description,
             formulas=formulas_manu if isinstance(formulas_manu, dict) else {},
         )
-        _bump_search_stat('manufacturing', mp.id)
+        _bump_search_stat('manufacturing', mp.id, user=request.user if request.user.is_authenticated else None)
         try:
             QuoteLog.objects.create(quote=qr, user=request.user if request.user.is_authenticated else None, action=f'Egyedi gyártás hozzáadva: {mp.name}')
         except Exception:
@@ -1075,7 +1125,7 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             description=description,
             formulas=formulas_svc if isinstance(formulas_svc, dict) else {},
         )
-        _bump_search_stat('service', service.id)
+        _bump_search_stat('service', service.id, user=request.user)
         QuoteLog.objects.create(quote=qr, user=request.user, action=f'Szolgáltatás hozzáadva: {service.name}')
         return Response(QuoteRequestItemSerializer(item, context={'request': request}).data, status=status.HTTP_201_CREATED)
 
@@ -3281,7 +3331,8 @@ class ServiceViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'])
     def top(self, request):
-        top_ids = list(SearchStat.objects.filter(item_type='service').order_by('-count')[:10].values_list('ref_id', flat=True))
+        user = request.user if request.user.is_authenticated else None
+        top_ids = list(SearchStat.objects.filter(item_type='service', user=user).order_by('-count')[:10].values_list('ref_id', flat=True))
         services = list(Service.objects.filter(id__in=top_ids))
         # preserve order of top_ids
         services.sort(key=lambda s: top_ids.index(s.id))
@@ -3529,7 +3580,8 @@ class ProductViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'])
     def top(self, request):
-        top_ids = list(SearchStat.objects.filter(item_type='product').order_by('-count')[:10].values_list('ref_id', flat=True))
+        user = request.user if request.user.is_authenticated else None
+        top_ids = list(SearchStat.objects.filter(item_type='product', user=user).order_by('-count')[:10].values_list('ref_id', flat=True))
         products = list(Product.objects.filter(id__in=top_ids))
         products.sort(key=lambda p: top_ids.index(p.id))
         return Response(ProductSerializer(products, many=True).data)
@@ -3542,7 +3594,8 @@ class ManufacturingProductViewSet(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=False, methods=['get'])
     def top(self, request):
-        top_ids = list(SearchStat.objects.filter(item_type='manufacturing').order_by('-count')[:10].values_list('ref_id', flat=True))
+        user = request.user if request.user.is_authenticated else None
+        top_ids = list(SearchStat.objects.filter(item_type='manufacturing', user=user).order_by('-count')[:10].values_list('ref_id', flat=True))
         mps = list(ManufacturingProduct.objects.filter(id__in=top_ids))
         mps.sort(key=lambda m: top_ids.index(m.id))
         return Response(ManufacturingProductSerializer(mps, many=True).data)
@@ -4130,29 +4183,35 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'])
     def manufacturing_items(self, request):
-        """Return all CustomerOrderItems with item_type='manufacturing', with order and product info."""
+        """Return all CustomerOrderItems with item_type='manufacturing'.
+        Includes both linked-ManufacturingProduct items AND direct items (manufacturing_product=None)."""
         from .models import CustomerOrderItem
-        qs = CustomerOrderItem.objects.select_related(
+        base_qs = CustomerOrderItem.objects.select_related(
             'customer_order',
             'customer_order__quote_request',
             'customer_order__quote_request__company',
             'customer_order__quote_request__customer',
             'quote_item',
             'quote_item__manufacturing_product',
+        ).prefetch_related(
+            'customer_order__quote_request__contacts',
+            'customer_order__quote_request__contacts__company',
         ).filter(
             quote_item__item_type='manufacturing',
-            quote_item__manufacturing_product__isnull=False,
         ).annotate(_att_count=Count('quote_item__attachments')).order_by('-customer_order__order_date')
 
-        # Optional status filter
+        qs_linked = base_qs.filter(quote_item__manufacturing_product__isnull=False)
+        qs_direct = base_qs.filter(quote_item__manufacturing_product__isnull=True)
+
         statuses = request.query_params.get('status')
         if statuses:
-            qs = qs.filter(status__in=statuses.split(','))
+            qs_linked = qs_linked.filter(status__in=statuses.split(','))
+            qs_direct = qs_direct.filter(status__in=statuses.split(','))
 
-        # Optional manufacturing_product_id filter
         mp_id = request.query_params.get('manufacturing_product_id')
         if mp_id:
-            qs = qs.filter(quote_item__manufacturing_product_id=mp_id)
+            qs_linked = qs_linked.filter(quote_item__manufacturing_product_id=mp_id)
+            qs_direct = qs_direct.none()
 
         import re
         from html import unescape
@@ -4188,12 +4247,25 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
                 pass
             return ''
 
-        data = []
-        for item in qs:
-            mp = item.quote_item.manufacturing_product
+        def build_item_row(item):
+            mp = item.quote_item.manufacturing_product  # may be None for direct items
             order = item.customer_order
             qr = order.quote_request
-            data.append({
+            qi = item.quote_item
+            if mp:
+                name = qi.item_name or mp.name
+                code = mp.code or ''
+                desc = strip_html(item.description or mp.description or '')
+                internal = strip_html(mp.internal_description or '')
+                mp_id = mp.id
+            else:
+                # Direct manufacturing item (no ManufacturingProduct)
+                name = qi.item_name or ''
+                code = ''
+                desc = strip_html(item.description or qi.description or '')
+                internal = strip_html(qi.internal_description or '')
+                mp_id = None
+            return {
                 'id': item.id,
                 'quote_item_id': item.quote_item_id,
                 'order_id': order.id,
@@ -4202,17 +4274,29 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
                 'order_status': order.status,
                 'status': item.status,
                 'customer_name': resolve_customer_name(qr),
-                'manufacturing_product_id': mp.id,
-                'name': item.quote_item.item_name or mp.name,
-                'code': mp.code or '',
-                'description': strip_html(item.description or mp.description or ''),
-                'internal_description': strip_html(mp.internal_description or ''),
+                'company_name': (qr.company.name if qr and qr.company else None) or None,
+                'contact_names': ', '.join(filter(None, [getattr(c, 'name', '') for c in (qr.contacts.all() if qr else [])])) or None,
+                'is_private': bool(qr and not qr.company_id and not qr.customer_id and qr.contacts.filter(company__isnull=True).exists()),
+                'manufacturing_product_id': mp_id,
+                'is_direct': mp is None,
+                'rfq_id': qr.id if qr else None,
+                'rfq_item_id': qi.id if qi else None,
+                'name': name,
+                'code': code,
+                'description': desc,
+                'internal_description': internal,
                 'remark': item.remark or '',
                 'quantity': float(item.quantity),
                 'unit': item.unit,
                 'net_unit_price': float(item.net_unit_price),
                 'attachment_count': getattr(item, '_att_count', 0),
-            })
+                'cost_items_data': qi.cost_items_data if mp is None else [],
+            }
+
+        data = [build_item_row(item) for item in qs_linked]
+        data += [build_item_row(item) for item in qs_direct]
+        # Sort by order_date descending
+        data.sort(key=lambda x: x.get('order_date') or '', reverse=True)
         return Response(data)
 
     @action(detail=True, methods=['post'])
@@ -5347,9 +5431,22 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
         # Update CustomerOrderItem statuses
         if invoice_number:
             order.items.exclude(status='cancelled').update(status='invoiced')
+            # Propagate invoiced to cost_items_data sub-items for direct manufacturing items
+            for item in order.items.exclude(status='cancelled').select_related('quote_item'):
+                qi = getattr(item, 'quote_item', None)
+                if qi and qi.manufacturing_product_id is None and isinstance(qi.cost_items_data, list) and qi.cost_items_data:
+                    updated = [{**ci, 'status': 'invoiced'} if ci.get('status') != 'cancelled' else ci for ci in qi.cost_items_data]
+                    if updated != qi.cost_items_data:
+                        type(qi).objects.filter(id=qi.id).update(cost_items_data=updated)
         else:
             # Storno: revert invoiced items back to in_delivery
             order.items.filter(status='invoiced').update(status='in_delivery')
+            for item in order.items.filter(status='in_delivery').select_related('quote_item'):
+                qi = getattr(item, 'quote_item', None)
+                if qi and qi.manufacturing_product_id is None and isinstance(qi.cost_items_data, list) and qi.cost_items_data:
+                    updated = [{**ci, 'status': 'in_delivery'} if ci.get('status') == 'invoiced' else ci for ci in qi.cost_items_data]
+                    if updated != qi.cost_items_data:
+                        type(qi).objects.filter(id=qi.id).update(cost_items_data=updated)
 
         # Update linked RFQ status: ordered when invoice set, accepted when cleared
         qr = getattr(order, 'quote_request', None)
@@ -8032,6 +8129,7 @@ class DeliveryNoteItemViewSet(viewsets.ModelViewSet):
     queryset = DeliveryNoteItem.objects.all().order_by('-created_at')
     serializer_class = DeliveryNoteItemSerializer
     permission_classes = [permissions.IsAuthenticated]
+    pagination_class = None  # Frontend does client-side pagination
 
     def get_queryset(self):
         qs = super().get_queryset()

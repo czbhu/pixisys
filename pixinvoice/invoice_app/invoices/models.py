@@ -291,6 +291,7 @@ class IncomingProforma(models.Model):
     """Manually registered incoming proforma invoices (díjbekérők)."""
     STATUS_CHOICES = [
         ('unpaid', 'Kifizetetlen'),
+        ('partial', 'Részben fizetve'),
         ('paid', 'Kifizetett'),
         ('invoiced', 'Kiszámlázott'),
     ]
@@ -646,6 +647,7 @@ class Invoice(models.Model):
     amount_paid = models.DecimalField(max_digits=14, decimal_places=2, default=0, verbose_name="Amount Paid")
     arrears_status = models.CharField(max_length=32, choices=ARREARS_STATUS_CHOICES, blank=True, null=True, verbose_name='Kintlévőség státusz')
     arrears_status_changed_at = models.DateTimeField(blank=True, null=True, verbose_name='Kintlévőség státuszváltás ideje')
+    arrears_log = models.JSONField(blank=True, null=True, verbose_name='Behajtási napló')
     completeness_indicator = models.BooleanField(default=False, verbose_name="Completeness Indicator")
     order_reference = models.CharField(max_length=200, blank=True, null=True, verbose_name="Order Reference")
     # ERP integration
@@ -818,6 +820,20 @@ class ProformaInvoice(models.Model):
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, verbose_name="Created By")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    # Payment tracking
+    STATUS_UNPAID = 'unpaid'
+    STATUS_PARTIAL = 'partial'
+    STATUS_PAID = 'paid'
+    STATUS_INVOICED = 'invoiced'
+    STATUS_CHOICES = [
+        ('unpaid', 'Kifizetetlen'),
+        ('partial', 'Részben fizetve'),
+        ('paid', 'Kifizetett'),
+        ('invoiced', 'Kiszámlázott'),
+    ]
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='unpaid')
+    payment_date = models.DateField(blank=True, null=True)
+    amount_paid = models.DecimalField(max_digits=18, decimal_places=2, default=0)
 
     class Meta:
         verbose_name = "Proforma Invoice"

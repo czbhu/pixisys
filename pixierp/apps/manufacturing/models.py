@@ -260,7 +260,7 @@ class Project(models.Model):
     
     name = models.CharField(max_length=200, verbose_name="Név")
     description = models.TextField(blank=True, verbose_name="Leírás")
-    deadline = models.DateField(verbose_name="Határidő")
+    deadline = models.DateField(null=True, blank=True, verbose_name="Határidő")
     company = models.ForeignKey('crm.Company', on_delete=models.SET_NULL, null=True, blank=True, verbose_name="Cég")
     contacts = models.ManyToManyField(Contact, blank=True, verbose_name="Kapcsolattartók")
     project_manager = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, 

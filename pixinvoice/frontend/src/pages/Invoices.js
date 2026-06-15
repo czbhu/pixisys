@@ -500,6 +500,9 @@ const Invoices = () => {
   const [emailDefaults, setEmailDefaults] = useState({});
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [bulkMode, setBulkMode] = useState(false);
+  const [arrearsEmailModalOpen, setArrearsEmailModalOpen] = useState(false);
+  const [arrearsEmailData, setArrearsEmailData] = useState(null);
+  const [arrearsSending, setArrearsSending] = useState(false);
   const [stornoModalOpen, setStornoModalOpen] = useState(false);
   const [stornoInvoice, setStornoInvoice] = useState(null);
   const [stornoProcessing, setStornoProcessing] = useState(false);
@@ -509,6 +512,59 @@ const Invoices = () => {
   const [mobileActionsInvoiceId, setMobileActionsInvoiceId] = useState(null);
   const navigate = useNavigate();
   const headerSelectRef = React.useRef(null);
+  const lastCheckedIndexRef = React.useRef(-1);
+  const visibleInvoicesRef = React.useRef([]);
+
+  const openArrearsEmailModal = async () => {
+    const selected = visibleInvoices.filter(inv => selectedIds.has(inv.id) && !calcSettlementState(inv).isSettled);
+    if (!selected.length) { toast.info('Nincs kijelölt lejárt számla'); return; }
+    const companyId = selected[0]?.company?.id || localStorage.getItem('selectedCompanyId');
+    // Use first invoice for compose, remaining appended
+    try {
+      const res = await invoiceAPI.getArrearsEmailCompose({
+        company_id: companyId,
+        invoice_id: selected[0].id,
+      });
+      const d = res.data;
+      setArrearsEmailData({
+        from: d.from || '',
+        to: d.to || [],
+        cc: [],
+        bcc: [],
+        subject: d.subject || '',
+        body: d.body || '',
+        customerId: d.customer_id,
+        invoiceIds: selected.map(inv => inv.id),
+        companyId,
+      });
+      setArrearsEmailModalOpen(true);
+    } catch (e) {
+      toast.error(e?.response?.data?.error || 'E-mail előkészítés sikertelen');
+    }
+  };
+
+  const sendArrearsEmail = async (payload) => {
+    if (!arrearsEmailData) return;
+    setArrearsSending(true);
+    try {
+      await invoiceAPI.sendArrearsSingleEmail({
+        company_id: arrearsEmailData.companyId,
+        invoice_ids: arrearsEmailData.invoiceIds,
+        from: payload.from,
+        to: payload.to,
+        cc: payload.cc,
+        bcc: payload.bcc,
+        subject: payload.subject,
+        body: payload.body,
+      });
+      toast.success('Kintlévőségi e-mail elküldve');
+      setArrearsEmailModalOpen(false);
+    } catch (e) {
+      toast.error(e?.response?.data?.error || 'Küldés sikertelen');
+    } finally {
+      setArrearsSending(false);
+    }
+  };
 
   const openNavLogModal = (invoice) => {
     setNavLogInvoice(invoice || null);
@@ -572,6 +628,11 @@ const Invoices = () => {
   // Reset page when company changes
   React.useEffect(() => { setCurrentPage(1); }, [selectedCompanyId]);
 
+  // Reset page when filters/search/date ranges change to avoid invalid page requests (404 Invalid page).
+  React.useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, statusFilter, blockFilter, issueDateFrom, issueDateTo, deliveryDateFrom, deliveryDateTo, pageSize]);
+
   // Preloader when company changes
   React.useEffect(() => {
     if (prevCompanyRef.current !== selectedCompanyId) {
@@ -588,7 +649,7 @@ const Invoices = () => {
   const { data: invoices, isLoading, isFetching, error } = useQuery(
     ['invoices', { 
       search: searchTerm, 
-      status: statusFilter, 
+      status: statusFilter || null, 
       block: blockFilter, 
       page: currentPage, 
       page_size: pageSize,
@@ -597,7 +658,7 @@ const Invoices = () => {
     }],
     () => invoiceAPI.getInvoices({
       search: searchTerm || undefined,
-      status: (statusFilter && !['due', 'overdue'].includes(statusFilter)) ? statusFilter : undefined,
+      status: statusFilter || undefined,
       invoice_block: blockFilter || undefined,
       issue_date_from: issueDateFrom || undefined,
       issue_date_to: issueDateTo || undefined,
@@ -609,7 +670,15 @@ const Invoices = () => {
     }),
     {
       keepPreviousData: true,
+      staleTime: 0,
       select: (response) => response.data,
+      onError: (err) => {
+        const status = err?.response?.status;
+        const detail = String(err?.response?.data?.detail || '').toLowerCase();
+        if (status === 404 && currentPage > 1 && detail.includes('invalid page')) {
+          setCurrentPage(1);
+        }
+      },
     }
   );
 
@@ -619,22 +688,29 @@ const Invoices = () => {
 
   const filteredInvoices = React.useMemo(() => {
     const list = invoices?.results || [];
+    // due/overdue filtering is done server-side — no client-side re-filtering needed
     if (!['due', 'overdue'].includes(statusFilter)) return list;
-
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    return list.filter((inv) => {
-      const settlement = calcSettlementState(inv);
-      if (settlement.isSettled) return false;
-      const dueDate = parseDateOnly(inv?.due_date);
-      if (!dueDate) return false;
-      if (statusFilter === 'overdue') return dueDate < today;
-      return dueDate >= today;
-    });
+    return list;
   }, [invoices, statusFilter]);
 
   const visibleInvoices = filteredInvoices || [];
+  visibleInvoicesRef.current = visibleInvoices;
+
+  const handleRowCheckbox = React.useCallback((id, idx, e) => {
+    if (e.shiftKey && lastCheckedIndexRef.current >= 0) {
+      const start = Math.min(lastCheckedIndexRef.current, idx);
+      const end = Math.max(lastCheckedIndexRef.current, idx);
+      const rangeIds = visibleInvoicesRef.current.slice(start, end + 1).map(inv => inv.id);
+      setSelectedIds(prev => new Set([...prev, ...rangeIds]));
+    } else {
+      setSelectedIds(prev => {
+        const next = new Set(prev);
+        if (next.has(id)) next.delete(id); else next.add(id);
+        return next;
+      });
+    }
+    lastCheckedIndexRef.current = idx;
+  }, []);
   const selectedVisibleCount = visibleInvoices.filter(inv => selectedIds.has(inv.id)).length;
   const allVisibleSelected = visibleInvoices.length > 0 && selectedVisibleCount === visibleInvoices.length;
   const selectedVisibleInvoices = React.useMemo(
@@ -861,7 +937,7 @@ const Invoices = () => {
              defaultFrom = s.smtp_from;
              defaultReplyTo = s.smtp_from;
           }
-          const bilingual = (invoice.currency || '').toUpperCase() !== 'HUF';
+          const bilingual = (invoice.currency || '').toUpperCase() !== 'HUF' || !!invoice.bilingual || !!(invoice.invoice_block?.second_language);
 
           // Generate items table string
           let itemsTable = 'Megnevezés\tMennyiség\tNettó ár\tBruttó ár';
@@ -1349,12 +1425,14 @@ const Invoices = () => {
                   onChange={()=>{
                     if (selectedIds.size > 0) {
                       setSelectedIds(new Set());
+                      lastCheckedIndexRef.current = -1;
                       return;
                     }
                     const set = new Set();
                     const rows = visibleInvoices;
                     rows.forEach(inv=>set.add(inv.id));
                     setSelectedIds(set);
+                    lastCheckedIndexRef.current = -1;
                   }}
                   checked={allVisibleSelected}
                 />
@@ -1397,7 +1475,7 @@ const Invoices = () => {
                 other: 'Egyéb',
               })[pm] || pm;
 
-              return list.map((invoice) => {
+              return list.map((invoice, invoiceIndex) => {
                 const isSt = isStorno(invoice) || stornoOriginals.has(invoice.invoice_number);
                 const settlement = calcSettlementState(invoice);
                 const isSettled = settlement.isSettled;
@@ -1409,7 +1487,7 @@ const Invoices = () => {
                 const dueDate = parseDateOnly(invoice.due_date);
                 const today = new Date();
                 today.setHours(0, 0, 0, 0);
-                const isOverdue = !isSettled && !!dueDate && dueDate < today;
+                const isOverdue = !isSettled && !isSt && !isCancelled && !!dueDate && dueDate < today;
                 const overdueDays = isOverdue ? Math.floor((today.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24)) : 0;
                 const actionButtons = (
                   <ActionButtons>
@@ -1518,11 +1596,8 @@ const Invoices = () => {
                   <input
                     type="checkbox"
                     checked={selectedIds.has(invoice.id)}
-                    onChange={(e)=>{
-                      const set = new Set(selectedIds);
-                      if (e.target.checked) set.add(invoice.id); else set.delete(invoice.id);
-                      setSelectedIds(set);
-                    }}
+                    onClick={(e) => handleRowCheckbox(invoice.id, invoiceIndex, e)}
+                    onChange={() => {}}
                   />
                 </TableCell>
                 <TableCell>
@@ -1583,6 +1658,11 @@ const Invoices = () => {
                         {curr !== 'HUF' && (
                           <div style={{ fontSize: 12, color: '#7f8c8d', marginTop: 2, whiteSpace: 'nowrap' }}>
                             {formatCurrency(amount * rate, 'HUF')}
+                          </div>
+                        )}
+                        {!isSettled && remainingAmount > 0 && paidAmount > 0 && (
+                          <div style={{ fontSize: 12, color: '#b42318', marginTop: 2, fontWeight: 600, whiteSpace: 'nowrap' }}>
+                            Hátralék: {formatCurrency(remainingAmount, curr)}
                           </div>
                         )}
                       </>
@@ -1649,6 +1729,15 @@ const Invoices = () => {
           <button onClick={openBulkEmailModal} disabled={selectedIds.size===0} style={{ padding: '8px 12px' }}>
             Kijelöltek e-mailben küldése
           </button>
+          {statusFilter === 'overdue' && (
+            <button
+              onClick={openArrearsEmailModal}
+              disabled={selectedIds.size === 0}
+              style={{ padding: '8px 12px', background: '#e67e22', color: '#fff', border: 'none', borderRadius: 4, fontWeight: 600, cursor: selectedIds.size === 0 ? 'not-allowed' : 'pointer', opacity: selectedIds.size === 0 ? 0.5 : 1 }}
+            >
+              Kintlévőségi levél küldése
+            </button>
+          )}
         </div>
       </div>
 
@@ -1700,6 +1789,22 @@ const Invoices = () => {
         }
         defaultUseThunderbird={emailDefaults.defaultUseThunderbird}
         defaultThunderbirdPath={emailDefaults.defaultThunderbirdPath}
+      />
+    )}
+    {arrearsEmailModalOpen && arrearsEmailData && (
+      <EmailModal
+        isOpen={arrearsEmailModalOpen}
+        onClose={() => setArrearsEmailModalOpen(false)}
+        onSend={sendArrearsEmail}
+        defaultFrom={arrearsEmailData.from}
+        defaultReplyTo={arrearsEmailData.from}
+        defaultTo={arrearsEmailData.to}
+        defaultCc={arrearsEmailData.cc}
+        defaultBcc={arrearsEmailData.bcc}
+        defaultSubject={arrearsEmailData.subject}
+        defaultBody={arrearsEmailData.body}
+        customerId={arrearsEmailData.customerId}
+        attachments={[]}
       />
     )}
     {stornoModalOpen && stornoInvoice && (

@@ -1201,3 +1201,33 @@ class StorageShare(models.Model):
         target = self.folder or self.file
         recipient = self.shared_with or self.shared_with_department
         return f'{target} → {recipient}'
+
+
+class UserSeenRecord(models.Model):
+    """Tracks which records each user has already seen (acknowledged).
+    Used by the red-dot / badge notification system."""
+    user = models.ForeignKey(
+        'auth.User', on_delete=models.CASCADE, related_name='seen_records'
+    )
+    page_key = models.CharField(max_length=100)   # e.g. '/sales/rfqs'
+    record_id = models.IntegerField()              # primary key of the record
+    seen_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('user', 'page_key', 'record_id')
+        verbose_name = 'Megtekintett rekord'
+        verbose_name_plural = 'Megtekintett rekordok'
+
+
+class UserPageVisit(models.Model):
+    """Stores the last time a user visited a specific page."""
+    user = models.ForeignKey(
+        'auth.User', on_delete=models.CASCADE, related_name='page_visits'
+    )
+    page_key = models.CharField(max_length=100)
+    visited_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('user', 'page_key')
+        verbose_name = 'Oldallátogatás'
+        verbose_name_plural = 'Oldallátogatások'

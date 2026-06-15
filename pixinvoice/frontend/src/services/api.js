@@ -15,8 +15,75 @@ const api = axios.create({
   timeoutErrorMessage: 'A kérés túllépte az időkorlátot (30s)',
 });
 
+// JWT helpers
+function isTokenExpired(token) {
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1]));
+    // 30s buffer before actual expiry to avoid race conditions
+    return payload.exp * 1000 < Date.now() + 30000;
+  } catch {
+    return true;
+  }
+}
+
+let _isRefreshing = false;
+let _refreshSubscribers = [];
+
+function _subscribeTokenRefresh(cb) {
+  _refreshSubscribers.push(cb);
+}
+
+function _onTokenRefreshed(newToken) {
+  _refreshSubscribers.forEach(cb => cb(newToken));
+  _refreshSubscribers = [];
+}
+
+function _onRefreshFailed() {
+  _refreshSubscribers.forEach(cb => cb(null));
+  _refreshSubscribers = [];
+}
+
+async function _doTokenRefresh() {
+  const refreshToken = localStorage.getItem('refresh_token');
+  if (!refreshToken) return null;
+  try {
+    const response = await axios.post(`${API_BASE_URL}/api/auth/token/refresh/`, { refresh: refreshToken });
+    const { access, refresh } = response.data;
+    localStorage.setItem('access_token', access);
+    if (refresh) localStorage.setItem('refresh_token', refresh);
+    axios.defaults.headers.common['Authorization'] = `Bearer ${access}`;
+    return access;
+  } catch {
+    localStorage.removeItem('access_token');
+    localStorage.removeItem('refresh_token');
+    return null;
+  }
+}
+
+async function _getValidToken() {
+  const token = localStorage.getItem('access_token');
+  if (!token) return null;
+  if (!isTokenExpired(token)) return token;
+
+  if (_isRefreshing) {
+    return new Promise(resolve => _subscribeTokenRefresh(resolve));
+  }
+  _isRefreshing = true;
+  const newToken = await _doTokenRefresh();
+  _isRefreshing = false;
+  if (newToken) {
+    _onTokenRefreshed(newToken);
+  } else {
+    _onRefreshFailed();
+    if (window.location.pathname !== '/login') {
+      window.location.href = '/login';
+    }
+  }
+  return newToken;
+}
+
 // Add CSRF token to requests
-api.interceptors.request.use((config) => {
+api.interceptors.request.use(async (config) => {
   // Let the browser set multipart boundaries for FormData requests.
   if (typeof FormData !== 'undefined' && config?.data instanceof FormData) {
     if (config.headers) {
@@ -37,6 +104,17 @@ api.interceptors.request.use((config) => {
   } catch (e) {
     // ignore
   }
+  // JWT auth token – lejárt token esetén automatikus megújítás
+  try {
+    if (!config.headers['Authorization']) {
+      const validToken = await _getValidToken();
+      if (validToken) {
+        config.headers['Authorization'] = `Bearer ${validToken}`;
+      }
+    }
+  } catch (e) {
+    // ignore
+  }
   return config;
 });
 
@@ -47,7 +125,9 @@ api.interceptors.response.use(
     const config = error.config;
 
     // Ha nincs válasz (hálózati hiba, timeout), próbáljuk újra max 2x
-    if (!error.response && !config._retry) {
+    // FormData kéréseket nem próbáljuk újra, mert a fájl adatok nem biztos hogy újraküldhetők
+    const isFormData = typeof FormData !== 'undefined' && config?.data instanceof FormData;
+    if (!error.response && !config._retry && !isFormData) {
       config._retry = (config._retry || 0) + 1;
       
       if (config._retry <= 2) {
@@ -55,16 +135,6 @@ api.interceptors.response.use(
         // Várunk egy kicsit mielőtt újrapróbálnánk (exponenciális backoff)
         await new Promise(resolve => setTimeout(resolve, 1000 * config._retry));
         return api(config);
-      }
-    }
-
-    // Ha 403 Forbidden és van apiKey, akkor lehet hogy lejárt a session
-    if (error.response?.status === 403) {
-      const apiKey = localStorage.getItem('apiKey');
-      if (apiKey && window.location.pathname !== '/login') {
-        console.warn('Session lejárt vagy érvénytelen API kulcs');
-        // Opcionálisan: átirányítás login oldalra
-        // window.location.href = '/login';
       }
     }
 
@@ -131,6 +201,7 @@ export const invoiceAPI = {
   sendBulkEmail: (payload) => api.post(`/api/invoices/send_bulk_email/`, payload),
   // Overdue receivables workflow
   getArrearsList: (params = {}) => api.get('/api/invoices/arrears-list/', { params }),
+  getOverdueCustomerFlags: (params = {}) => api.get('/api/invoices/overdue-customer-flags/', { params }),
   advanceArrearsStatus: (payload) => api.post('/api/invoices/arrears-advance-status/', payload),
   getArrearsEmailCompose: (params = {}) => api.get('/api/invoices/arrears-email-compose/', { params }),
   sendArrearsSingleEmail: (payload) => api.post('/api/invoices/arrears-send-single/', payload),
@@ -506,7 +577,7 @@ export const bankStatementsAPI = {
       fd.append('skip_existing', '1');
     }
     (files||[]).forEach((f) => fd.append('files', f));
-    return api.post('/api/bank-statements/import-stm/', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+    return api.post('/api/bank-statements/import-stm/', fd, { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 180000 });
   },
   importStmCommit: (companyId, statements) => {
     return api.post('/api/bank-statements/import-stm-commit/', { company: companyId, statements });
@@ -570,6 +641,7 @@ export const proformaAPI = {
   createAdvanceInvoice: (id, data) => api.post(`/api/proformas/${id}/create_advance_invoice/`, data),
   sendEmail: (id, payload) => api.post(`/api/proformas/${id}/send_email/`, payload),
   getPdfUrl: (id) => `/api/proformas/${id}/pdf/`,
+  markPaid: (id, amountPaid, paymentDate) => api.post(`/api/proformas/${id}/mark-paid/`, { amount_paid: amountPaid, payment_date: paymentDate }),
 };
 
 export const incomingProformaAPI = {

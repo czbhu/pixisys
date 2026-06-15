@@ -137,6 +137,7 @@ const UploadedBankStatements = () => {
   });
   const [fromDate, setFromDate] = React.useState('');
   const [toDate, setToDate] = React.useState('');
+  const [listSearchTerm, setListSearchTerm] = React.useState('');
   const [listPage, setListPage] = React.useState(1);
   const [listPageSize, setListPageSize] = React.useState(50);
   const [quickRange, setQuickRange] = React.useState('');
@@ -282,6 +283,7 @@ const UploadedBankStatements = () => {
     const rows = [...(Array.isArray(data) ? data : [])]
       .filter((st) => !!(st?.source_file_name || st?.saved_items_count != null || st?.total_items_count != null));
 
+    const normStr = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
     const inRange = (d) => {
       const val = String(d || '').slice(0, 10);
       if (!val) return false;
@@ -291,18 +293,39 @@ const UploadedBankStatements = () => {
     };
 
     return rows
-      .filter((st) => inRange(st?.statement_date))
+      .filter((st) => {
+        if (!inRange(st?.statement_date)) return false;
+        if (listSearchTerm.trim()) {
+          const terms = normStr(listSearchTerm).split(/\s+/).filter(Boolean);
+          const hay = normStr([
+            st?.sequence_number,
+            st?.source_file_name,
+            st?.bank_account,
+            st?.bank_account_name,
+            st?.currency,
+            st?.note,
+            st?.statement_date,
+            // Search inside items: remittance, counterparty_name, amount
+            ...(Array.isArray(st?.import_preview_items)
+              ? st.import_preview_items.flatMap(it => [it?.remittance, it?.comment, it?.counterparty_name, it?.amount])
+              : []
+            ),
+          ].join(' '));
+          if (!terms.every((t) => hay.includes(t))) return false;
+        }
+        return true;
+      })
       .sort((a, b) => {
         const aTs = Date.parse(a?.statement_date || '') || 0;
         const bTs = Date.parse(b?.statement_date || '') || 0;
         if (bTs !== aTs) return bTs - aTs;
         return String(b?.sequence_number || '').localeCompare(String(a?.sequence_number || ''));
       });
-  }, [data, fromDate, toDate]);
+  }, [data, fromDate, toDate, listSearchTerm]);
 
   React.useEffect(() => {
     setListPage(1);
-  }, [fromDate, toDate, selectedCompanyId]);
+  }, [fromDate, toDate, selectedCompanyId, listSearchTerm]);
 
   const pagedUploadedList = React.useMemo(() => {
     const startIdx = Math.max(0, (listPage - 1) * listPageSize);
@@ -382,7 +405,16 @@ const UploadedBankStatements = () => {
     <Container>
       <Header>
         <Title>Feltöltött bankkivonatok</Title>
-        <BackButton to="/bank-statements">Vissza</BackButton>
+        <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+          <input
+            type="text"
+            value={listSearchTerm}
+            onChange={(e) => setListSearchTerm(e.target.value)}
+            placeholder="Keresés fájlnév, számlaszám, megjegyzés alapján..."
+            style={{ padding:'8px 12px', border:'1px solid #ddd', borderRadius:4, fontSize:14, minWidth:300 }}
+          />
+          <BackButton to="/bank-statements">Vissza</BackButton>
+        </div>
       </Header>
       <Body>
         <DateFilterPanel>

@@ -1,9 +1,9 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from 'react-query';
 import { Link } from 'react-router-dom';
 import styled from 'styled-components';
 import { proformaAPI, emailSettingsAPI, emailTemplateAPI } from '../services/api';
-import { Edit, Trash2, Copy, FileText, Mail, Eye } from 'lucide-react';
+import { Edit, Trash2, Copy, FileText, Mail, Eye, DollarSign } from 'lucide-react';
 import EmailModal from '../components/EmailModal';
 
 const Container = styled.div`
@@ -12,7 +12,6 @@ const Container = styled.div`
   box-shadow: 0 2px 4px rgba(0,0,0,0.1);
   overflow: hidden;
 `;
-
 const Header = styled.div`
   padding: 24px;
   border-bottom: 1px solid #ecf0f1;
@@ -20,51 +19,68 @@ const Header = styled.div`
   justify-content: space-between;
   align-items: center;
 `;
-
-const Title = styled.h1`
-  margin: 0;
-  font-size: 22px;
-  color: #2c3e50;
-`;
-
+const Title = styled.h1`margin: 0; font-size: 22px; color: #2c3e50;`;
 const ActionButton = styled(Link)`
-  padding: 8px 14px;
+  padding: 10px 20px;
   background: #3498db;
   color: white;
   text-decoration: none;
-  border-radius: 4px;
+  border-radius: 6px;
+  font-weight: 500;
+  &:hover { background: #2980b9; }
 `;
+const Table = styled.table`width: 100%; border-collapse: collapse;`;
+const Th = styled.th`padding: 12px 16px; text-align: left; background: #f8f9fa; border-bottom: 2px solid #ecf0f1; font-size: 13px; color: #7f8c8d;`;
+const Td = styled.td`padding: 12px 16px; border-bottom: 1px solid #f0f0f0; vertical-align: top;`;
+const SmallMuted = styled.div`font-size: 11px; color: #6b7280; margin-top: 2px;`;
 
-const Table = styled.table`
-  width: 100%;
-  border-collapse: collapse;
-`;
-const Th = styled.th`
-  text-align: left;
-  padding: 12px 16px;
-  border-bottom: 1px solid #ecf0f1;
-  background: #f8f9fa;
-`;
-const Td = styled.td`
-  padding: 12px 16px;
-  border-bottom: 1px solid #ecf0f1;
-`;
-
-const normalizeCompanyId = (value) => {
-  const raw = String(value || '').trim();
-  if (!raw || raw === 'undefined' || raw === 'null') return null;
-  const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-  return uuidRe.test(raw) ? raw : null;
+const ROW_COLORS = {
+  unpaid: '#dbeafe',    // halvány kék
+  partial: '#fef9c3',  // halvány sárga
+  paid: '#fef9c3',      // halvány sárga (fizetve, nincs számla)
+  invoiced: '#dcfce7', // halvány zöld
 };
 
-const Proformas = () => {
+const ModalOverlay = styled.div`
+  position: fixed; inset: 0; background: rgba(0,0,0,0.5);
+  display: flex; align-items: center; justify-content: center; z-index: 1000;
+`;
+const ModalBox = styled.div`
+  background: white; border-radius: 10px; padding: 28px; width: 420px; max-width: 95vw;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.18);
+`;
+const ModalTitle = styled.h2`margin: 0 0 18px; font-size: 17px; color: #2c3e50;`;
+const Label = styled.label`display: block; font-size: 13px; font-weight: 500; margin-bottom: 4px; color: #374151;`;
+const Input = styled.input`
+  width: 100%; padding: 8px 10px; border: 1px solid #d1d5db;
+  border-radius: 6px; font-size: 14px; box-sizing: border-box; margin-bottom: 12px;
+`;
+const BtnRow = styled.div`display: flex; gap: 10px; justify-content: flex-end; margin-top: 8px;`;
+const Btn = styled.button`
+  padding: 8px 18px; border-radius: 6px; border: none; cursor: pointer; font-size: 13px; font-weight: 500;
+  ${p => p.$primary ? 'background: #3498db; color: white;' : 'background: #ecf0f1; color: #374151;'}
+  &:disabled { opacity: 0.6; }
+`;
+
+const formatMoney = (v) => v != null ? Number(v).toLocaleString('hu-HU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0,00';
+
+export default function Proformas() {
+  const queryClient = useQueryClient();
+
   const [companyId, setCompanyId] = React.useState(() => {
-    try { return normalizeCompanyId(localStorage.getItem('selectedCompanyId')); } catch { return null; }
+    try {
+      const raw = localStorage.getItem('selectedCompanyId');
+      if (!raw || raw === 'undefined' || raw === 'null') return null;
+      const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+      return uuidRe.test(raw) ? raw : null;
+    } catch { return null; }
   });
+
   React.useEffect(() => {
     const sync = () => {
       try {
-        const cid = normalizeCompanyId(localStorage.getItem('selectedCompanyId'));
+        const raw = localStorage.getItem('selectedCompanyId');
+        const cid = (raw && raw !== 'undefined' && raw !== 'null') ? raw : null;
         setCompanyId(prev => (prev !== cid ? cid : prev));
       } catch {}
     };
@@ -74,127 +90,75 @@ const Proformas = () => {
     return () => { window.removeEventListener('focus', onFocus); clearInterval(id); };
   }, []);
 
-  const queryClient = useQueryClient();
   const { data, isLoading } = useQuery(
     ['proformas', { company_id: companyId }],
     () => proformaAPI.getProformas(companyId ? { company_id: companyId } : {}),
     { select: (res) => res.data?.results || res.data || [] }
   );
-
   const deleteMutation = useMutation((id) => proformaAPI.deleteProforma(id), {
-    onSuccess: () => queryClient.invalidateQueries('proformas')
+    onSuccess: () => queryClient.invalidateQueries('proformas'),
   });
   const copyMutation = useMutation((id) => proformaAPI.copyProforma(id), {
-    onSuccess: () => queryClient.invalidateQueries('proformas')
+    onSuccess: () => queryClient.invalidateQueries('proformas'),
   });
 
-  // Email modal state
+  // Pay modal
+  const [payRow, setPayRow] = useState(null);
+  const [payAmount, setPayAmount] = useState('');
+  const [payDate, setPayDate] = useState('');
+  const [paying, setPaying] = useState(false);
+
+  const openPay = (pf) => {
+    setPayRow(pf);
+    setPayAmount(String(parseFloat(pf.total_gross_amount || 0).toFixed(2)));
+    setPayDate(new Date().toISOString().slice(0, 10));
+  };
+
+  const handlePay = async () => {
+    if (!payRow) return;
+    setPaying(true);
+    try {
+      await proformaAPI.markPaid(payRow.id, payAmount, payDate);
+      queryClient.invalidateQueries('proformas');
+      setPayRow(null);
+    } catch (e) {
+      alert(e?.response?.data?.error || 'Hiba a kifizetés rögzítésekor');
+    } finally {
+      setPaying(false);
+    }
+  };
+
+  // Email modal
   const [emailModalOpen, setEmailModalOpen] = React.useState(false);
   const [emailProforma, setEmailProforma] = React.useState(null);
   const [emailDefaults, setEmailDefaults] = React.useState({});
 
-  const applyTemplateVars = (tpl, vars) => {
-    let out = String(tpl || '');
-    for (const [key, value] of Object.entries(vars || {})) {
-      out = out.replaceAll('{' + key + '}', String(value ?? ''));
-    }
-    return out;
-  };
-
   const openEmailModal = async (pf) => {
     setEmailProforma(pf);
-    const defTo = [];
-    if (pf?.customer?.email) defTo.push(pf.customer.email);
-    const company = pf?.company || {};
-    const customer = pf?.customer || {};
-    let subject = `Díjbekérő ${pf.proforma_number}`;
-    const userName = localStorage.getItem('userFullName') || '';
-    const userPhone = localStorage.getItem('userPhone') || '';
-    const companyShort = company.short_name || company.name || '';
-    const companyWebsite = company.website || '';
-    const companyAddr = [company.postal_code, company.city, [company.street_name, company.street_number].filter(Boolean).join(' ')].filter(Boolean).join(', ');
-    const companyTax = company.full_tax_number || company.tax_number || '';
-    const totalStr = `${(pf.total_gross_amount || 0).toLocaleString('hu-HU', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} ${pf.currency || ''}`;
-    const templateVars = {
-      customer_name: customer.name || 'Ügyfelünk',
-      company_name: company.name || '',
-      invoice_number: pf.proforma_number || '',
-      due_date: pf.due_date || '',
-      total: totalStr,
-      signature_html: '',
-    };
-    let body = [
-      `Tisztelt ${customer.name || 'Ügyfelünk'}!`,
-      '',
-      'Mellékelve küldöm az alábbi díjbekérőt:',
-      '',
-      `Díjbekérő száma: ${pf.proforma_number}`,
-      `Összeg (bruttó): ${totalStr}`,
-      `Fizetési határidő: ${pf.due_date || ''}`,
-      '',
-      'Kérem az összeg átutalásáról szíveskedjen gondoskodni a határidőig.',
-      '',
-      '--',
-      'Üdvözlettel,',
-      userName,
-      userPhone,
-      companyWebsite,
-      companyShort,
-      companyAddr,
-      companyTax,
-    ].join('<br>');
-    let defaultFrom = company.email || '';
-    let defaultReplyTo = defaultFrom;
     try {
-      const cid = company.id || localStorage.getItem('selectedCompanyId');
-      if (cid) {
-        const [res, templateRes] = await Promise.all([
-          emailSettingsAPI.getSettings({ company_id: cid }),
-          emailTemplateAPI.list({ company_id: cid, template_type: 'invoice_send' }).catch(() => ({ data: [] })),
-        ]);
-        const s = (res.data?.results && res.data.results[0]) || (Array.isArray(res.data) ? res.data[0] : res.data);
-        const templateRowsRaw = Array.isArray(templateRes?.data) ? templateRes.data : (templateRes?.data?.results || []);
-        const templateRows = templateRowsRaw.filter((t) => String(t?.template_type || '') === 'invoice_send');
-        const huTemplate = templateRows.find((t) => String(t?.language || 'hu') === 'hu' && t?.is_active !== false)
-          || templateRows.find((t) => String(t?.language || 'hu') === 'hu')
-          || null;
-        if (s) {
-          if (s.smtp_from) {
-            defaultFrom = s.smtp_from;
-            defaultReplyTo = s.smtp_from;
-          }
-          const fill = (tpl) => applyTemplateVars(tpl, templateVars);
-          if (huTemplate?.subject_template) {
-            subject = fill(huTemplate.subject_template);
-            subject = subject.replace(/Számla/g, 'Díjbekérő').replace(/számla/g, 'díjbekérő');
-          } else if (s.default_subject_template) {
-            subject = fill(s.default_subject_template);
-            subject = subject.replace(/Számla/g, 'Díjbekérő').replace(/számla/g, 'díjbekérő');
-          }
-          if (huTemplate?.body_template) {
-            body = fill(huTemplate.body_template);
-            body = body.replace(/számlát/g, 'díjbekérőt').replace(/számlákat/g, 'díjbekérőket').replace(/Számla/g, 'Díjbekérő').replace(/számla/g, 'díjbekérő');
-          } else if (s.default_body_template) {
-            body = fill(s.default_body_template);
-            body = body.replace(/számlát/g, 'díjbekérőt').replace(/számlákat/g, 'díjbekérőket').replace(/Számla/g, 'Díjbekérő').replace(/számla/g, 'díjbekérő');
-          }
-        }
-      }
-    } catch (e) { /* settings not available, use defaults */ }
-    setEmailDefaults({
-      defaultFrom,
-      defaultReplyTo,
-      defaultTo: defTo,
-      defaultCc: [],
-      defaultBcc: [],
-      defaultSubject: subject,
-      defaultBody: body,
-    });
+      const [settingsRes, templatesRes] = await Promise.all([
+        emailSettingsAPI.getSettings(),
+        emailTemplateAPI.getTemplates(),
+      ]);
+      const settings = settingsRes.data;
+      const templates = Array.isArray(templatesRes.data) ? templatesRes.data : (templatesRes.data?.results || []);
+      const tpl = templates.find(t => t.type === 'proforma') || templates[0];
+      setEmailDefaults({
+        defaultFrom: settings?.default_from || '',
+        defaultReplyTo: settings?.default_reply_to || '',
+        defaultTo: pf.customer?.email || '',
+        defaultCc: '',
+        defaultBcc: '',
+        defaultSubject: tpl ? tpl.subject.replace('{{proforma_number}}', pf.proforma_number) : `Díjbekérő: ${pf.proforma_number}`,
+        defaultBody: tpl ? tpl.body.replace('{{proforma_number}}', pf.proforma_number) : `Díjbekérő száma: ${pf.proforma_number}`,
+      });
+    } catch {
+      setEmailDefaults({ defaultTo: pf.customer?.email || '', defaultSubject: `Díjbekérő: ${pf.proforma_number}`, defaultBody: '' });
+    }
     setEmailModalOpen(true);
   };
 
   const sendEmailFromModal = async (payload) => {
-    if (!emailProforma) return;
     try {
       await proformaAPI.sendEmail(emailProforma.id, payload);
       alert('E-mail elküldve!');
@@ -208,6 +172,7 @@ const Proformas = () => {
   const list = Array.isArray(data) ? data : (data?.results || []);
 
   return (
+    <>
     <Container>
       <Header>
         <Title>Díjbekérők</Title>
@@ -223,30 +188,50 @@ const Proformas = () => {
                 <Th>Szám</Th>
                 <Th>Dátum</Th>
                 <Th>Ügyfél</Th>
-                <Th>Összeg (bruttó)</Th>
+                <Th style={{textAlign:'right'}}>Összeg (bruttó)</Th>
                 <Th>Műveletek</Th>
               </tr>
             </thead>
             <tbody>
-              {list.map((pf) => (
-                <tr key={pf.id}>
-                  <Td>{pf.proforma_number}</Td>
-                  <Td>{pf.issue_date}</Td>
-                  <Td>{pf.customer?.name || ''}</Td>
-                  <Td>{Number.isFinite(Number(pf.total_gross_amount)) ? Number(pf.total_gross_amount).toLocaleString('hu-HU', { minimumFractionDigits: 2 }) : '0,00'}</Td>
-                  <Td>
-                    <div style={{ display: 'flex', gap: 8 }}>
-                      <Link to={`/proformas/${pf.id}/edit`} title="Szerkesztés" style={{ color: '#3498db' }}><Edit size={18} /></Link>
-                      <button onClick={() => copyMutation.mutate(pf.id)} title="Másolat" style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#2c3e50' }}><Copy size={18} /></button>
-                      <a href={proformaAPI.getPdfUrl(pf.id)} target="_blank" rel="noreferrer" title="PDF megtekintése" style={{ color: '#16a085' }}><Eye size={18} /></a>
-                      <button onClick={() => openEmailModal(pf)} title="E-mail küldése" style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#e67e22' }}><Mail size={18} /></button>
-                      <button onClick={() => { if(window.confirm('Törlöd a díjbekérőt?')) deleteMutation.mutate(pf.id); }} title="Törlés" style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#e74c3c' }}><Trash2 size={18} /></button>
-                      <Link to={`/invoices/new?from_proforma=${pf.id}`} title="Számla díjbekérő alapján" style={{ color: '#27ae60' }}><FileText size={18} /></Link>
-                      <Link to={`/invoices/new?from_proforma=${pf.id}&advance=1`} title="Előlegszámla díjbekérő alapján" style={{ color: '#8e44ad' }}><FileText size={18} /></Link>
-                    </div>
-                  </Td>
-                </tr>
-              ))}
+              {list.map((pf) => {
+                const status = pf.status || 'unpaid';
+                const isPaid = status === 'paid' || status === 'partial';
+                const isInvoiced = status === 'invoiced';
+                const gross = parseFloat(pf.total_gross_amount || 0);
+                const amountPaid = parseFloat(pf.amount_paid || 0);
+                const remaining = gross - amountPaid;
+                const rowBg = ROW_COLORS[status] || ROW_COLORS.unpaid;
+                return (
+                  <tr key={pf.id} style={{ background: rowBg }}>
+                    <Td>{pf.proforma_number}</Td>
+                    <Td>{pf.issue_date}</Td>
+                    <Td>{pf.customer?.name || ''}</Td>
+                    <Td style={{textAlign:'right', fontWeight:600}}>
+                      <div>{formatMoney(gross)}</div>
+                      {isPaid && status !== 'partial' && pf.payment_date && (
+                        <SmallMuted style={{color:'#166534'}}>Rendezve: {pf.payment_date}</SmallMuted>
+                      )}
+                      {status === 'partial' && (
+                        <SmallMuted style={{color:'#854d0e'}}>Fizetve: {formatMoney(amountPaid)} — Maradék: {formatMoney(remaining)}</SmallMuted>
+                      )}
+                    </Td>
+                    <Td>
+                      <div style={{ display: 'flex', gap: 8, flexWrap:'wrap' }}>
+                        {(status === 'unpaid' || status === 'partial') && (
+                          <button onClick={() => openPay(pf)} title="Kifizetés rögzítése" style={{ border: 'none', background: '#dcfce7', color: '#166534', cursor: 'pointer', borderRadius:4, padding:'2px 8px', fontWeight:600, fontSize:12 }}>Fizet</button>
+                        )}
+                        <Link to={`/proformas/${pf.id}/edit`} title="Szerkesztés" style={{ color: '#3498db' }}><Edit size={18} /></Link>
+                        <button onClick={() => copyMutation.mutate(pf.id)} title="Másolat" style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#2c3e50' }}><Copy size={18} /></button>
+                        <a href={proformaAPI.getPdfUrl(pf.id)} target="_blank" rel="noreferrer" title="PDF megtekintése" style={{ color: '#16a085' }}><Eye size={18} /></a>
+                        <button onClick={() => openEmailModal(pf)} title="E-mail küldése" style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#e67e22' }}><Mail size={18} /></button>
+                        <button onClick={() => { if(window.confirm('Törlöd a díjbekérőt?')) deleteMutation.mutate(pf.id); }} title="Törlés" style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#e74c3c' }}><Trash2 size={18} /></button>
+                        <Link to={`/invoices/new?from_proforma=${pf.id}`} title="Számla díjbekérő alapján" style={{ color: '#27ae60' }}><FileText size={18} /></Link>
+                        <Link to={`/invoices/new?from_proforma=${pf.id}&advance=1`} title="Előlegszámla díjbekérő alapján" style={{ color: '#8e44ad' }}><FileText size={18} /></Link>
+                      </div>
+                    </Td>
+                  </tr>
+                );
+              })}
             </tbody>
           </Table>
         </div>
@@ -268,8 +253,33 @@ const Proformas = () => {
         />
       )}
     </Container>
+
+    {payRow && (
+      <ModalOverlay onClick={() => setPayRow(null)}>
+        <ModalBox onClick={e => e.stopPropagation()}>
+          <ModalTitle>Kifizetés rögzítése – {payRow.proforma_number}</ModalTitle>
+          <Label>Kifizetett összeg ({payRow.currency || 'HUF'})</Label>
+          <Input
+            type="number" step="0.01" autoFocus
+            value={payAmount}
+            onChange={e => setPayAmount(e.target.value)}
+          />
+          {parseFloat(payAmount || 0) < parseFloat(payRow.total_gross_amount || 0) - 0.005 && (
+            <div style={{fontSize:12, color:'#b45309', marginBottom:10}}>
+              Fennmaradó: {formatMoney(parseFloat(payRow.total_gross_amount||0) - parseFloat(payAmount||0))} {payRow.currency || 'HUF'}
+            </div>
+          )}
+          <Label>Fizetés dátuma</Label>
+          <Input type="date" value={payDate} onChange={e => setPayDate(e.target.value)} />
+          <BtnRow>
+            <Btn onClick={() => setPayRow(null)}>Mégse</Btn>
+            <Btn $primary onClick={handlePay} disabled={paying || !payAmount || !payDate}>
+              {paying ? 'Mentés…' : 'Kifizetés rögzítése'}
+            </Btn>
+          </BtnRow>
+        </ModalBox>
+      </ModalOverlay>
+    )}
+    </>
   );
-};
-
-export default Proformas;
-
+}

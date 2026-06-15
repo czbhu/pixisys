@@ -146,6 +146,19 @@ class CompanyViewSet(viewsets.ViewSet):
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_502_BAD_GATEWAY)
 
+    @action(detail=False, methods=['get'], url_path='overdue-customer-flags')
+    def overdue_customer_flags(self, request):
+        """Proxy to pixinvoice overdue-customer-flags endpoint."""
+        try:
+            client = PixinvoiceClient()
+            company_id = _ensure_company_id(client)
+            if not company_id:
+                return Response({'error': 'PixInvoice company_id hi\u00e1nyzik'}, status=status.HTTP_400_BAD_REQUEST)
+            data = client.get_raw('invoices/overdue-customer-flags', params={}, company_id=company_id)
+            return Response(data)
+        except Exception as e:
+            return Response({'results': [], 'error': str(e)})
+
     def retrieve(self, request, pk=None):
         try:
             company_id = _resolve_company_id(request)
@@ -474,6 +487,27 @@ class ContactViewSet(viewsets.ViewSet):
                     it for it in items
                     if not ((it or {}).get('customer') or (it or {}).get('customer_id') or (it or {}).get('company') or (it or {}).get('company_id'))
                 ]
+            # Enrich with local_id and full_name for the frontend
+            try:
+                from .models import Contact as LocalContact
+                ext_ids = [str(it.get('id', '')) for it in items if it.get('id')]
+                local_map = {
+                    str(c.external_id): c.id
+                    for c in LocalContact.objects.filter(external_id__in=ext_ids)
+                    if c.external_id
+                }
+                for it in items:
+                    ext_id = str(it.get('id', ''))
+                    it['local_id'] = local_map.get(ext_id)
+                    # Normalize name fields
+                    if not it.get('full_name'):
+                        fn = it.get('firstName') or it.get('first_name') or ''
+                        ln = it.get('lastName') or it.get('last_name') or ''
+                        it['full_name'] = f'{fn} {ln}'.strip() or it.get('name', '')
+                    if not it.get('customer_name'):
+                        it['customer_name'] = it.get('customerName', '')
+            except Exception:
+                pass
             return Response(items)
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_502_BAD_GATEWAY)

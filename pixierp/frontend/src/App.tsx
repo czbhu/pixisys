@@ -69,8 +69,21 @@ function AppContent() {
   const [notificationCounts, setNotificationCounts] = useState<NotificationCounts>({});
   
   const refreshCounts = () => {
-    notificationService.getUnreadCounts().then(data => {
-        setNotificationCounts(data);
+    notificationService.getAllBadgeCounts().then(data => {
+        setNotificationCounts(prev => {
+          // Preserve tracker-managed page badge counts (set via erp-badge-update events)
+          const TRACKER_KEYS = [
+            '/sales/rfqs', '/sales/customer-orders', '/sales/delivery-notes',
+            '/personal/approvals', '/manufacturing/ordered-products',
+          ];
+          const merged: Record<string, number> = { ...data };
+          // Keep the current tracker counts (don't overwrite with server counts for these keys)
+          TRACKER_KEYS.forEach(key => {
+            if (prev[key] !== undefined) merged[key] = prev[key];
+            else delete merged[key];
+          });
+          return merged;
+        });
         // Also update invite count specifically if needed, or rely on this new system
         // But for backward compatibility with pure Invite logic:
         import('./services/salesService').then(mod => {
@@ -112,6 +125,28 @@ function AppContent() {
       }
     }
   }, [user]);
+
+  // Listen for frontend badge updates (erp-badge-update / erp-badge-seen from useNewRowTracker)
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { pageKey, count } = (e as CustomEvent).detail as { pageKey: string; count: number };
+      setNotificationCounts(prev => {
+        const next = { ...prev };
+        if (count > 0) {
+          next[pageKey] = count;
+        } else {
+          delete next[pageKey];
+        }
+        return next;
+      });
+    };
+    window.addEventListener('erp-badge-update', handler);
+    window.addEventListener('erp-badge-seen', handler);
+    return () => {
+      window.removeEventListener('erp-badge-update', handler);
+      window.removeEventListener('erp-badge-seen', handler);
+    };
+  }, []);
 
   // Mark notifications as read when visiting a page
   useEffect(() => {

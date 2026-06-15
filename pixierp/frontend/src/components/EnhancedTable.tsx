@@ -403,7 +403,11 @@ function EnhancedTable<T extends object = any>({
     setStickyOverId(null);
     setActiveDragId(null);
   };
-
+  // Sort state for client-side full-dataset sorting (fixes page-only sort bug)
+  const [sortState, setSortState] = useUserPreference<{ key: string; dir: 'ascend' | 'descend' } | null>(
+    `${tableKey}_sort`,
+    null,
+  );
   // Build the final column list ─────────────────────────────────────────────
   const processedColumns = useMemo(() => {
     const colMap = new Map(
@@ -479,10 +483,11 @@ function EnhancedTable<T extends object = any>({
             onResizeMove: handleResizeMove,
             onResizeEnd: handleResizeEnd,
           }),
+          sortOrder: sortState && sortState.key === key ? sortState.dir : undefined,
         };
       });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rawColumns, colOrder, mergedColVis, mergedWidths, handleResizeMove, handleResizeEnd]);
+  }, [rawColumns, colOrder, mergedColVis, mergedWidths, handleResizeMove, handleResizeEnd, sortState]);
 
   // ─── Responsive card layout ────────────────────────────────────────────────
   const { containerRef, useCardLayout } = useResponsiveTable(
@@ -593,12 +598,25 @@ function EnhancedTable<T extends object = any>({
     }
   }, [dataLen, origCurrent]);
 
+  // Sort state for client-side full-dataset sorting
+  const sortedFullDataSource = useMemo(() => {
+    if (!sortState) return fullDataSource;
+    const col = rawColumns.find((c: any) => String(c.key ?? c.dataIndex ?? '') === sortState.key);
+    if (!col || typeof (col as any).sorter !== 'function') return fullDataSource;
+    const sorterFn = (col as any).sorter as (a: any, b: any) => number;
+    const sorted = [...fullDataSource].sort((a, b) => {
+      const result = sorterFn(a, b);
+      return sortState.dir === 'ascend' ? result : -result;
+    });
+    return sorted;
+  }, [fullDataSource, sortState, rawColumns]);
+
   // Slice dataSource for client-side pagination (only when pag is not false and no external current)
   const pagedDataSource = useMemo(() => {
-    if (pag === false || origCurrent !== undefined) return fullDataSource;
+    if (pag === false || origCurrent !== undefined) return sortedFullDataSource;
     const start = (page - 1) * size;
-    return fullDataSource.slice(start, start + size);
-  }, [fullDataSource, pag, origCurrent, page, size]);
+    return sortedFullDataSource.slice(start, start + size);
+  }, [sortedFullDataSource, pag, origCurrent, page, size]);
 
   const pagSizeOptions = [{ value: 10, label: '10 / oldal' }, { value: 20, label: '20 / oldal' }, { value: 50, label: '50 / oldal' }, { value: 100, label: '100 / oldal' }, { value: 200, label: '200 / oldal' }, { value: 500, label: '500 / oldal' }, { value: 1000, label: '1000 / oldal' }];
 
@@ -735,6 +753,15 @@ function EnhancedTable<T extends object = any>({
                   pagination={topPag}
                   footer={footerFn}
                   columns={processedColumns as TableColumnType<T>[]}
+                  onChange={(_pag, _filters, sorter) => {
+                    const s = Array.isArray(sorter) ? sorter[0] : sorter;
+                    if (s && s.columnKey && s.order) {
+                      setSortState({ key: String(s.columnKey), dir: s.order as 'ascend' | 'descend' });
+                    } else {
+                      setSortState(null);
+                    }
+                    setIntPage(1);
+                  }}
                   components={{
                     ...(bodyComponents || {}),
                     header: {

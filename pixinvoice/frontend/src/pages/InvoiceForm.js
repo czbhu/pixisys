@@ -1088,6 +1088,17 @@ const InvoiceForm = () => {
     { select: (res) => res.data }
   );
 
+  const { data: overdueCustomerFlags } = useQuery(
+    ['overdue-customer-flags', selectedCompanyId],
+    () => invoiceAPI.getOverdueCustomerFlags({ company_id: selectedCompanyId }).then(r => r.data?.results || []),
+    { enabled: !!selectedCompanyId, staleTime: 60000 }
+  );
+  const overdueCustomerMap = React.useMemo(() => {
+    const map = {};
+    (overdueCustomerFlags || []).forEach(f => { map[f.customer_id] = f.level; });
+    return map;
+  }, [overdueCustomerFlags]);
+
   const customerRows = React.useMemo(() => {
     if (Array.isArray(customers?.results)) return customers.results;
     if (Array.isArray(customers)) return customers;
@@ -3195,12 +3206,24 @@ const InvoiceForm = () => {
       if (au !== bu) return bu - au;
       return String(a?.name || '').localeCompare(String(b?.name || ''), 'hu-HU', { sensitivity: 'base' });
     })
-    .map(c => ({
-    value: c.id,
-    label: `${c.name} (${c.tax_number})`,
-    _norm: normalize(`${c.name} ${c.tax_number}`),
-    _usage: Number(customerUsage[String(c?.id)] || 0),
-  }));
+    .map(c => {
+      const overdueLevel = overdueCustomerMap[c.id];
+      return {
+        value: c.id,
+        label: `${c.name} (${c.tax_number})`,
+        _norm: normalize(`${c.name} ${c.tax_number}`),
+        _usage: Number(customerUsage[String(c?.id)] || 0),
+        _overdueLevel: overdueLevel || null,
+      };
+    });
+
+  const formatCustomerOption = (opt) => {
+    if (!opt?._overdueLevel) return <span>{opt.label}</span>;
+    if (opt._overdueLevel === 'post_reminder_1') {
+      return <span style={{ background: '#1a1a1a', color: '#e53935', padding: '1px 4px', borderRadius: 2 }}>{opt.label}</span>;
+    }
+    return <span style={{ color: '#e53935' }}>{opt.label}</span>;
+  };
 
   const companyOptions = (companies?.results || []).map(c => ({ value: c.id, label: c.name }));
   const blockOptions = (invoiceBlocks?.results || []).map(b => ({ value: b.id, label: `${b.name} (${b.prefix})` }));
@@ -4480,6 +4503,7 @@ const InvoiceForm = () => {
                           if (!term) return true;
                           return option.data._norm.includes(term);
                         }}
+                        formatOptionLabel={formatCustomerOption}
                         styles={{ container: (base) => ({ ...base, zIndex: 10 }) }}
                         isDisabled={isReadOnly}
                       />
@@ -5192,7 +5216,12 @@ const InvoiceForm = () => {
                         <td>{row?.date || '-'}</td>
                         <td>{Number(row?.amount || 0).toLocaleString('hu-HU', { minimumFractionDigits: 2 })} {row?.currency || currency}</td>
                         <td>{row?.bank_account_number || '-'}</td>
-                        <td>{row?.source_label || (row?.source_type === 'cash' ? 'Készpénz' : '-')}</td>
+                        <td>
+                          {row?.source_type === 'bank_statement' && row?.source_id
+                            ? <a href={`/bank-statements/${row.source_id}/edit`} target="_blank" rel="noopener noreferrer" style={{ color: '#2980b9', textDecoration: 'underline', cursor: 'pointer' }}>{row?.source_label || '-'}</a>
+                            : (row?.source_label || (row?.source_type === 'cash' ? 'Készpénz' : '-'))
+                          }
+                        </td>
                       </tr>
                     ))
                   ) : (
@@ -5202,6 +5231,35 @@ const InvoiceForm = () => {
                   )}
                 </tbody>
               </VatTable>
+
+              {/* Behajtási napló */}
+              {(Array.isArray(invoice?.arrears_log) && invoice.arrears_log.length > 0) && (
+                <>
+                  <SectionTitle style={{ marginTop: 16 }}>Behajtási napló</SectionTitle>
+                  <VatTable>
+                    <thead>
+                      <tr>
+                        <th>Dátum / Időpont</th>
+                        <th>Értesítő típusa</th>
+                        <th>E-mail kiküldve</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {invoice.arrears_log.map((entry, idx) => {
+                        const ts = entry?.timestamp ? new Date(entry.timestamp) : null;
+                        const dateStr = ts ? ts.toLocaleString('hu-HU', { dateStyle: 'short', timeStyle: 'short' }) : '-';
+                        return (
+                          <tr key={`arrears-log-${idx}`}>
+                            <td>{dateStr}</td>
+                            <td>{entry?.status_label || entry?.status || '-'}</td>
+                            <td>{entry?.email_sent ? '✓ Igen' : '—'}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </VatTable>
+                </>
+              )}
             </>
           ); })()}
         </SummarySection>

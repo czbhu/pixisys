@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useClipboardImagePaste } from '../../hooks/useClipboardImagePaste';
 import EnhancedTable from '../../components/EnhancedTable';
+import '../Sales/RFQs.css';
 import {
     Card,
     Button,
@@ -52,6 +53,7 @@ import api from '../../services/api';
 import { settingsService } from '../../services/settingsService';
 import { formatBytes } from '../../utils/fileUtils';
 import { isPdf, openPdfPreview } from '../../utils/pdfPreview';
+import { useNewRowTracker, newDotColumn } from '../../hooks/useNewRowTracker';
 
 const ORDER_ITEM_STATUS_COLORS: Record<string, string> = {
     new: 'default',
@@ -82,7 +84,14 @@ interface OrderedManufacturingItem {
     order_status: string;
     status: string;
     customer_name: string;
-    manufacturing_product_id: number;
+    company_name?: string | null;
+    contact_names?: string | null;
+    is_private?: boolean;
+    manufacturing_product_id: number | null;
+    is_direct?: boolean;
+    rfq_id?: number | null;
+    rfq_item_id?: number | null;
+    cost_items_data?: any[];
     name: string;
     code: string;
     description: string;
@@ -258,6 +267,7 @@ const OrderedProducts: React.FC = () => {
             setLoading(true);
             const data = await salesService.getOrderedManufacturingItems();
             setItems(data);
+            loadNewOPIds(data.map((r: any) => r.id).filter(Boolean));
         } catch (err) {
             console.error('Error loading ordered manufacturing items:', err);
             message.error('Hiba történt a megrendelt gyártások betöltése során');
@@ -392,27 +402,29 @@ const OrderedProducts: React.FC = () => {
             const costItemIds: number[] = [];
 
             for (const orderedItem of selectedItems) {
-                let product = productCache.get(orderedItem.manufacturing_product_id);
+                if (!orderedItem.manufacturing_product_id) continue;
+                const mpId: number = orderedItem.manufacturing_product_id;
+                let product = productCache.get(mpId);
                 if (!product) {
-                    product = await manufacturingService.getProduct(orderedItem.manufacturing_product_id);
-                    productCache.set(orderedItem.manufacturing_product_id, product);
+                    product = await manufacturingService.getProduct(mpId);
+                    productCache.set(mpId, product);
                 }
 
                 const productCostItems = Array.isArray(product?.cost_items) ? product.cost_items : [];
-                if (!productAttachmentsMap.has(orderedItem.manufacturing_product_id)) {
-                    let atts = attachmentsByProduct[orderedItem.manufacturing_product_id];
+                if (!productAttachmentsMap.has(mpId)) {
+                    let atts = attachmentsByProduct[mpId];
                     if (atts === undefined) {
                         try {
-                            atts = await manufacturingService.getProductAttachments(orderedItem.manufacturing_product_id);
+                            atts = await manufacturingService.getProductAttachments(mpId);
                             setAttachmentsByProduct((prev) => ({
                                 ...prev,
-                                [orderedItem.manufacturing_product_id]: Array.isArray(atts) ? atts : [],
+                                [mpId]: Array.isArray(atts) ? atts : [],
                             }));
                         } catch {
                             atts = [];
                         }
                     }
-                    productAttachmentsMap.set(orderedItem.manufacturing_product_id, Array.isArray(atts) ? atts : []);
+                    productAttachmentsMap.set(mpId, Array.isArray(atts) ? atts : []);
                 }
                 productCostItems.forEach((ci: any) => {
                     const ciId = Number(ci?.id || 0);
@@ -511,6 +523,7 @@ const OrderedProducts: React.FC = () => {
                 }>();
 
                 orderRows.forEach((oi) => {
+                    if (!oi.manufacturing_product_id) return;
                     const atts = productAttachmentsMap.get(oi.manufacturing_product_id)
                         || attachmentsByProduct[oi.manufacturing_product_id]
                         || [];
@@ -751,8 +764,8 @@ const OrderedProducts: React.FC = () => {
     const expandedRowRender = (record: OrderedManufacturingItem) => {
         const productId = record.manufacturing_product_id;
         const coiId = record.id;
-        const attachments = attachmentsByProduct[productId] || [];
-        const loadingAtt = !!attachmentsLoading[productId];
+        const attachments = productId ? (attachmentsByProduct[productId] || []) : [];
+        const loadingAtt = productId ? !!attachmentsLoading[productId] : false;
         const itemAtts: any[] = orderItemAtts[coiId] || [];
         const itemAttsLoaded = !!orderItemAttsLoaded[coiId];
         const itemAttUploading = (orderItemAttUploading[coiId] || 0) > 0;
@@ -760,15 +773,34 @@ const OrderedProducts: React.FC = () => {
 
         return (
             <div style={{ padding: '8px 0 8px 32px' }}>
-                <ProductSubItemsTable productId={productId} showNotesAndAttachments showPrices={canViewPrices} />
-                <MaterialNeedsTree
-                    manufacturingProductId={productId}
-                    quantity={Number(record.quantity || 1)}
-                    sourceType="ordered_product"
-                    sourceId={Number(record.id || 0)}
-                    sourceNumber={record.order_number || String(record.id || '')}
-                    sourceItemName={record.name || ''}
-                />
+                {productId != null ? (
+                    <>
+                        <ProductSubItemsTable productId={productId} showNotesAndAttachments showPrices={canViewPrices} />
+                        <MaterialNeedsTree
+                            manufacturingProductId={productId}
+                            quantity={Number(record.quantity || 1)}
+                            sourceType="ordered_product"
+                            sourceId={Number(record.id || 0)}
+                            sourceNumber={record.order_number || String(record.id || '')}
+                            sourceItemName={record.name || ''}
+                        />
+                    </>
+                ) : (record.cost_items_data && record.cost_items_data.length > 0) ? (
+                    <ProductSubItemsTable
+                        productId={0}
+                        dataSource={record.cost_items_data}
+                        showNotesAndAttachments
+                        showPrices={canViewPrices}
+                        qriId={record.rfq_item_id ?? undefined}
+                        onPersistAll={async (updatedItems) => {
+                            if (!record.rfq_item_id) return;
+                            await salesService.updateQuoteRequestItem(record.rfq_item_id, { cost_items_data: updatedItems });
+                            setItems(prev => prev.map(it =>
+                                it.id === record.id ? { ...it, cost_items_data: updatedItems } : it
+                            ));
+                        }}
+                    />
+                ) : null}
 
                 {/* Order-item level attachments */}
                 <div style={{ marginTop: 14, maxWidth: 700 }}>
@@ -1028,6 +1060,8 @@ const OrderedProducts: React.FC = () => {
         }
     };
 
+    const { newIds: newOPIds, markSeen: markOPSeen, loadNewIds: loadNewOPIds } = useNewRowTracker('/manufacturing/ordered-products');
+
     const columns = [
         {
             title: '',
@@ -1035,6 +1069,7 @@ const OrderedProducts: React.FC = () => {
             width: 32,
             render: () => <CostDragHandle />,
         },
+        newDotColumn(newOPIds),
         {
             title: 'Megrendelés',
             dataIndex: 'order_number',
@@ -1104,8 +1139,27 @@ const OrderedProducts: React.FC = () => {
             key: 'customer_name',
             width: 160,
             ellipsis: true,
-            sorter: (a: OrderedManufacturingItem, b: OrderedManufacturingItem) =>
-                a.customer_name.localeCompare(b.customer_name),
+            sorter: (a: OrderedManufacturingItem, b: OrderedManufacturingItem) => {
+                const aName = a.is_private ? (a.contact_names || '') : (a.company_name || a.customer_name || '');
+                const bName = b.is_private ? (b.contact_names || '') : (b.company_name || b.customer_name || '');
+                return aName.localeCompare(bName, 'hu');
+            },
+            render: (_: any, r: OrderedManufacturingItem): React.ReactNode => {
+                const primaryName = r.is_private
+                    ? (r.contact_names || r.customer_name || 'Magánszemély')
+                    : (r.company_name || r.customer_name || '—');
+                const secondaryName = r.is_private ? null : r.contact_names;
+                const tooltipText = [primaryName, secondaryName].filter(Boolean).join(' – ');
+                return (
+                    <Tooltip title={tooltipText}>
+                        <div>
+                            <div style={{ fontWeight: 'bold', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as const, overflow: 'hidden' }}>{primaryName}</div>
+                            {r.is_private && <div style={{ fontSize: 10, color: '#aaa', lineHeight: '14px' }}>Magánszemély</div>}
+                            {secondaryName && <div style={{ fontSize: 11, color: '#666', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{secondaryName}</div>}
+                        </div>
+                    </Tooltip>
+                );
+            },
         },
         {
             title: 'Cikkszám',
@@ -1209,11 +1263,17 @@ const OrderedProducts: React.FC = () => {
                             onClick={() => handlePrintWorksheet(record)}
                         />
                     </Tooltip>
-                    <Tooltip title="Gyártás megnyitása">
+                    <Tooltip title={record.manufacturing_product_id ? "Gyártás megnyitása" : "RFQ megnyitása"}>
                         <Button
                             icon={<EyeOutlined />}
                             size="small"
-                            onClick={() => navigate(`/manufacturing/products/${record.manufacturing_product_id}`)}
+                            onClick={() => {
+                                if (record.manufacturing_product_id) {
+                                    navigate(`/manufacturing/products/${record.manufacturing_product_id}`);
+                                } else if (record.rfq_id) {
+                                    navigate(`/sales/rfqs/${record.rfq_id}`);
+                                }
+                            }}
                         />
                     </Tooltip>
                 </Space>
@@ -1268,6 +1328,7 @@ const OrderedProducts: React.FC = () => {
                     searchValue={query}
                     onSearchChange={setQuery}
                     searchPlaceholder="Keresés megrendelés, ügyfél, termék szerint..."
+                    rowClassName={(r: any) => r.status && r.status !== 'new' ? `rfq-row-${r.status}` : ''}
                     columns={columns}
                     dataSource={filtered}
                     pagination={{
@@ -1302,7 +1363,13 @@ const OrderedProducts: React.FC = () => {
                         },
                     }}
                     onRow={(record: OrderedManufacturingItem) => ({
-                        onDoubleClick: () => navigate(`/manufacturing/products/${record.manufacturing_product_id}`),
+                        onDoubleClick: () => {
+                            if (record.manufacturing_product_id) {
+                                navigate(`/manufacturing/products/${record.manufacturing_product_id}`);
+                            } else if (record.rfq_id) {
+                                navigate(`/sales/rfqs/${record.rfq_id}`);
+                            }
+                        },
                         style: { cursor: 'pointer' },
                     })}
                 />

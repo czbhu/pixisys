@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Modal, Row, Col, Button, Radio, InputNumber, Input, Table, Space, Typography, Alert, Tag, Tooltip, Select, Popconfirm, message, Segmented, Switch } from 'antd';
-import { PlusOutlined, DeleteOutlined, AppstoreOutlined, SaveOutlined, CopyOutlined, FileAddOutlined, EditOutlined, FolderOpenOutlined } from '@ant-design/icons';
+import { PlusOutlined, DeleteOutlined, AppstoreOutlined, SaveOutlined, CopyOutlined, FileAddOutlined, EditOutlined, FolderOpenOutlined, FileTextOutlined, LockOutlined } from '@ant-design/icons';
 import api from '../../services/api';
 
 const { Text } = Typography;
@@ -36,6 +36,15 @@ const pieceStrokes = ['#1677ff', '#52c41a', '#fa8c16', '#eb2f96', '#722ed1', '#1
 const colorForProduct = (productId: number) => {
   const idx = Math.abs(productId) % pieceColors.length;
   return { fill: pieceColors[idx], stroke: pieceStrokes[idx] };
+};
+
+const toPlainText = (value?: string): string => {
+  if (!value) return '';
+  return value
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 };
 
 // ── Tekercses ───────────────────────────────────────────
@@ -308,9 +317,15 @@ interface Props {
   onSaveToItem?: (snapshot: any) => void | Promise<void>;
   /** Tétel megnevezése a fejléchez. */
   itemContextLabel?: string;
+  /** Külső leírás (tooltipben jelenik meg a fejlécnél). */
+  itemDescription?: string;
+  /** Belső leírás (tooltipben jelenik meg a fejlécnél). */
+  itemInternalDescription?: string;
+  /** RFQ-szintű impozíció mentés callback. Ha meg van adva, megjelenik a "Mentés az ajánlathoz" gomb. */
+  onSaveToRfq?: (snapshot: any, autoName: string) => void | Promise<void>;
 }
 
-const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductWidth, initialProductHeight, initialProductQty, initialPresetId, initialItemData, onSaveToItem, itemContextLabel }) => {
+const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductWidth, initialProductHeight, initialProductQty, initialPresetId, initialItemData, onSaveToItem, itemContextLabel, itemDescription, itemInternalDescription, onSaveToRfq }) => {
   const [mode, setMode] = useState<Mode>('ives');
   const [bleed, setBleed] = useState<number>(3);
   const [products, setProducts] = useState<ProductRow[]>([
@@ -580,6 +595,39 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
     kerf, barProducts, bars,
     rollGap, rollProducts, rolls,
   });
+
+  /** Generate a human-readable name for the current imposition state. */
+  const autoImpositionName = (): string => {
+    try {
+      if (mode === 'ives') {
+        const prodParts = products.map(p =>
+          `${p.name} (${p.width}\u00d7${p.height}) - ${p.quantity} db`
+        ).join(', ');
+        const sheetParts = sheets.map(s => {
+          const usedLabel = s.available != null ? String(s.available) : '\u221e';
+          return `${s.name}: - / ${usedLabel} ív`;
+        }).join(', ');
+        return sheetParts ? `${prodParts} - ${sheetParts}` : prodParts;
+      }
+      if (mode === 'tekerces') {
+        const prodParts = rollProducts.map(p =>
+          `${p.name} (${p.width}\u00d7${p.length}) - ${p.quantity} db`
+        ).join(', ');
+        const rollParts = rolls.map(r => {
+          const usedLabel = r.availableLength != null ? String(r.availableLength) : '\u221e';
+          return `${r.name}: - / ${usedLabel} fm`;
+        }).join(', ');
+        return rollParts ? `${prodParts} - ${rollParts}` : prodParts;
+      }
+      if (mode === 'szalanyag') {
+        const prodParts = barProducts.map(p =>
+          `${p.name} ${p.length}mm - ${p.quantity} db`
+        ).join(', ');
+        return prodParts || 'Szálak';
+      }
+    } catch {}
+    return `Impozíció ${new Date().toLocaleDateString('hu-HU')}`;
+  };
 
   const newPreset = () => {
     setActivePresetId(null);
@@ -1425,6 +1473,24 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
         />
       </div>
 
+      {/* Tekercs felhasználás */}
+      <div style={{ marginTop: 12, padding: 12, background: '#fafafa', borderRadius: 8, border: '1px solid #f0f0f0' }}>
+        <Text strong style={{ display: 'block', marginBottom: 6 }}>Tekercs felhasználás</Text>
+        <Space wrap>
+          {rolls.map(r => {
+            const usedMm = mixedRolls.rollUsage.get(r.id) || 0;
+            const usedM = usedMm / 1000;
+            const limit = r.availableLength;
+            const over = limit !== null && usedM > limit;
+            return (
+              <Tag key={r.id} color={over ? 'red' : usedMm > 0 ? 'blue' : 'default'}>
+                {r.name}: {usedM.toFixed(2)} {limit !== null ? `/ ${limit}` : '/ ∞'} fm
+              </Tag>
+            );
+          })}
+        </Space>
+      </div>
+
       {/* Vizuális tekercs (vegyes) */}
       {mixedRolls.rolls.length > 0 && (
         <div style={{ marginTop: 12, padding: 12, background: '#fff7e6', borderRadius: 8, border: '1px solid #ffe7ba' }}>
@@ -1459,7 +1525,7 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
                         const c = colorForProduct(pl.productId);
                         return (
                           <rect key={ci} x={pl.x} y={pl.y} width={pl.pw} height={pl.ph}
-                            fill={c.fill} stroke={c.stroke} strokeWidth={0.5} />
+                            fill={c.fill} stroke="#1f1f1f" strokeOpacity={0.9} strokeWidth={1.4} />
                         );
                       })}
                     </svg>
@@ -1481,24 +1547,6 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
         </div>
       )}
 
-      {/* Tekercs felhasználás */}
-      <div style={{ marginTop: 12, padding: 12, background: '#fafafa', borderRadius: 8, border: '1px solid #f0f0f0' }}>
-        <Text strong style={{ display: 'block', marginBottom: 6 }}>Tekercs felhasználás</Text>
-        <Space wrap>
-          {rolls.map(r => {
-            const usedMm = mixedRolls.rollUsage.get(r.id) || 0;
-            const usedM = usedMm / 1000;
-            const limit = r.availableLength;
-            const over = limit !== null && usedM > limit;
-            return (
-              <Tag key={r.id} color={over ? 'red' : usedMm > 0 ? 'blue' : 'default'}>
-                {r.name}: {usedM.toFixed(2)} {limit !== null ? `/ ${limit}` : '/ ∞'} fm
-              </Tag>
-            );
-          })}
-        </Space>
-      </div>
-
       {Array.from(mixedRolls.shortageByProduct.values()).some(v => v > 0) && (
         <Alert
           style={{ marginTop: 12 }}
@@ -1515,7 +1563,7 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
 
   return (
     <Modal
-      title={<span><AppstoreOutlined style={{ marginRight: 8 }} />Impozíció – Produkciózás (segédlet){itemContextLabel ? <Text type="secondary" style={{ marginLeft: 8, fontWeight: 400 }}>– {itemContextLabel}</Text> : null}</span>}
+      title={<span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><AppstoreOutlined style={{ marginRight: 8 }} />Impozíció – Produkciózás (segédlet){itemContextLabel ? <Text type="secondary" style={{ marginLeft: 4, fontWeight: 400 }}>– {itemContextLabel}</Text> : null}<Tooltip title={<span style={{ whiteSpace: 'pre-wrap' }}>{toPlainText(itemDescription) || 'Nincs külső leírás megadva.'}</span>} placement="bottom"><FileTextOutlined style={{ color: '#1677ff', cursor: 'pointer', fontSize: 15 }} /></Tooltip><Tooltip title={<span style={{ whiteSpace: 'pre-wrap' }}>{toPlainText(itemInternalDescription) || 'Nincs belső leírás megadva.'}</span>} placement="bottom"><LockOutlined style={{ color: '#fa8c16', cursor: 'pointer', fontSize: 15 }} /></Tooltip></span>}
       open={open}
       onCancel={onClose}
       onOk={onClose}
@@ -1543,6 +1591,30 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
             }}
           >
             Mentés a tételhez
+          </Button>
+        </div>
+      )}
+      {/* ── RFQ-szintű mentés sáv ─────────────────────────────────────── */}
+      {onSaveToRfq && (
+        <div style={{ marginBottom: 8, padding: 8, background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 8, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <Text strong>Ajánlathoz mentés:</Text>
+          <Text type="secondary" style={{ flex: 1 }}>Az impozíciót az ajánlat szintjén tárolja – minden tételnél elérhető.</Text>
+          <Button
+            type="primary"
+            style={{ background: '#52c41a', borderColor: '#52c41a' }}
+            icon={<SaveOutlined />}
+            onClick={async () => {
+              try {
+                const name = autoImpositionName();
+                await onSaveToRfq(presetSnapshot(), name);
+                message.success('Mentve az ajánlathoz');
+                onClose();
+              } catch {
+                message.error('Mentés sikertelen');
+              }
+            }}
+          >
+            Mentés az ajánlathoz
           </Button>
         </div>
       )}
@@ -1854,7 +1926,7 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
                           const c = colorForProduct(pl.productId);
                           return (
                             <rect key={ci} x={pl.x} y={pl.y} width={pl.pw} height={pl.ph}
-                              fill={c.fill} stroke={c.stroke} strokeWidth={0.5} />
+                              fill={c.fill} stroke="#1f1f1f" strokeOpacity={0.9} strokeWidth={1.4} />
                           );
                         })}
                       </svg>

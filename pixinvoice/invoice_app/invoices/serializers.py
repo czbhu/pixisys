@@ -1020,7 +1020,8 @@ class ProformaSerializer(serializers.ModelSerializer):
             'id', 'proforma_number', 'company', 'customer', 'items',
             'issue_date', 'due_date', 'delivery_date', 'currency', 'payment_method', 'notes',
             'created_by', 'created_at', 'updated_at',
-            'total_net_amount', 'total_vat_amount', 'total_gross_amount'
+            'total_net_amount', 'total_vat_amount', 'total_gross_amount',
+            'status', 'payment_date', 'amount_paid',
         ]
 
     def get_company(self, obj):
@@ -1203,7 +1204,8 @@ class InvoiceSerializer(serializers.ModelSerializer):
             'status', 'nav_transaction_id', 'invoice_block',
             'nav_submission_date', 'nav_response', 'notes', 'created_by',
             'created_at', 'updated_at', 'total_net_amount', 'total_vat_amount',
-            'total_gross_amount', 'amount_paid', 'print_snapshot', 'advances_used', 'settlement_details', 'erp_order_ids'
+            'total_gross_amount', 'amount_paid', 'print_snapshot', 'advances_used',
+            'settlement_details', 'erp_order_ids', 'arrears_status', 'arrears_log',
         ]
 
     def create(self, validated_data):
@@ -1270,6 +1272,7 @@ class InvoiceSerializer(serializers.ModelSerializer):
                     'bank_account_number': account_no,
                     'source_label': getattr(statement, 'sequence_number', None) or '',
                     'source_type': 'bank_statement',
+                    'source_id': str(getattr(statement, 'id', None) or ''),
                 })
 
             # Cash-style fallback: if invoice has paid amount not covered by bank statement links,

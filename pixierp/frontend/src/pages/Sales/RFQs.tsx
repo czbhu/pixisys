@@ -9,6 +9,7 @@ import 'react-quill/dist/quill.snow.css';
 import type { UploadFile } from 'antd/es/upload/interface';
 import { PlusOutlined, EyeOutlined, SendOutlined, MailOutlined, EditOutlined, SearchOutlined, CopyOutlined, PlusCircleOutlined, ExclamationCircleOutlined, FileTextOutlined, DeleteOutlined, FilterOutlined, CameraOutlined, PictureOutlined, UploadOutlined, PaperClipOutlined, LeftOutlined, RightOutlined, ShoppingCartOutlined, HistoryOutlined, WarningOutlined, PrinterOutlined, UserSwitchOutlined, FolderAddOutlined, RocketOutlined, CarOutlined } from '@ant-design/icons';
 import { isPdf, openPdfPreview } from '../../utils/pdfPreview';
+import { useNewRowTracker, newDotColumn } from '../../hooks/useNewRowTracker';
 import { useNavigate, useSearchParams } from 'react-router-dom'; // Add useSearchParams
 import './RFQs.css';
 import { salesService } from '../../services/salesService';
@@ -19,6 +20,7 @@ import { warehouseService } from '../../services/warehouseService';
 import { useAuth } from '../../contexts/AuthContext';
 import dayjs from 'dayjs';
 import { ItemSelectorModal, SelectedItemPayload } from '../../components/Sales/ItemSelectorModal';
+import ImpositionHelperModal from '../../components/Sales/ImpositionHelperModal';
 import { ItemsTable } from '../../components/Sales/ItemsTable';
 import { RFQCostsTable } from '../../components/Sales/RFQCostsTable';
 
@@ -89,6 +91,16 @@ const RFQs: React.FC = () => {
   const [mfgProductReloadTriggers, setMfgProductReloadTriggers] = useState<Record<number, number>>({});
   const [filtered, setFiltered] = useState<any[]>([]);
   const [companies, setCompanies] = useState<any[]>([]);
+  const [overdueCompanyMap, setOverdueCompanyMap] = useState<Record<string, string>>({});
+  useEffect(() => {
+    crmService.getOverdueCustomerFlags().then((flags) => {
+      const map: Record<string, string> = {};
+      (Array.isArray(flags) ? flags : (flags as any)?.results || []).forEach((f: any) => {
+        if (f?.customer_id) map[String(f.customer_id)] = f.level;
+      });
+      setOverdueCompanyMap(map);
+    }).catch((e) => { console.warn('overdue flags error', e); });
+  }, []);
   const [contacts, setContacts] = useState<any[]>([]);
   const [projects, setProjects] = useState<any[]>([]);
   const [createOpen, setCreateOpen] = useState(false);
@@ -117,6 +129,9 @@ const RFQs: React.FC = () => {
   const [selectorType, setSelectorType] = useState<'product' | 'manufacturing' | 'service'>('product');
   const [newItems, setNewItems] = useState<any[]>([]);
   const [newCosts, setNewCosts] = useState<any[]>([]);
+  const [rfqImpositionPresets, setRfqImpositionPresets] = useState<any[]>([]);
+  const [rfqImpositionModalOpen, setRfqImpositionModalOpen] = useState(false);
+  const [rfqImpositionEditIdx, setRfqImpositionEditIdx] = useState<number | null>(null);
   const [editIdx, setEditIdx] = useState<number | null>(null);
   const [currency, setCurrency] = useState<string>('HUF');
   const [currencyList, setCurrencyList] = useState<MCurrency[]>([]);
@@ -179,6 +194,12 @@ const RFQs: React.FC = () => {
   });
   const [creatorFilter, setCreatorFilter] = useState<string | null>(() => {
     try { return localStorage.getItem('rfqs_creator_filter') || null; } catch { return null; }
+  });
+  const [projectFilter, setProjectFilter] = useState<number | null>(() => {
+    try {
+      const p = new URLSearchParams(window.location.search).get('project');
+      return p && !isNaN(Number(p)) ? Number(p) : null;
+    } catch { return null; }
   });
   const [partialOrderAllowed, setPartialOrderAllowed] = useState<boolean>(true);
   const [csvMode, setCsvMode] = useState(false);
@@ -648,7 +669,7 @@ const RFQs: React.FC = () => {
       'Belső leírás': stripHtml(r.manufacturing_product_internal_description ?? ''),
       'Megjegyzés': stripHtml(r.description ?? ''),
       'Ügyfél': r.company_name ?? '',
-      'Nettó összeg': (Number(r.quantity || 0) * Number(r.net_unit_price || 0)).toFixed(2),
+      'Nettó összeg': (Number(r.discounted_net_total || r.net_total || (Number(r.quantity || 0) * Number(r.net_unit_price || r.manufacturing_product_net_unit_price || 0)))).toFixed(2),
       'Státusz': r.status ?? '',
     }));
     if (!rows.length) { message.warning('Nincs exportálható adat.'); return; }
@@ -795,14 +816,19 @@ const RFQs: React.FC = () => {
     if (creatorFilter) {
       filtered = filtered.filter(r => r.created_by_name === creatorFilter);
     }
-    
+
+    // Project filter
+    if (projectFilter) {
+      filtered = filtered.filter(r => r.project === projectFilter || r.project_id === projectFilter);
+    }
+
     // Text search
     if (query?.trim()) {
       filtered = filtered.filter((rfq) => deepSearchMatch(query, rfq));
     }
     
     setFiltered(filtered);
-  }, [query, rfqs, statusFilter, creatorFilter, orderStatusFilter]);
+  }, [query, rfqs, statusFilter, creatorFilter, orderStatusFilter, projectFilter]);
 
   const RFQ_STATUS_META: Record<string, { color: string; text: string }> = {
     new: { color: 'blue', text: 'Új' },
@@ -1104,6 +1130,10 @@ const RFQs: React.FC = () => {
     return res;
   }, [filtered, statusFilter, costStatusOverrides]);
 
+  // Load new IDs from backend whenever displayed items change
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { loadNewRfqIds(flattenedItems.map((r: any) => r.id).filter(Boolean)); }, [flattenedItems]);
+
   const renderExpandedItemRow = (r: any) => {
     const subItems: any[] = r.sub_items || [];
     const isMfg = r.item_type === 'manufacturing' && r.manufacturing_product;
@@ -1271,7 +1301,10 @@ const RFQs: React.FC = () => {
     );
   };
 
+  const { newIds: newRfqIds, markSeen: markRfqSeen, loadNewIds: loadNewRfqIds } = useNewRowTracker('/sales/rfqs');
+
   const itemsColumns = useMemo((): ColumnsType<any> => ([
+    newDotColumn(newRfqIds),
     {
       title: 'Dátum', key: 'issue_date', width: 100,
       sorter: (a: any, b: any) => (a.issue_date || '').localeCompare(b.issue_date || ''),
@@ -1281,7 +1314,7 @@ const RFQs: React.FC = () => {
       title: 'Ajánlat szám', key: 'rfq_number', width: 140,
       sorter: (a: any, b: any) => (a.rfq_number || '').localeCompare(b.rfq_number || ''),
       render: (_: any, r: any) => (
-        <a style={{ color: '#1677ff', fontWeight: 500, cursor: 'pointer' }} onClick={() => navigate(`/sales/rfqs/${r.rfq_id}?editItemId=${r.id}`)}>
+        <a href={`/sales/rfqs/${r.rfq_id}`} target="_blank" rel="noopener noreferrer" style={{ color: '#1677ff', fontWeight: 500 }}>
           {r.rfq_number}
         </a>
       ),
@@ -1305,10 +1338,11 @@ const RFQs: React.FC = () => {
     },
     {
       title: 'Nettó egység ár', key: 'net_unit_price', width: 130, align: 'right' as const,
-      sorter: (a: any, b: any) => Number(a.net_unit_price || 0) - Number(b.net_unit_price || 0),
-      render: (_: any, r: any) => r.net_unit_price
-        ? `${Number(r.net_unit_price).toLocaleString('hu-HU', { maximumFractionDigits: 2 })} ${r.currency_symbol || 'Ft'}`
-        : '—',
+      sorter: (a: any, b: any) => Number(a.net_unit_price || a.manufacturing_product_net_unit_price || 0) - Number(b.net_unit_price || b.manufacturing_product_net_unit_price || 0),
+      render: (_: any, r: any) => {
+        const p = Number(r.net_unit_price || r.manufacturing_product_net_unit_price || 0);
+        return p ? `${p.toLocaleString('hu-HU', { maximumFractionDigits: 2 })} ${r.currency_symbol || 'Ft'}` : '—';
+      },
     },
     {
       title: 'Leírás', dataIndex: 'description', key: 'description', width: 200, ellipsis: false,
@@ -1364,9 +1398,14 @@ const RFQs: React.FC = () => {
     },
     {
       title: 'Nettó összesen', key: 'item_total', width: 130, align: 'right' as const,
-      sorter: (a: any, b: any) => Number(a.discounted_net_total || a.net_total || 0) - Number(b.discounted_net_total || b.net_total || 0),
+      sorter: (a: any, b: any) => {
+        const effA = Number(a.discounted_net_total || a.net_total || (Number(a.quantity || 0) * Number(a.net_unit_price || a.manufacturing_product_net_unit_price || 0)));
+        const effB = Number(b.discounted_net_total || b.net_total || (Number(b.quantity || 0) * Number(b.net_unit_price || b.manufacturing_product_net_unit_price || 0)));
+        return effA - effB;
+      },
       render: (_: any, r: any) => {
-        const total = Number(r.discounted_net_total || r.net_total || (Number(r.quantity || 0) * Number(r.net_unit_price || 0)));
+        const effPrice = Number(r.net_unit_price || r.manufacturing_product_net_unit_price || 0);
+        const total = Number(r.discounted_net_total || r.net_total || (Number(r.quantity || 0) * effPrice));
         return `${total.toLocaleString('hu-HU')} ${r.currency_symbol || 'Ft'}`;
       },
     },
@@ -1380,7 +1419,7 @@ const RFQs: React.FC = () => {
       render: (_: any, r: any) => (
         <Space size="small" wrap>
           <Tooltip title="Megnyitás">
-            <Button icon={<EditOutlined style={{ color: '#595959' }} />} size="small" style={{ background: '#f5f5f5', borderColor: '#d9d9d9' }} onClick={() => window.open(`/sales/rfqs/${r.rfq_id}?editItemId=${r.id}`, '_blank')} />
+            <Button icon={<EditOutlined style={{ color: '#595959' }} />} size="small" style={{ background: '#f5f5f5', borderColor: '#d9d9d9' }} onClick={() => window.open(`/sales/rfqs/${r.rfq_id}`, '_blank')} />
           </Tooltip>
           {(() => {
             const ORDERED_ABOVE = ['ordered', 'partially_ordered', 'confirmed', 'in_production', 'ready', 'in_delivery', 'delivered', 'invoiced'];
@@ -1408,7 +1447,7 @@ const RFQs: React.FC = () => {
         </Space>
       ),
     },
-  ]), [navigate, loadData, setSendOpenId, createOrderLoading]);
+]), [navigate, loadData, setSendOpenId, createOrderLoading, newRfqIds]);
 
   const handleCreate = async () => {
     try {
@@ -1430,6 +1469,7 @@ const RFQs: React.FC = () => {
         currency_code: currency,
         project_id: values.project_id ?? null,
         internal_description: values.internal_description || '',
+        imposition_presets: rfqImpositionPresets,
       };
       if (values.company_id === 'private') {
         baseUpdateData.company_id = null;
@@ -1463,6 +1503,7 @@ const RFQs: React.FC = () => {
                 vat_rate: it.vat_rate || 27,
                 discount_percent: (it as any).discount_percent || 0,
                 discount_amount: (it as any).discount_amount || 0,
+                cost_items: _cs && _cs.length > 0 ? _cs : [],
               });
               if (createdItem?.id && it.files?.length) {
                 for (const f of it.files) {
@@ -1616,6 +1657,7 @@ const RFQs: React.FC = () => {
       setNewItems([]);
       setNewCosts([]);
       setRfqFiles([]);
+      setRfqImpositionPresets([]);
       setRfqFileRemarks({});
       setRfqFileDisplayNames({});
 
@@ -1927,6 +1969,7 @@ const RFQs: React.FC = () => {
     setNewItems([]);
     setNewCosts([]);
     setRfqFiles([]);
+    setRfqImpositionPresets([]);
     setRfqFileRemarks({});
     setRfqFileDisplayNames({});
     clearDraft();
@@ -2851,8 +2894,19 @@ const RFQs: React.FC = () => {
       }
       message.success(`${rfqIds.length} ajánlat munkalapjai összefűzve, nyomtatás indul.`);
     } catch (e: any) {
-      if (e?.response?.status === 404) {
-        message.warning('Egyetlen kijelölt ajánlathoz sem található nyomtatható munkalap.');
+      const status = e?.response?.status;
+      if (status === 404 || status === 400) {
+        let errMsg = 'Egyetlen kijelölt ajánlathoz sem található nyomtatható munkalap.';
+        try {
+          // blob responseType: need to read blob as text to get error message
+          const blob = e?.response?.data;
+          if (blob instanceof Blob) {
+            const text = await blob.text();
+            const parsed = JSON.parse(text);
+            if (parsed?.error) errMsg = parsed.error;
+          }
+        } catch {}
+        message.warning(errMsg);
       } else {
         message.error('Hiba a munkalapok letöltése során');
       }
@@ -2923,6 +2977,21 @@ const RFQs: React.FC = () => {
                       <Select.Option key={name} value={name}>{name}</Select.Option>
                     ))}
                   </Select>
+                  <Select
+                    className="rfqs-project-select"
+                    placeholder="Szűrés projektre"
+                    allowClear
+                    showSearch
+                    style={{ width: 200 }}
+                    value={projectFilter}
+                    onChange={(v) => setProjectFilter(v ?? null)}
+                    filterOption={(input, option) => {
+                      const text = String(option?.label || '');
+                      const norm = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+                      return norm(text).includes(norm(input));
+                    }}
+                    options={(projects || []).map((p: any) => ({ value: p.id, label: p.company_name ? `${p.company_name} – ${p.name}` : p.name }))}
+                  />
                 </>
               )}
               {/* Mobile: filter button */}
@@ -2930,10 +2999,10 @@ const RFQs: React.FC = () => {
                 <Button
                   icon={<FilterOutlined />}
                   onClick={() => setFilterDrawerOpen(true)}
-                  type={statusFilter.filter(s => s !== 'mind').length > 0 || creatorFilter ? 'primary' : 'default'}
+                  type={statusFilter.filter(s => s !== 'mind').length > 0 || creatorFilter || projectFilter ? 'primary' : 'default'}
                 >
-                  Szűrők{(statusFilter.filter(s => s !== 'mind').length + (creatorFilter ? 1 : 0)) > 0
-                    ? ` (${statusFilter.filter(s => s !== 'mind').length + (creatorFilter ? 1 : 0)})`
+                  Szűrők{(statusFilter.filter(s => s !== 'mind').length + (creatorFilter ? 1 : 0) + (projectFilter ? 1 : 0)) > 0
+                    ? ` (${statusFilter.filter(s => s !== 'mind').length + (creatorFilter ? 1 : 0) + (projectFilter ? 1 : 0)})`
                     : ''}
                 </Button>
               )}
@@ -2992,7 +3061,22 @@ const RFQs: React.FC = () => {
                       <Select.Option key={name} value={name}>{name}</Select.Option>
                     ))}
                   </Select>
-                  <Button block onClick={() => { setStatusFilter(['mind']); setCreatorFilter(null); }}>Szűrők törlése</Button>
+                  <Select
+                    className="rfqs-project-select"
+                    placeholder="Szűrés projektre"
+                    allowClear
+                    showSearch
+                    style={{ width: '100%' }}
+                    value={projectFilter}
+                    onChange={(v) => setProjectFilter(v ?? null)}
+                    filterOption={(input, option) => {
+                      const text = String(option?.label || '');
+                      const norm = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+                      return norm(text).includes(norm(input));
+                    }}
+                    options={(projects || []).map((p: any) => ({ value: p.id, label: p.company_name ? `${p.company_name} – ${p.name}` : p.name }))}
+                  />
+                  <Button block onClick={() => { setStatusFilter(['mind']); setCreatorFilter(null); setProjectFilter(null); }}>Szűrők törlése</Button>
                 </Space>
               </Drawer>
             </Space>
@@ -3008,7 +3092,7 @@ const RFQs: React.FC = () => {
               const totals: Record<string, number> = {};
               sel.forEach((item: any) => {
                 const cur = (item.currency_code || 'HUF').toUpperCase();
-                const net = Number(item.discounted_net_total || item.net_total || (Number(item.quantity || 0) * Number(item.net_unit_price || 0)));
+                const net = Number(item.discounted_net_total || item.net_total || (Number(item.quantity || 0) * Number(item.net_unit_price || item.manufacturing_product_net_unit_price || 0)));
                 totals[cur] = (totals[cur] || 0) + net;
               });
               const parts = Object.entries(totals).map(([cur, val]) =>
@@ -3075,6 +3159,7 @@ const RFQs: React.FC = () => {
           rowExpandable: (r: any) => (r.sub_items?.length > 0) || r.item_type === 'manufacturing',
           expandedRowRender: renderExpandedItemRow,
           onExpand: (expanded: boolean, record: any) => {
+            if (expanded) markRfqSeen(record);
             // ?light=1 esetén a tétel-csatolmányok nincsenek előtöltve — igény szerint töltjük be
             if (expanded && rfqItemAtts[record.id] === undefined) {
               salesService.getQuoteRequestItemAttachments(record.id)
@@ -3579,6 +3664,12 @@ const RFQs: React.FC = () => {
                     filterOption={accentInsensitiveLabelFilter}
                     placeholder="Válassz céget vagy magánszemélyt" 
                     style={{ width: 'calc(100% - 32px)' }}
+                    labelRender={(opt) => {
+                      const lvl = overdueCompanyMap[String(opt.value)];
+                      if (lvl === 'post_reminder_1') return <span style={{ background: '#1a1a1a', color: '#e53935', padding: '1px 4px', borderRadius: 2 }}>{opt.label}</span>;
+                      if (lvl === 'overdue_10') return <span style={{ color: '#e53935' }}>{opt.label}</span>;
+                      return <span>{opt.label}</span>;
+                    }}
                     onFocus={async () => {
                       // Frissítjük a cégek listáját amikor rákattintanak.
                       // Top 10 saját cég + többi
@@ -3651,9 +3742,11 @@ const RFQs: React.FC = () => {
                     }}
                   >
                     <Select.Option key="private" value="private" label="Magánszemély">Magánszemély</Select.Option>
-                    {companies.map((c: any) => (
-                      <Select.Option key={c.id} value={c.id} label={c.name}>{c.name}</Select.Option>
-                    ))}
+                    {companies.map((c: any) => {
+                      const lvl = overdueCompanyMap[String(c.id)];
+                      const style = lvl === 'post_reminder_1' ? { background: '#1a1a1a', color: '#e53935', padding: '1px 4px' } : lvl === 'overdue_10' ? { color: '#e53935' } : {};
+                      return <Select.Option key={c.id} value={c.id} label={c.name}><span style={style}>{c.name}</span></Select.Option>;
+                    })}
                   </Select>
                   </Form.Item>
                   <Tooltip title="Új cég hozzáadása">
@@ -3872,12 +3965,23 @@ const RFQs: React.FC = () => {
                     filterOption={accentInsensitiveLabelFilter}
                     placeholder="Válassz céget vagy magánszemélyt" 
                     style={{ width: 'calc(100% - 32px)' }}
+                    labelRender={(opt) => {
+                      const lvl = overdueCompanyMap[String(opt.value)];
+                      if (lvl === 'post_reminder_1') return <span style={{ background: '#1a1a1a', color: '#e53935', padding: '1px 4px', borderRadius: 2 }}>{opt.label}</span>;
+                      if (lvl === 'overdue_10') return <span style={{ color: '#e53935' }}>{opt.label}</span>;
+                      return <span>{opt.label}</span>;
+                    }}
                     onFocus={async () => {
                       try {
-                        const [list, topList] = await Promise.all([
+                        const [list, topList, flagsRaw] = await Promise.all([
                           crmService.getCompanies({ is_customer: true, compact: true }),
-                          salesService.getTopCompanies().catch(() => [])
+                          salesService.getTopCompanies().catch(() => []),
+                          crmService.getOverdueCustomerFlags().catch(() => []),
                         ]);
+                        const _fArr2 = Array.isArray(flagsRaw) ? flagsRaw : (flagsRaw as any)?.results || [];
+                        const _fMap2: Record<string, string> = {};
+                        _fArr2.forEach((f: any) => { if (f?.customer_id) _fMap2[String(f.customer_id)] = f.level; });
+                        setOverdueCompanyMap(_fMap2);
                         const all: any[] = list.results ?? list;
                         const top: any[] = Array.isArray(topList) ? topList : [];
                         const normalize = (value: any) => (value ?? '').toString().trim().toLowerCase();
@@ -3932,9 +4036,11 @@ const RFQs: React.FC = () => {
                     }}
                   >
                     <Select.Option key="private" value="private" label="Magánszemély">Magánszemély</Select.Option>
-                    {companies.map((c: any) => (
-                      <Select.Option key={c.id} value={c.id} label={c.name}>{c.name}</Select.Option>
-                    ))}
+                    {companies.map((c: any) => {
+                      const lvl = overdueCompanyMap[String(c.id)];
+                      const style = lvl === 'post_reminder_1' ? { background: '#1a1a1a', color: '#e53935', padding: '1px 4px' } : lvl === 'overdue_10' ? { color: '#e53935' } : {};
+                      return <Select.Option key={c.id} value={c.id} label={c.name}><span style={style}>{c.name}</span></Select.Option>;
+                    })}
                   </Select>
                   </Form.Item>
                   <Tooltip title="Új cég hozzáadása">
@@ -4200,7 +4306,16 @@ const RFQs: React.FC = () => {
             </Checkbox>
           </div>
           <Space wrap>
-            <Button type="primary" icon={<PlusOutlined />} onClick={() => { setEditIdx(null); setSelectorType('manufacturing'); setSelectorOpen(true); }}>Tétel hozzáadása</Button>
+            <Tooltip title={newItems.length >= 1 ? 'Minden tételből külön árajánlat készül — a mentés után adj hozzá további tételt egy új árajánlatban' : ''}>
+              <Button
+                type="primary"
+                icon={<PlusOutlined />}
+                onClick={() => { setEditIdx(null); setSelectorType('manufacturing'); setSelectorOpen(true); }}
+                disabled={newItems.length >= 1}
+              >
+                Tétel hozzáadása{newItems.length >= 1 ? ' (1 tétel / árajánlat)' : ''}
+              </Button>
+            </Tooltip>
             <Button icon={<HistoryOutlined />} onClick={openHistoryModal} title="Korábbi tételek betöltése">Korábbi tételek</Button>
             <Button
               onClick={() => {
@@ -4334,8 +4449,48 @@ const RFQs: React.FC = () => {
              />
           </div>
           </div>
+          {/* ── Impozíció presetek (ajánlat szintű) ─────────────────────── */}
+          {rfqImpositionPresets.length > 0 && (
+            <div style={{ background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 8, padding: '8px 14px 6px', marginBottom: 10 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: '#389e0d', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Impozíciók ({rfqImpositionPresets.length})</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {rfqImpositionPresets.map((p: any, idx: number) => (
+                  <div key={p.id || idx} style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#fff', border: '1px solid #d9f7be', borderRadius: 6, padding: '4px 10px', fontSize: 12 }}>
+                    <span style={{ flex: 1, color: '#333' }}>{p.name || `Impozíció ${idx + 1}`}</span>
+                    <Button size="small" type="text" icon={<EditOutlined />} title="Szerkesztés" onClick={() => {
+                      setRfqImpositionModalOpen(true);
+                      setRfqImpositionEditIdx(idx);
+                    }} style={{ padding: 0, height: 'auto' }} />
+                    <Button size="small" type="text" icon={<CopyOutlined />} title="Másolás" onClick={() => {
+                      const copy = { ...p, id: `imp_${Date.now()}`, name: `${p.name || 'Impozíció'} (másolat)` };
+                      setRfqImpositionPresets(prev => [...prev, copy]);
+                    }} style={{ padding: 0, height: 'auto' }} />
+                    <Button size="small" type="text" danger icon={<DeleteOutlined />} title="Törlés" onClick={() => {
+                      setRfqImpositionPresets(prev => prev.filter((_, i) => i !== idx));
+                    }} style={{ padding: 0, height: 'auto' }} />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </Form>
       </Modal>
+
+      {/* ── RFQ-szintű ImpositionHelperModal ────────────────────────────── */}
+      <ImpositionHelperModal
+        open={rfqImpositionModalOpen}
+        onClose={() => { setRfqImpositionModalOpen(false); setRfqImpositionEditIdx(null); }}
+        initialItemData={rfqImpositionEditIdx !== null ? rfqImpositionPresets[rfqImpositionEditIdx] : null}
+        onSaveToRfq={(snapshot, autoName) => {
+          const id = `imp_${Date.now()}`;
+          if (rfqImpositionEditIdx !== null) {
+            setRfqImpositionPresets(prev => prev.map((p, i) => i === rfqImpositionEditIdx ? { ...p, ...snapshot, name: autoName } : p));
+          } else {
+            setRfqImpositionPresets(prev => [...prev, { id, name: autoName, ...snapshot }]);
+          }
+          setRfqImpositionEditIdx(null);
+        }}
+      />
 
       <Modal
         title={previewTitle}
@@ -4409,6 +4564,10 @@ const RFQs: React.FC = () => {
         })()}
         rfqCurrency={currency}
         hideCodeField
+        onImpositionSaveToRfq={(snapshot, autoName) => {
+          const id = `imp_${Date.now()}`;
+          setRfqImpositionPresets(prev => [...prev, { id, name: autoName, ...snapshot }]);
+        }}
         onCancel={() => { setSelectorOpen(false); setEditIdx(null); }}
         onAdd={(p: SelectedItemPayload) => {
           // Use functional updater so findIndex always sees the latest committed state,
@@ -4524,6 +4683,12 @@ const RFQs: React.FC = () => {
                       showSearch allowClear optionFilterProp="label"
                       filterOption={accentInsensitiveLabelFilter}
                       placeholder="Válassz céget"
+                      labelRender={(opt) => {
+                        const lvl = overdueCompanyMap[String(opt.value)];
+                        if (lvl === 'post_reminder_1') return <span style={{ background: '#1a1a1a', color: '#e53935', padding: '1px 4px', borderRadius: 2 }}>{opt.label}</span>;
+                        if (lvl === 'overdue_10') return <span style={{ color: '#e53935' }}>{opt.label}</span>;
+                        return <span>{opt.label}</span>;
+                      }}
                       style={{ width: 'calc(100% - 32px)' }}
                       value={copyItemCompanyId}
                       onChange={async (val) => {
@@ -4538,15 +4703,24 @@ const RFQs: React.FC = () => {
                       }}
                       onFocus={async () => {
                         try {
-                          const list = await crmService.getCompanies({ is_customer: true, compact: true });
+                          const [list, flagsRaw] = await Promise.all([
+                            crmService.getCompanies({ is_customer: true, compact: true }),
+                            crmService.getOverdueCustomerFlags().catch(() => []),
+                          ]);
+                          const _fArr3 = Array.isArray(flagsRaw) ? flagsRaw : (flagsRaw as any)?.results || [];
+                          const _fMap3: Record<string, string> = {};
+                          _fArr3.forEach((f: any) => { if (f?.customer_id) _fMap3[String(f.customer_id)] = f.level; });
+                          setOverdueCompanyMap(_fMap3);
                           setCompanies((list.results ?? list) || []);
                         } catch {}
                       }}
                     >
                       <Select.Option key="private" value="private" label="Magánszemély">Magánszemély</Select.Option>
-                      {companies.map((c: any) => (
-                        <Select.Option key={c.id} value={c.id} label={c.name}>{c.name}</Select.Option>
-                      ))}
+                      {companies.map((c: any) => {
+                        const lvl = overdueCompanyMap[String(c.id)];
+                        const style = lvl === 'post_reminder_1' ? { background: '#1a1a1a', color: '#e53935', padding: '1px 4px' } : lvl === 'overdue_10' ? { color: '#e53935' } : {};
+                        return <Select.Option key={c.id} value={c.id} label={c.name}><span style={style}>{c.name}</span></Select.Option>;
+                      })}
                     </Select>
                     <Tooltip title="Új cég hozzáadása">
                       <Button icon={<PlusCircleOutlined />} onClick={() => {

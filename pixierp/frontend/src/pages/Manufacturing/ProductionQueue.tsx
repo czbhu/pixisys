@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import { useClipboardImagePaste } from '../../hooks/useClipboardImagePaste';
 import EnhancedTable from '../../components/EnhancedTable';
+import ProductSubItemsTable from '../../components/Manufacturing/ProductSubItemsTable';
+import '../Sales/RFQs.css';
 import {
     Card,
     Button,
@@ -71,7 +73,7 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 interface QueueRow {
-    id: number;
+    id: number | string;
     queue_position: number | null;
     is_paused: boolean;
     order_id: number;
@@ -81,8 +83,16 @@ interface QueueRow {
     customer_id: number | null;
     customer_name: string;
     contact_name: string;
+    company_name?: string | null;
+    contact_names?: string | null;
+    is_private?: boolean;
+    is_direct?: boolean;
+    rfq_id?: number | null;
+    rfq_item_id?: number | null;
+    cost_items_data?: any[];
+    ci_local_id?: number | string | null;
     customer_order_item_id: number | null;
-    manufacturing_product_id: number;
+    manufacturing_product_id: number | null;
     product_name: string;
     item_name: string;
     code: string;
@@ -328,7 +338,7 @@ const ProductionQueue: React.FC = () => {
         }
         setPreselectedOrderId(r.order_id);
         setPreselectedItemId(r.customer_order_item_id);
-        setPreselectedSubItemId(r.id);
+        setPreselectedSubItemId(typeof r.id === 'number' ? r.id : null);
         setTimerModalOpen(true);
     };
 
@@ -400,11 +410,11 @@ const ProductionQueue: React.FC = () => {
                 await api.post(`/manufacturing/cost-items/${r.id}/resume/`);
                 message.success('Folytatva');
             } else {
-                const before = rowsRef.current.map(x => x.id);
+                const before = rowsRef.current.map(x => x.id).filter((id): id is number => typeof id === 'number');
                 await api.post(`/manufacturing/cost-items/${r.id}/pause/`);
                 message.success('Szüneteltetve, sor végére helyezve');
                 await load();
-                const after = rowsRef.current.map(x => x.id);
+                const after = rowsRef.current.map(x => x.id).filter((id): id is number => typeof id === 'number');
                 registerReorderAction(`Szünet: ${r.item_name}`, before, after);
             }
         } catch (e) {
@@ -415,11 +425,11 @@ const ProductionQueue: React.FC = () => {
 
     const handleSos = async (r: QueueRow) => {
         try {
-            const before = rowsRef.current.map(x => x.id);
+            const before = rowsRef.current.map(x => x.id).filter((id): id is number => typeof id === 'number');
             await api.post(`/manufacturing/cost-items/${r.id}/sos/`);
             message.success('Sor elejére helyezve');
             await load();
-            const after = rowsRef.current.map(x => x.id);
+            const after = rowsRef.current.map(x => x.id).filter((id): id is number => typeof id === 'number');
             registerReorderAction(`SOS: ${r.item_name}`, before, after);
         } catch (e) {
             console.error(e);
@@ -437,9 +447,12 @@ const ProductionQueue: React.FC = () => {
     const applyOrder = async (ids: number[]) => {
         const map = new Map(rowsRef.current.map(r => [r.id, r]));
         const ordered = ids.map(i => map.get(i)).filter(Boolean) as QueueRow[];
-        rowsRef.current.forEach(r => { if (!ids.includes(r.id)) ordered.push(r); });
+        // Append direct items (string IDs) at the end, as they don't participate in reorder
+        rowsRef.current.forEach(r => {
+            if (typeof r.id === 'string' || !ids.includes(Number(r.id))) ordered.push(r);
+        });
         setRows(ordered);
-        await api.post('/manufacturing/cost-items/reorder/', { ids: ordered.map(r => r.id) });
+        await api.post('/manufacturing/cost-items/reorder/', { ids: ordered.filter(r => typeof r.id === 'number').map(r => r.id) });
     };
 
     const registerReorderAction = (description: string, beforeIds: number[], afterIds: number[]) => {
@@ -471,14 +484,14 @@ const ProductionQueue: React.FC = () => {
         // contiguous block to the drop position (preserving their
         // relative order).
         const isMulti = selectedRowKeys.length > 1
-            && selectedRowKeys.map(Number).includes(activeRow.id);
+            && selectedRowKeys.map(Number).includes(Number(activeRow.id));
 
         if (isMulti) {
             const movedIds = new Set(selectedRowKeys.map(Number));
             // Don't try to move onto a row that's also being moved.
-            if (movedIds.has(overRow.id)) return;
-            const moved = filtered.filter(r => movedIds.has(r.id));
-            const remaining = filtered.filter(r => !movedIds.has(r.id));
+            if (movedIds.has(Number(overRow.id))) return;
+            const moved = filtered.filter(r => movedIds.has(Number(r.id)));
+            const remaining = filtered.filter(r => !movedIds.has(Number(r.id)));
             let insertIdx = remaining.findIndex(r => r.id === overRow.id);
             if (insertIdx < 0) insertIdx = remaining.length;
             // Drop after the over-row when dragging downward.
@@ -497,11 +510,11 @@ const ProductionQueue: React.FC = () => {
             reorderedFiltered = arrayMove(filtered, oldIdx, newIdx);
         }
 
-        const beforeIds = rows.map(r => r.id);
+        const beforeIds = rows.map(r => r.id).filter((id): id is number => typeof id === 'number');
         const filteredIds = new Set(filtered.map(r => r.id));
         const others = rows.filter(r => !filteredIds.has(r.id));
         const newRows = [...reorderedFiltered, ...others];
-        const afterIds = newRows.map(r => r.id);
+        const afterIds = newRows.map(r => r.id).filter((id): id is number => typeof id === 'number');
         setRows(newRows);
 
         try {
@@ -531,7 +544,7 @@ const ProductionQueue: React.FC = () => {
                         type={opt === cur ? 'primary' : 'text'}
                         disabled={opt === cur}
                         style={{ paddingTop: 1, paddingBottom: 1, lineHeight: 1.4 }}
-                        onClick={(e) => { e.stopPropagation(); handleStatusChange(r.id, opt); }}
+                        onClick={(e) => { e.stopPropagation(); handleStatusChange(Number(r.id), opt); }}
                     >
                         {STATUS_LABELS[opt]}
                     </Button>
@@ -552,18 +565,35 @@ const ProductionQueue: React.FC = () => {
             sorter: (a: QueueRow, b: QueueRow) => (a.order_number || '').localeCompare(b.order_number || ''),
             render: (v: string, r: QueueRow) => (
                 <a
-                    href={`/manufacturing/ordered-products?order=${r.order_id}`}
+                    href={r.rfq_id ? `/sales/rfqs/${r.rfq_id}` : `/manufacturing/ordered-products?order=${r.order_id}`}
                     target="_blank"
                     rel="noopener noreferrer"
                     style={{ fontWeight: 500 }}
                     onClick={e => e.stopPropagation()}
                 >{v}</a>
             ) },
-        { title: 'Ügyfél', dataIndex: 'customer_name', key: 'customer_name', width: 180, ellipsis: true,
-            sorter: (a: QueueRow, b: QueueRow) => (a.customer_name || '').localeCompare(b.customer_name || '', 'hu') },
-        { title: 'Kapcsolattartó', dataIndex: 'contact_name', key: 'contact_name', width: 170, ellipsis: true,
-            sorter: (a: QueueRow, b: QueueRow) => (a.contact_name || '').localeCompare(b.contact_name || '', 'hu'),
-            render: (v: string) => v || '—' },
+        { title: 'Ügyfél', dataIndex: 'customer_name', key: 'customer_name', width: 180,
+            sorter: (a: QueueRow, b: QueueRow) => {
+                const aName = a.is_private ? (a.contact_names || '') : (a.company_name || a.customer_name || '');
+                const bName = b.is_private ? (b.contact_names || '') : (b.company_name || b.customer_name || '');
+                return aName.localeCompare(bName, 'hu');
+            },
+            render: (_: any, r: QueueRow) => {
+                const primaryName = r.is_private
+                    ? (r.contact_names || r.customer_name || 'Magánszemély')
+                    : (r.company_name || r.customer_name || '—');
+                const secondaryName = r.is_private ? null : (r.contact_names || r.contact_name || null);
+                const tooltipText = [primaryName, secondaryName].filter(Boolean).join(' – ');
+                return (
+                    <Tooltip title={tooltipText}>
+                        <div>
+                            <div style={{ fontWeight: 'bold', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as const, overflow: 'hidden' }}>{primaryName}</div>
+                            {r.is_private && <div style={{ fontSize: 10, color: '#aaa', lineHeight: '14px' }}>Magánszemély</div>}
+                            {secondaryName && <div style={{ fontSize: 11, color: '#666', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{secondaryName}</div>}
+                        </div>
+                    </Tooltip>
+                );
+            } },
         { title: 'Megr. dátuma', dataIndex: 'order_date', key: 'order_date', width: 110,
             render: (d: string) => d ? dayjs(d).format('YYYY.MM.DD') : '-',
             sorter: (a: QueueRow, b: QueueRow) => new Date(a.order_date || 0).getTime() - new Date(b.order_date || 0).getTime() },
@@ -597,14 +627,20 @@ const ProductionQueue: React.FC = () => {
         { title: 'Beszállító', key: 'supplier', width: 180,
             render: (_: any, r: QueueRow) => {
                 const tag = r.is_internal
-                    ? <Tag color="blue" style={{ cursor: 'pointer' }}>{r.department_name ? `Belső: ${r.department_name}` : 'Belső'}</Tag>
+                    ? <Tag color="blue">{r.department_name || 'Belső'}</Tag>
                     : r.supplier_name
-                        ? <Tag color="orange" style={{ cursor: 'pointer' }}>{r.supplier_name}</Tag>
-                        : <span style={{ color: '#bbb', cursor: 'pointer', fontSize: 12 }}>+ beállítás</span>;
+                        ? <Tag color="orange">{r.supplier_name}</Tag>
+                        : <span style={{ color: '#bbb', fontSize: 12 }}>—</span>;
+
+                // Direct items: no editable popover, just show the tag
+                if (r.is_direct) {
+                    return <span>{tag}</span>;
+                }
+
                 return (
                     <Popover
-                        open={supplierPopoverOpen === r.id}
-                        onOpenChange={open => setSupplierPopoverOpen(open ? r.id : null)}
+                        open={typeof r.id === 'number' && supplierPopoverOpen === r.id}
+                        onOpenChange={open => setSupplierPopoverOpen(open && typeof r.id === 'number' ? r.id : null)}
                         trigger="click"
                         title="Beszállító / Belső"
                         getPopupContainer={() => document.body}
@@ -614,7 +650,7 @@ const ProductionQueue: React.FC = () => {
                                 <div style={{ marginBottom: 8 }}>
                                     <Checkbox
                                         checked={!!r.is_internal}
-                                        onChange={e => handleInternalChange(r.id, e.target.checked, r.department_id ?? null)}
+                                        onChange={e => handleInternalChange(Number(r.id), e.target.checked, r.department_id ?? null)}
                                     >
                                         Belső gyártás
                                     </Checkbox>
@@ -629,7 +665,7 @@ const ProductionQueue: React.FC = () => {
                                         value={r.department_id ?? undefined}
                                         optionFilterProp="label"
                                         options={allDepartments.map((d: any) => ({ value: d.id, label: d.name }))}
-                                        onChange={val => handleInternalChange(r.id, true, val ?? null)}
+                                        onChange={val => handleInternalChange(Number(r.id), true, val ?? null)}
                                         getPopupContainer={() => document.body}
                                     />
                                 ) : (
@@ -642,7 +678,7 @@ const ProductionQueue: React.FC = () => {
                                         value={r.supplier_id ?? undefined}
                                         optionFilterProp="label"
                                         options={allSuppliers.map((s: any) => ({ value: s.id, label: s.name }))}
-                                        onChange={val => handleSupplierChange(r.id, val ?? null)}
+                                        onChange={val => handleSupplierChange(Number(r.id), val ?? null)}
                                         getPopupContainer={() => document.body}
                                     />
                                 )}
@@ -650,17 +686,17 @@ const ProductionQueue: React.FC = () => {
                         }
                         styles={{ body: { padding: '10px 12px' } }}
                     >
-                        <span onClick={e => e.stopPropagation()}>{tag}</span>
+                        <span onClick={e => e.stopPropagation()}><Tag color={r.is_internal ? 'blue' : 'orange'} style={{ cursor: 'pointer' }}>{r.is_internal ? (r.department_name || 'Belső') : r.supplier_name}</Tag>{!r.is_internal && !r.supplier_name && <span style={{ color: '#bbb', cursor: 'pointer', fontSize: 12 }}>+ beállítás</span>}</span>
                     </Popover>
                 );
             } },
         {
             title: 'Műveletek', key: 'actions', width: 260, fixed: 'right' as const,
             render: (_: any, r: QueueRow) => {
-                const atts: any[] = costItemAtts[r.id] || [];
-                const attsLoaded = !!costItemAttsLoaded[r.id];
+                const atts: any[] = costItemAtts[typeof r.id === 'number' ? r.id : 0] || [];
+                const attsLoaded = !!costItemAttsLoaded[typeof r.id === 'number' ? r.id : 0];
                 const attCount = attsLoaded ? atts.length : (r.attachment_count || 0);
-                const isExpanded = expandedRowKeys.includes(r.id);
+                const isExpanded = expandedRowKeys.includes(Number(r.id));
                 return (
                     <Space size="small" onClick={(e) => e.stopPropagation()}>
                         <Tooltip title="Munkaóra indítása">
@@ -683,7 +719,7 @@ const ProductionQueue: React.FC = () => {
                                 size="small"
                                 type={isExpanded ? 'primary' : 'default'}
                                 style={!isExpanded && attCount > 0 ? { borderColor: '#1677ff', color: '#1677ff' } : {}}
-                                onClick={() => toggleRow(r.id)}
+                                onClick={() => toggleRow(Number(r.id))}
                             >
                                 {attCount > 0 ? attCount : ''}
                             </Button>
@@ -709,7 +745,17 @@ const ProductionQueue: React.FC = () => {
 
     // ── Cost-item attachment expanded row ────────────────────────────────
     const renderAttachmentRow = (r: QueueRow) => {
-        const ciId = r.id;
+        const ciId = typeof r.id === 'number' ? r.id : 0;
+
+        // Direct manufacturing sub-item — no expand needed (it IS the sub-item)
+        if (r.is_direct) {
+            return (
+                <div style={{ padding: '10px 16px 14px 48px', background: '#fafafa', borderTop: '1px solid #f0f0f0' }}>
+                    <span style={{ color: '#bbb', fontSize: 12 }}>Nincs csatolmány ennél a tételnél.</span>
+                </div>
+            );
+        }
+
         const atts: any[] = costItemAtts[ciId] || [];
         const loaded = !!costItemAttsLoaded[ciId];
         const uploading = (costItemAttUploading[ciId] || 0) > 0;
@@ -957,7 +1003,7 @@ const ProductionQueue: React.FC = () => {
 
     const exportCsv = () => {
         const source = selectedRowKeys.length > 0
-            ? filtered.filter(r => selectedRowKeys.includes(r.id))
+            ? filtered.filter(r => selectedRowKeys.includes(Number(r.id)))
             : filtered;
         if (!source.length) { message.warning('Nincs exportálható sor.'); return; }
 
@@ -998,7 +1044,7 @@ const ProductionQueue: React.FC = () => {
         // Group selected rows by supplier (or department if internal).
         const map = new Map<string, SendGroup>();
         rows.forEach(r => {
-            if (!selectedRowKeys.includes(r.id)) return;
+            if (!selectedRowKeys.includes(Number(r.id))) return;
             let key: string;
             let label: string;
             if (r.is_internal && r.department_id) {
@@ -1084,6 +1130,7 @@ const ProductionQueue: React.FC = () => {
                     searchValue={query}
                     onSearchChange={setQuery}
                     searchPlaceholder="Keresés megrendelés, ügyfél, termék, tétel, megjegyzés szerint..."
+                    rowClassName={(r: any) => r.status && r.status !== 'new' ? `rfq-row-${r.status}` : ''}
                     columns={columns}
                     dataSource={filtered}
                     pagination={{
@@ -1099,15 +1146,15 @@ const ProductionQueue: React.FC = () => {
                     size="small"
                     loading={loading}
                     bodyComponents={{ body: { row: CostDraggableRow } }}
-                    rowDnd={{ items: filtered.map(r => r.id), onReorder: onRowReorder }}
+                    rowDnd={{ items: filtered.map(r => r.id).filter((id): id is number => typeof id === 'number'), onReorder: onRowReorder }}
                     expandable={{
                         expandedRowKeys,
                         onExpand: (expanded: boolean, record: QueueRow) => {
                             if (expanded) {
-                                setExpandedRowKeys(prev => [...prev, record.id]);
-                                loadCostItemAtts(record.id);
+                                setExpandedRowKeys(prev => [...prev, Number(record.id)]);
+                                if (typeof record.id === 'number') loadCostItemAtts(record.id);
                             } else {
-                                setExpandedRowKeys(prev => prev.filter(id => id !== record.id));
+                                setExpandedRowKeys(prev => prev.filter(id => id !== Number(record.id)));
                             }
                         },
                         expandedRowRender: (record: QueueRow) => renderAttachmentRow(record),
@@ -1249,7 +1296,7 @@ const SendOrderModal: React.FC<SendOrderModalProps> = ({ open, onClose, groups: 
         (async () => {
             setLoadingCtx(true);
             try {
-                const ids = initialGroups.flatMap(g => g.items.map(i => i.id));
+                const ids = initialGroups.flatMap(g => g.items.filter(i => typeof i.id === 'number').map(i => i.id as number));
                 let renderedByKey: Record<string, any> = {};
                 try {
                     const { data } = await api.post('/manufacturing/cost-items/render_supplier_order/', {
@@ -1376,7 +1423,7 @@ const SendOrderModal: React.FC<SendOrderModalProps> = ({ open, onClose, groups: 
                 groups: groups.map(g => ({
                     key: g.key,
                     label: g.label,
-                    cost_item_ids: g.items.map(i => i.id),
+                    cost_item_ids: g.items.filter(i => typeof i.id === 'number').map(i => i.id as number),
                     recipients: g.recipients.trim(),
                     cc: g.cc.trim(),
                     reply_to: g.reply_to.trim(),
@@ -1389,9 +1436,9 @@ const SendOrderModal: React.FC<SendOrderModalProps> = ({ open, onClose, groups: 
             const failedKeys = new Set<string>(
                 (data.results || []).filter((r: any) => !r.sent).map((r: any) => r.key)
             );
-            const unsent = groups
+            const unsent: number[] = groups
                 .filter(g => failedKeys.has(g.key))
-                .flatMap(g => g.items.map(i => i.id));
+                .flatMap(g => g.items.filter(i => typeof i.id === 'number').map(i => i.id as number));
             const sentCount = (data.results || []).filter((r: any) => r.sent).length;
             const failedCount = (data.results || []).length - sentCount;
             if (sentCount > 0) message.success(`${sentCount} e-mail elküldve`);

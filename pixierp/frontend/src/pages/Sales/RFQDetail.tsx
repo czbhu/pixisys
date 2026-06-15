@@ -242,17 +242,19 @@ const RFQDetail: React.FC = () => {
     })();
   }, []);
 
-  // Auto-open item editor when navigated with ?editItemId=
+  // Auto-open item editor when navigated with ?editItemId= OR when RFQ has exactly 1 item
   useEffect(() => {
     if (!rfq || editItemIdHandledRef.current) return;
     const editItemId = searchParams.get('editItemId');
-    if (!editItemId) return;
+    const items = rfq.items || [];
+    // Prefer explicit editItemId, fall back to auto-open if single item
+    const targetItem = editItemId
+      ? items.find((it: any) => it.id === Number(editItemId))
+      : items.length === 1 ? items[0] : null;
+    if (!targetItem) return;
     editItemIdHandledRef.current = true;
-    const item = (rfq.items || []).find((it: any) => it.id === Number(editItemId));
-    if (item) {
-      setEditContext({ item });
-      setSelectorType(item.item_type || 'manufacturing');
-    }
+    setEditContext({ item: targetItem });
+    setSelectorType(targetItem.item_type || 'manufacturing');
   }, [rfq, searchParams]);
 
   // ESC → vissza az előző lapra
@@ -482,15 +484,20 @@ const RFQDetail: React.FC = () => {
       }
       await salesService.updateQuoteRequestItem(editContext.item.id, patch);
 
-      // If item sell currency differs from RFQ currency, update the RFQ currency to match.
+      // If item sell currency was set, always update the RFQ currency to match.
       const newCurrCode: string | undefined = (payload as any)._sellCurrencyCode;
-      if (newCurrCode && newCurrCode !== activeCurrency) {
+      if (newCurrCode) {
         formBasic.setFieldsValue({ currency_code: newCurrCode });
         await salesService.updateQuoteRequestBasic(Number(id), { currency_code: newCurrCode });
       }
 
       if (isDirectItemEditMode) {
-        await saveBasicFromCurrentForm();
+        try {
+          await saveBasicFromCurrentForm();
+        } catch (basicErr) {
+          // Basic form save failed (e.g. missing company) but item + currency were already saved — ignore
+          console.warn('[RFQDetail] saveBasicFromCurrentForm failed after item save:', basicErr);
+        }
       }
 
       // Upload newly added files (if any)
@@ -506,12 +513,10 @@ const RFQDetail: React.FC = () => {
         }
       }
       message.success('Tétel frissítve');
-      if (!(payload as any).keepOpen) {
-        if (isDirectItemEditMode) {
-          notifyRfqListUpdated();
-        }
-        setSelectorOpen(false);
-        setEditContext(null);
+      // Always keep the editor open — do not close on save
+      setSelectorOpen(false);
+      if (isDirectItemEditMode) {
+        notifyRfqListUpdated();
       }
       if (isDirectItemEditMode && !(payload as any).keepOpen) {
         if (window.opener) {
@@ -522,7 +527,13 @@ const RFQDetail: React.FC = () => {
         return;
       }
       if (isDirectItemEditMode) {
-        await load();
+        // Use refreshItems (not full load) when keepOpen=true to avoid re-initializing
+        // the inline editor with stale editContext.item values
+        if ((payload as any).keepOpen) {
+          await refreshItems();
+        } else {
+          await load();
+        }
       } else {
         refreshItems();
       }
@@ -564,33 +575,6 @@ const RFQDetail: React.FC = () => {
         <span>{isDemand(rfq) ? 'Ajánlat' : 'Árajánlat'} {rfq.number || rfq.request_number}</span>
       </Space>} extra={<Space>
         <Button icon={<MessageOutlined />} onClick={() => setChatOpen(true)}>Chat</Button>
-        <Button type="primary" onClick={async () => {
-          try {
-            const q = await salesService.createQuoteFromRfq(Number(id));
-            message.success(`Ajánlat létrehozva: ${q.quote_number}`);
-          } catch (e: any) {
-            message.error(e?.response?.data?.error || 'Nem sikerült ajánlatot készíteni');
-          }
-        }}>Készíts ajánlatot</Button>
-        <Button onClick={() => {
-            setSendOpen(true);
-            Promise.all([
-                api.get('/core/email-templates/'),
-                api.get('/core/signature-templates/'),
-            ]).then(([tplRes, sigRes]) => {
-                setEmailTemplates(tplRes.data.results || tplRes.data);
-                setSignatureTemplates(sigRes.data.results || sigRes.data);
-            }).catch(err => console.error("Could not load templates", err));
-        }}>Kiküldés</Button>
-        <Button onClick={async () => {
-          try {
-            const res = await salesService.copyQuoteRequest(Number(id));
-            message.success(`Másolat létrehozva: ${res.number}`);
-            navigate(`/sales/rfqs/${res.id}`);
-          } catch (e: any) {
-            message.error(e?.response?.data?.error || 'Nem sikerült másolni');
-          }
-        }}>Másol</Button>
   <Button onClick={() => setActivityLogOpen(true)}>Napló</Button>
   <Tooltip title="Munkaórák (összes)">
     <Button
@@ -656,27 +640,7 @@ const RFQDetail: React.FC = () => {
               return;
             }
             
-            // Ellenőrizzük a határidőt
-            if (!v.deadline && !isDirectItemEditMode) {
-              const suggestedDate = dayjs(v.issue_date || rfq.issue_date || dayjs()).add(14, 'day');
-              const confirmed = await new Promise<boolean>((resolve) => {
-                Modal.confirm({
-                  title: 'Nincs határidő megadva',
-                  content: `Megadjunk egy 14 napos határidőt? (${suggestedDate.format('YYYY. MM. DD.')})`,
-                  okText: 'Igen',
-                  cancelText: 'Mégsem',
-                  onOk: () => resolve(true),
-                  onCancel: () => resolve(false),
-                });
-              });
-              
-              if (confirmed) {
-                v.deadline = suggestedDate;
-                formBasic.setFieldValue('deadline', suggestedDate);
-              } else {
-                return; // Vissza az ajánlatba
-              }
-            }
+            // Határidő ellenőrzés eltávolítva: nem kötelező határidőt megadni
             
             const autoTitle = (!v.title || !String(v.title).trim())
               ? (isDemand(rfq) ? `Ajánlat ${rfq.number || rfq.request_number}` : (rfq.number || rfq.request_number))
@@ -708,7 +672,9 @@ const RFQDetail: React.FC = () => {
             message.success('Mentve');
             setLastSavedAt(dayjs());
             if (closeAfter) {
-              if (window.opener) window.close();
+              // Always navigate back to the RFQ list
+              // Also attempt to close the tab (works if opened via window.open)
+              try { window.close(); } catch {}
               navigate('/sales/rfqs');
               return;
             }
@@ -727,13 +693,14 @@ const RFQDetail: React.FC = () => {
                    <div style={{ marginRight: 16 }}>{statusTag(rfq.status)}</div>
                    <Button
                      loading={saving && !closeAfterSaveRef.current}
-                     onClick={() => {
+                     onClick={async () => {
+                       closeAfterSaveRef.current = false;
+                       // Save item editor if open (keepOpen=true)
                        if (editContext && itemSaveRef.current) {
-                         itemSaveRef.current.save(true);
-                       } else {
-                         closeAfterSaveRef.current = false;
-                         formBasic.submit();
+                         try { await itemSaveRef.current.save(true); } catch {}
                        }
+                       // Always save basic form (company, contacts, project, dates, etc.)
+                       formBasic.submit();
                      }}
                    >
                      Mentés
@@ -741,13 +708,14 @@ const RFQDetail: React.FC = () => {
                    <Button
                      type="primary"
                      loading={saving && closeAfterSaveRef.current}
-                     onClick={() => {
+                     onClick={async () => {
+                       closeAfterSaveRef.current = true;
+                       // Save item editor if open (keepOpen=true)
                        if (editContext && itemSaveRef.current) {
-                         itemSaveRef.current.save(false);
-                       } else {
-                         closeAfterSaveRef.current = true;
-                         formBasic.submit();
+                         try { await itemSaveRef.current.save(true); } catch {}
                        }
+                       // Always save basic form, then close
+                       formBasic.submit();
                      }}
                    >
                      Mentés &amp; bezárás
@@ -1195,7 +1163,7 @@ const RFQDetail: React.FC = () => {
             open={true}
             mode="edit"
             defaultType={selectorType}
-            onCancel={() => setEditContext(null)}
+            onCancel={() => { /* editor stays open always */ }}
             onAdd={async (p) => onEditSelected(p)}
             rfqId={Number(id)}
             rfqCurrency={activeCurrency}

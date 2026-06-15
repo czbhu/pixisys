@@ -56,7 +56,6 @@ const Projects: React.FC = () => {
     useEffect(() => {
         loadProjects();
         loadCompanies();
-        loadContacts();
         loadEmployees();
     }, []);
 
@@ -161,7 +160,7 @@ const Projects: React.FC = () => {
             form.setFieldsValue({
                 name: project.name,
                 description: project.description,
-                deadline: dayjs(project.deadline),
+                deadline: project.deadline ? dayjs(project.deadline) : null,
                 company_id: companyId,
                 contacts: contactIds,
                 project_manager: projectManagerId,
@@ -185,11 +184,12 @@ const Projects: React.FC = () => {
 
     const handleSubmit = async (values: any) => {
         try {
+            const deadline = values?.deadline ? dayjs(values.deadline).format('YYYY-MM-DD') : null;
             const data: any = {
                 name: values.name,
                 description: values.description || '',
-                deadline: values.deadline.format('YYYY-MM-DD'),
-                contacts: values.contacts || [],
+                deadline,
+                contacts: (values.contacts || []).filter((id: any) => typeof id === 'number' && Number.isFinite(id)),
                 project_manager: values.project_manager,
                 status: values.status,
             };
@@ -251,8 +251,8 @@ const Projects: React.FC = () => {
     };
 
     const handleViewProducts = (project: Project) => {
-        // Új böngésző lapon megnyitjuk a termékeket
-        const url = `/manufacturing/products?project=${project.id}`;
+        // Új böngésző lapon megnyitjuk az árajánlat kéréseket az adott projektre szűrve
+        const url = `/sales/rfqs?project=${project.id}`;
         window.open(url, '_blank');
     };
 
@@ -508,7 +508,6 @@ const Projects: React.FC = () => {
                             <Form.Item
                                 name="deadline"
                                 label="Határidő"
-                                rules={[{ required: true, message: 'Kérjük, adja meg a határidőt!' }]}
                             >
                                 <HungarianDatePicker style={{ width: '100%' }} />
                             </Form.Item>
@@ -599,11 +598,8 @@ const Projects: React.FC = () => {
                                                 } else if (companyId) {
                                                     const list = await crmService.getContactsByCompany(companyId);
                                                     setContacts((list as any).results ?? list);
-                                                } else {
-                                                    // Nincs cég választva → összes kapcsolattartó
-                                                    const list = await crmService.getContacts();
-                                                    setContacts(((list as any).results ?? list) || []);
                                                 }
+                                                // Ha nincs cég kiválasztva, nem töltünk be semmit
                                             }}
                                             onChange={async (val: any) => {
                                                 form.setFieldsValue({ contacts: val });
@@ -641,11 +637,14 @@ const Projects: React.FC = () => {
                                                 return norm(text).includes(norm(input));
                                             }}
                                         >
-                                            {contacts.map(contact => (
-                                                <Option key={contact.id} value={contact.id}>
-                                                    {contact.name} - {contact.company_name || 'Magánszemély'}
-                                                </Option>
-                                            ))}
+                                            {contacts.map(contact => {
+                                                const optionValue = contact.local_id || contact.id;
+                                                return (
+                                                    <Option key={contact.id} value={optionValue}>
+                                                        {contact.full_name || contact.name}{(contact.customer_name || contact.company_name) ? ` - ${contact.customer_name || contact.company_name}` : ''}
+                                                    </Option>
+                                                );
+                                            })}
                                         </Select>
                                     </Form.Item>
                                 </Col>
@@ -676,7 +675,7 @@ const Projects: React.FC = () => {
                     >
                         <Select placeholder="Válasszon projektvezetőt" allowClear>
                             {employees.map(employee => (
-                                <Option key={employee.id} value={employee.id}>
+                                <Option key={employee.id} value={employee.user}>
                                     {employee.full_name}
                                 </Option>
                             ))}

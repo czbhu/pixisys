@@ -27,6 +27,14 @@ export const crmService = {
         const response = await api.get('/crm/companies/', { params });
         return response.data;
     },
+    async getOverdueCustomerFlags() {
+        try {
+            const response = await api.get('/crm/companies/overdue-customer-flags/');
+            return (response.data?.results || []) as Array<{customer_id: string; customer_name: string; level: string}>;
+        } catch {
+            return [];
+        }
+    },
     async getCompany(id: number | string) {
         const response = await api.get(`/crm/companies/${id}/`);
         return response.data;

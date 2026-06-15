@@ -6,6 +6,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import type { ColumnsType } from 'antd/es/table';
 import EnhancedTable from '../../components/EnhancedTable';
 import api from '../../services/api';
+import { useNewRowTracker, newDotColumn } from '../../hooks/useNewRowTracker';
 import dayjs from 'dayjs';
 // @ts-ignore
 import ReactQuill from 'react-quill';
@@ -216,7 +217,10 @@ const DeliveryNotes: React.FC = () => {
 
       // Ensure we hit the items endpoint
       const response = await api.get('/sales/delivery-note-items/', { params });
-      setData(response.data.results || response.data);
+      const dnData = response.data.results || response.data;
+      setData(dnData);
+      const dnArr = Array.isArray(dnData) ? dnData : [];
+      loadNewDNIds(dnArr.map((r: any) => r.id).filter(Boolean));
     } catch (error) {
       console.error(error);
       message.error('Hiba a tételek betöltésekor');
@@ -565,7 +569,10 @@ const DeliveryNotes: React.FC = () => {
       }
   };
 
+  const { newIds: newDNIds, markSeen: markDNSeen, loadNewIds: loadNewDNIds } = useNewRowTracker('/sales/delivery-notes');
+
   const columns: ColumnsType<DeliveryNoteItemRow> = [
+    newDotColumn(newDNIds),
     {
       title: 'Dátum',
       dataIndex: 'issue_date',

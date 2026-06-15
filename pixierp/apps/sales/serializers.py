@@ -101,6 +101,7 @@ class QuoteRequestItemSerializer(serializers.ModelSerializer):
     manufacturing_product_description = serializers.SerializerMethodField()
     manufacturing_product_internal_description = serializers.SerializerMethodField()
     manufacturing_product_printshop_params = serializers.SerializerMethodField()
+    manufacturing_product_net_unit_price = serializers.SerializerMethodField()
     service_name = serializers.SerializerMethodField()
     service_code = serializers.CharField(source='service.code', read_only=True)
     service_unit_cost_price = serializers.DecimalField(source='service.unit_cost_price', max_digits=12, decimal_places=2, read_only=True, allow_null=True, default=None)
@@ -142,6 +143,12 @@ class QuoteRequestItemSerializer(serializers.ModelSerializer):
         mp = getattr(obj, 'manufacturing_product', None)
         if mp:
             return mp.printshop_params
+        return None
+
+    def get_manufacturing_product_net_unit_price(self, obj):
+        mp = getattr(obj, 'manufacturing_product', None)
+        if mp and mp.net_unit_price:
+            return float(mp.net_unit_price)
         return None
 
     cost_items_statuses = serializers.SerializerMethodField()
@@ -1788,7 +1795,7 @@ class DeliveryNoteSerializer(serializers.ModelSerializer):
                 
             DeliveryNoteItem.objects.create(
                 delivery_note=delivery_note,
-                **item_data
+                **{k: (v[:255] if isinstance(v, str) and k == 'item_name' else v) for k, v in item_data.items()}
             )
 
         # Auto-set CustomerOrderItem status to 'in_delivery' if currently below

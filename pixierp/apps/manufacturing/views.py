@@ -541,6 +541,7 @@ class ManufacturingCostItemViewSet(
         Optimised: uses bulk queries instead of per-row N+1 DB calls."""
         from django.db.models import F, Count, Prefetch
         from apps.sales.models import QuoteRequestItem, CustomerOrderItem, QuoteRequest
+        from apps.sales.models import CustomerOrderItem as _COI
         from apps.warehouse.models import Material
 
         # ── 1. Load all cost items ───────────────────────────────────────────
@@ -549,8 +550,6 @@ class ManufacturingCostItemViewSet(
               .annotate(_att_count=Count('attachments'))
               .order_by(F('queue_position').asc(nulls_last=True), 'id'))
         cost_items = list(qs)
-        if not cost_items:
-            return Response([])
 
         # ── 2. Bulk-resolve product_id → (order, coi) ────────────────────────
         product_ids = [ci.product_id for ci in cost_items if ci.product_id]
@@ -578,9 +577,20 @@ class ManufacturingCostItemViewSet(
                 product_to_coi[pid] = coi
 
         # ── 3. Bulk-load first contact per QuoteRequest ──────────────────────
+        # Pre-load direct manufacturing COIs to include their QR contacts too
+        _direct_cois_for_contacts = list(
+            _COI.objects
+            .select_related('customer_order', 'customer_order__quote_request')
+            .filter(
+                quote_item__item_type='manufacturing',
+                quote_item__manufacturing_product__isnull=True,
+            )
+            .exclude(status='cancelled')
+            .exclude(customer_order__status__in=('delivered', 'cancelled'))
+        ) if True else []
         qr_ids = list({
             coi.customer_order.quote_request_id
-            for coi in product_to_coi.values()
+            for coi in list(product_to_coi.values()) + _direct_cois_for_contacts
             if coi.customer_order.quote_request_id
         })
         qr_first_contact: dict = {}  # qr_id → {name, company_id, company_name}
@@ -596,13 +606,16 @@ class ManufacturingCostItemViewSet(
                               .only('id'))
             for qr_obj in qrs_prefetched:
                 contacts_list = getattr(qr_obj, '_first_contacts', [])
-                if contacts_list:
-                    c = contacts_list[0]
-                    qr_first_contact[qr_obj.id] = {
-                        'name': c.name or '',
-                        'company_id': c.company_id,
-                        'company_name': c.company.name if getattr(c, 'company', None) else '',
-                    }
+                all_contact_names = [c.name for c in contacts_list if c.name]
+                first_contact_company_name = next((c.company.name for c in contacts_list if getattr(c, 'company', None) and c.company.name), '')
+                is_private = bool(contacts_list and not qr_obj.company_id and not getattr(qr_obj, 'customer_id', None) and not first_contact_company_name)
+                qr_first_contact[qr_obj.id] = {
+                    'name': contacts_list[0].name if contacts_list else '',
+                    'company_id': contacts_list[0].company_id if contacts_list else None,
+                    'company_name': first_contact_company_name,
+                    'contact_names': ', '.join(all_contact_names),
+                    'is_private': is_private,
+                }
 
         # ── 4. Bulk-load material/service codes ──────────────────────────────
         mat_ids = [ci.ref_id for ci in cost_items if ci.type == 'material' and ci.ref_id]
@@ -664,6 +677,9 @@ class ManufacturingCostItemViewSet(
                 'customer_id': cust_id,
                 'customer_name': cust_name,
                 'contact_name': contact_name,
+                'company_name': (qr.company.name if qr and qr.company else '') or cust_name,
+                'contact_names': (qr_first_contact.get(qr.id, {}).get('contact_names', '') if qr else ''),
+                'is_private': (qr_first_contact.get(qr.id, {}).get('is_private', False) if qr else False),
                 'customer_order_item_id': coi.id,
                 'manufacturing_product_id': ci.product_id,
                 'product_name': ci.product.name if ci.product else '',
@@ -680,7 +696,111 @@ class ManufacturingCostItemViewSet(
                 'unit': ci.unit,
                 'supplier_email_sent_at': ci.supplier_email_sent_at.isoformat() if ci.supplier_email_sent_at else None,
                 'attachment_count': getattr(ci, '_att_count', 0),
+                'rfq_id': qr.id if qr else None,
             })
+
+        # ── Add direct manufacturing items (no ManufacturingProduct) ─────────
+        from apps.sales.models import CustomerOrderItem as _COI
+        from apps.hr.models import Department as _Dept
+        _dept_name_map = dict(_Dept.objects.values_list('id', 'name'))
+        direct_cois = (_COI.objects
+                       .select_related(
+                           'quote_item',
+                           'customer_order',
+                           'customer_order__quote_request',
+                           'customer_order__quote_request__company',
+                           'customer_order__quote_request__customer',
+                       )
+                       .filter(
+                           quote_item__item_type='manufacturing',
+                           quote_item__manufacturing_product__isnull=True,
+                       )
+                       .exclude(status='cancelled')
+                       .exclude(customer_order__status__in=('delivered', 'cancelled'))
+                       .order_by('-customer_order__order_date'))
+
+        for coi in direct_cois:
+            qi = coi.quote_item
+            if not qi:
+                continue
+            cost_items_json = qi.cost_items_data if isinstance(qi.cost_items_data, list) else []
+            # Skip if no sub-items
+            if not cost_items_json:
+                continue
+
+            order = coi.customer_order
+            qr = order.quote_request
+            company = (qr.company if qr else None) or (getattr(qr, 'customer', None) if qr else None)
+            cust_name_d = company.name if company else ''
+            cust_id_d = company.id if company else None
+
+            if qr:
+                ci_info_d = qr_first_contact.get(qr.id, {})
+                if not cust_id_d and ci_info_d.get('company_id'):
+                    cust_id_d = ci_info_d['company_id']
+                if not cust_name_d and ci_info_d.get('company_name'):
+                    cust_name_d = ci_info_d['company_name']
+
+            if customer_id and str(cust_id_d) != str(customer_id):
+                continue
+            if order_id and str(order.id) != str(order_id):
+                continue
+
+            contact_info = qr_first_contact.get(qr.id, {}) if qr else {}
+            base = {
+                'queue_position': None,
+                'is_paused': False,
+                'order_id': order.id,
+                'order_number': order.order_number,
+                'order_date': order.order_date.isoformat() if order.order_date else None,
+                'deadline': qr.deadline.isoformat() if qr and qr.deadline else None,
+                'customer_id': cust_id_d,
+                'customer_name': cust_name_d,
+                'contact_name': contact_info.get('name', ''),
+                'company_name': (qr.company.name if qr and qr.company else '') or cust_name_d,
+                'contact_names': contact_info.get('contact_names', ''),
+                'is_private': contact_info.get('is_private', False),
+                'customer_order_item_id': coi.id,
+                'manufacturing_product_id': None,
+                'is_direct': True,
+                'rfq_id': qr.id if qr else None,
+                'rfq_item_id': qi.id,
+                'product_name': qi.item_name or '',
+                'supplier_email_sent_at': None,
+                'attachment_count': 0,
+            }
+            # Add one row per sub-item in cost_items_data
+            for idx, ci_json in enumerate(cost_items_json):
+                if ci_json.get('status') == 'cancelled':
+                    continue
+                sup_id = ci_json.get('supplier_id') or None
+                dept_id = ci_json.get('department_id') or None
+                is_internal = bool(ci_json.get('is_internal'))
+                if supplier_id:
+                    if is_internal:
+                        if f'dep:{dept_id}' != supplier_id:
+                            continue
+                    else:
+                        if f'sup:{sup_id}' != supplier_id:
+                            continue
+                data.append({
+                    **base,
+                    'id': f'direct_{coi.id}_{idx}',
+                    'item_name': ci_json.get('name') or qi.item_name or '',
+                    'code': ci_json.get('code') or '',
+                    'status': ci_json.get('status') or coi.status or 'new',
+                    'notes': ci_json.get('notes') or '',
+                    'supplier_id': sup_id,
+                    'supplier_name': ci_json.get('supplier_name') or '',
+                    'is_internal': is_internal,
+                    'department_id': dept_id,
+                    'department_name': ci_json.get('department_name') or ((_dept_name_map.get(dept_id) or '') if dept_id else ''),
+                    'quantity': float(ci_json.get('quantity') or coi.quantity),
+                    'unit': ci_json.get('unit') or coi.unit or 'db',
+                    'cost_items_data': [],
+                    'ci_local_id': ci_json.get('id'),
+                })
+
         return Response(data)
 
     def _full_queue_ids(self, exclude_id=None):
@@ -1419,6 +1539,18 @@ class ManufacturingCostItemViewSet(
             product_internal_desc = strip_html(str(get_direct_field(direct_item, 'internal_description') or ''))
             product_desc = strip_html(str(get_direct_field(direct_item, 'product_description', 'description') or ''))
 
+        # Quote number (ajánlatszám) — prefer from direct_item.quote_number, then from rfq item
+        rfq_quote_number = ''
+        if direct_item is not None:
+            rfq_quote_number = str(get_direct_field(direct_item, 'quote_number') or '')
+        if not rfq_quote_number and _rfq_for_header:
+            try:
+                first_item = _rfq_for_header.items.first()
+                if first_item:
+                    rfq_quote_number = str(getattr(first_item, 'quote_number', '') or '')
+            except Exception:
+                pass
+
         # QR targets
         base_url = getattr(dj_settings, 'FRONTEND_BASE_URL', 'https://erp.pixisys.eu').rstrip('/')
         if order:
@@ -1552,7 +1684,8 @@ class ManufacturingCostItemViewSet(
             # Title + section tag + QR top right
             p.setFont(font_bold, 12)
             tag = 'BELSŐ' if internal else 'KÜLSŐ'
-            p.drawString(left, y, f"MUNKALAP - {order_number}  ({tag})")
+            title_quote = f" {rfq_quote_number}" if rfq_quote_number else ""
+            p.drawString(left, y, f"MUNKALAP{title_quote} ({tag})")
             qr_image = internal_qr_image if internal else external_qr_image
             if qr_image:
                 p.drawImage(qr_image, width - right_margin - qr_size,
@@ -1600,50 +1733,64 @@ class ManufacturingCostItemViewSet(
             y -= 0.45 * cm
 
             p.setFont(font_bold, 9)
-            p.drawString(left, y, "Cikkszám:")
-            p.setFont(font_normal, 9)
-            p.drawString(left + 2.6 * cm, y, product_code or '-')
-            if item_qty_str:
-                p.setFont(font_bold, 9)
-                p.drawString(left + 8 * cm, y, "Mennyiség:")
-                p.setFont(font_normal, 9)
-                p.drawString(left + 10.4 * cm, y, item_qty_str)
-            y -= 0.45 * cm
-
-            p.setFont(font_bold, 9)
             p.drawString(left, y, "Megnevezés:")
             p.setFont(font_normal, 9)
-            for i, line in enumerate(wrap_to_width(product_name, font_normal, 9,
-                                                   width - left - right_margin - 2.6 * cm)[:2]):
+            name_lines = wrap_to_width(product_name, font_normal, 9,
+                                       width - left - right_margin - 2.6 * cm)[:2]
+            for i, line in enumerate(name_lines):
                 p.drawString(left + 2.6 * cm, y - i * 0.4 * cm, line)
-            y -= 0.45 * cm
+            y -= len(name_lines) * 0.4 * cm
+            if item_qty_str:
+                p.setFont(font_bold, 9)
+                p.drawString(left, y, "Mennyiség:")
+                p.setFont(font_normal, 9)
+                p.drawString(left + 2.6 * cm, y, item_qty_str)
+                y -= 0.4 * cm
+            y -= 0.05 * cm
+
+            def page_break_if_needed(needed_cm=1.2, restore_font=None, restore_size=9):
+                """New page for BELSŐ if too close to bottom; KÜLSŐ is fixed."""
+                nonlocal y
+                bottom = (height / 2 + 1.0 * cm) if not internal else (2.0 * cm)
+                if y < bottom + needed_cm * cm:
+                    if not internal:
+                        return  # can't add pages to the external half
+                    p.showPage()
+                    y = height - 1.5 * cm
+                    p.setFont(font_bold, 12)
+                    title_q = f" {rfq_quote_number}" if rfq_quote_number else ""
+                    p.drawString(left, y, f"MUNKALAP{title_q} (BELSŐ folyt.)")
+                    y -= 1.0 * cm
+                    # Restore font after header redraw
+                    if restore_font:
+                        p.setFont(restore_font, restore_size)
 
             def draw_text_block(label, text, max_lines_external=6):
                 nonlocal y
                 lines = wrap_to_width(text, font_normal, 9, width - left - right_margin)
                 if not internal:
                     lines = lines[:max_lines_external]
+                page_break_if_needed(0.5)
                 p.setFont(font_bold, 9)
                 p.drawString(left, y, label)
                 y -= 0.4 * cm
                 p.setFont(font_normal, 9)
                 for line in lines:
+                    page_break_if_needed(0.4, restore_font=font_normal, restore_size=9)
                     p.drawString(left, y, line)
                     y -= 0.38 * cm
                 y -= 0.05 * cm
 
-            if product_desc:
-                draw_text_block("Leírás:", product_desc)
+            _primary_desc = item_note or product_desc
+            if _primary_desc:
+                draw_text_block("Leírás:", _primary_desc)
 
             # The following blocks are BELSŐ only.
             if internal and product_internal_desc:
                 draw_text_block("Belső leírás:", product_internal_desc)
 
-            if internal and item_note and item_note.strip() != product_desc.strip():
-                draw_text_block("Megjegyzés:", item_note)
-
-            if internal and rfq_desc:
-                draw_text_block("Ajánlat leírása:", rfq_desc)
+            if internal and item_note and product_desc and item_note.strip() != product_desc.strip():
+                draw_text_block("Termék leírása:", product_desc)
 
             if internal and rfq_internal_desc:
                 draw_text_block("Ajánlat belső leírása:", rfq_internal_desc)
@@ -1676,13 +1823,46 @@ class ManufacturingCostItemViewSet(
             y -= 0.32 * cm
 
             p.setFont(font_normal, 8)
+
+            # Bottom margin for this section (KÜLSŐ uses top half, BELSŐ uses full page)
+            section_bottom = (height / 2 + 0.5 * cm) if not internal else (1.5 * cm)
+
+            def ensure_space(needed_cm=0.8):
+                """Return False if there is not enough space left in this section,
+                triggering a new page for the BELSŐ half (internal only)."""
+                nonlocal y
+                if not internal:
+                    return y > section_bottom + needed_cm * cm
+                if y < 1.5 * cm + needed_cm * cm:
+                    # New page — redraw the section header
+                    p.showPage()
+                    y = height - 1.5 * cm
+                    p.setFont(font_bold, 12)
+                    tag2 = 'BELSŐ (folyt.)'
+                    title_quote2 = f" {rfq_quote_number}" if rfq_quote_number else ""
+                    p.drawString(left, y, f"MUNKALAP{title_quote2} ({tag2})")
+                    y -= 0.8 * cm
+                    # Re-draw altételek column headers
+                    p.setFont(font_bold, 8)
+                    p.drawString(col_x_name, y, "Tétel")
+                    p.drawString(col_x_qty, y, "Mennyiség")
+                    if internal:
+                        p.drawString(col_x_supp, y, "Beszállító / Részleg")
+                    y -= 0.12 * cm
+                    p.setLineWidth(0.3)
+                    p.line(left, y, width - right_margin, y)
+                    y -= 0.32 * cm
+                    p.setFont(font_normal, 8)
+                return True
+
             for sub in sub_items:
-                # Stop drawing when out of this section's space
-                if y < (height / 2 + 0.5 * cm if not internal else 1.5 * cm):
-                    p.setFont(font_normal, 7)
-                    p.setFillGray(0.4)
-                    p.drawString(col_x_name, y, '… (a lista folytatódik)')
-                    p.setFillGray(0)
+                # Stop drawing when out of this section's space (external half is fixed)
+                if not ensure_space(0.6):
+                    if not internal:
+                        p.setFont(font_normal, 7)
+                        p.setFillGray(0.4)
+                        p.drawString(col_x_name, y, '… (a lista folytatódik a belső lapon)')
+                        p.setFillGray(0)
                     break
 
                 box = 0.3 * cm
@@ -1947,6 +2127,14 @@ class ManufacturingCostItemViewSet(
             for item in rfq.items.all():
                 mp = getattr(item, 'manufacturing_product', None)
                 rfq_item_name = item.item_name or None
+                # Fallback: try to find ManufacturingProduct by item_name if FK not set
+                if not mp and rfq_item_name:
+                    mp_by_name = (ManufacturingProduct.objects
+                                  .filter(name=rfq_item_name)
+                                  .order_by('-id')
+                                  .first())
+                    if mp_by_name:
+                        mp = mp_by_name
                 try:
                     if mp and mp.id not in seen:
                         seen.add(mp.id)
@@ -1955,9 +2143,9 @@ class ManufacturingCostItemViewSet(
                               .order_by(F('queue_position').asc(nulls_last=True), 'id')
                               .first())
                         if ci:
-                            pdf_bytes = self._render_full_work_sheet_pdf_bytes(ci, highlight_id=0, _item_name=rfq_item_name)
+                            pdf_bytes = self._render_full_work_sheet_pdf_bytes(ci, highlight_id=0, _item_name=rfq_item_name, _direct_item=item)
                         else:
-                            pdf_bytes = self._render_full_work_sheet_pdf_bytes(None, highlight_id=0, _product=mp, _rfq=rfq, _item_name=rfq_item_name)
+                            pdf_bytes = self._render_full_work_sheet_pdf_bytes(None, highlight_id=0, _product=mp, _rfq=rfq, _item_name=rfq_item_name, _direct_item=item)
                     elif item.id not in seen_direct:
                         direct_sub_items = item.cost_items_data if isinstance(item.cost_items_data, list) else []
                         direct_sub_items = [
@@ -1969,17 +2157,29 @@ class ManufacturingCostItemViewSet(
                                 or (s.get('description') or '').strip()
                             )
                         ]
-                        if not direct_sub_items:
+                        # If no cost_items_data but item has a name, generate a basic worksheet
+                        if not direct_sub_items and rfq_item_name:
+                            seen_direct.add(item.id)
+                            pdf_bytes = self._render_full_work_sheet_pdf_bytes(
+                                None,
+                                highlight_id=0,
+                                _rfq=rfq,
+                                _item_name=rfq_item_name,
+                                _direct_sub_items=[],
+                                _direct_item=item,
+                            )
+                        elif not direct_sub_items:
                             continue
-                        seen_direct.add(item.id)
-                        pdf_bytes = self._render_full_work_sheet_pdf_bytes(
-                            None,
-                            highlight_id=0,
-                            _rfq=rfq,
-                            _item_name=rfq_item_name,
-                            _direct_sub_items=direct_sub_items,
-                            _direct_item=item,
-                        )
+                        else:
+                            seen_direct.add(item.id)
+                            pdf_bytes = self._render_full_work_sheet_pdf_bytes(
+                                None,
+                                highlight_id=0,
+                                _rfq=rfq,
+                                _item_name=rfq_item_name,
+                                _direct_sub_items=direct_sub_items,
+                                _direct_item=item,
+                            )
                     else:
                         continue
 

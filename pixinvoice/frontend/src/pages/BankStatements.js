@@ -1,5 +1,5 @@
 import React from 'react';
-import { flushSync } from 'react-dom';
+import { flushSync, createPortal } from 'react-dom';
 import { useQuery } from 'react-query';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import styled from 'styled-components';
@@ -46,7 +46,7 @@ const ProgressBarInner = styled.div`
   border-radius: 999px;
   background: #3498db;
   width: ${props => props.$percent || 0}%;
-  transition: width 0.25s ease;
+  transition: width ${props => props.$slow ? '1.2s' : '0.25s'} ease;
 `;
 
 const Header = styled.div`
@@ -198,6 +198,88 @@ const Td = styled.td`
   border-bottom: 1px solid #ecf0f1;
 `;
 
+// --- Javasolt számla bruttó tooltip ---
+const _tooltipAn = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+const _tooltipNc = (v, fb = 'HUF') => String(v || '').trim().toUpperCase() || fb;
+
+const ProposedInvoiceTooltip = ({ it, children }) => {
+  const [pos, setPos] = React.useState(null);
+  const txnCurrency = _tooltipNc(it?.statement_currency || it?.currency, 'HUF');
+  const bankAmount = Math.abs(_tooltipAn(it?.amount));
+  const allocations = Array.isArray(it?.allocations)
+    ? it.allocations.filter(a => a?.invoice_number || a?.invoice_id)
+    : [];
+  let rows = [];
+  if (allocations.length > 0) {
+    rows = allocations.map(a => {
+      const allocTxn = _tooltipAn(a.amount_txn);
+      const allocBase = _tooltipAn(a.amount);
+      const displayAmount = Math.abs(allocTxn) > 0.0001 ? allocTxn : allocBase;
+      return {
+        invoice_number: a.invoice_number || a.invoice_id || '-',
+        amount: displayAmount,
+      };
+    });
+  } else if (it?.proposed_invoice) {
+    const p = it.proposed_invoice;
+    rows = [{ invoice_number: p.invoice_number || p.id || '-', amount: _tooltipAn(p.amount ?? 0) }];
+  }
+  const hasData = rows.some(r => Math.abs(r.amount) > 0.0001);
+  const totalAllocated = rows.reduce((s, r) => s + _tooltipAn(r.amount), 0);
+  const diff = totalAllocated - bankAmount;
+  const fmt = (n) => Math.round(n).toLocaleString('hu-HU');
+  return (
+    <span
+      style={{ display: 'inline-flex', alignItems: 'center', maxWidth: '100%', overflow: 'hidden' }}
+      onMouseEnter={(e) => hasData && setPos({ x: e.clientX, y: e.clientY })}
+      onMouseLeave={() => setPos(null)}
+    >
+      {children}
+      {pos && hasData && createPortal(
+        <div style={{
+          position: 'fixed', top: pos.y + 14, left: pos.x + 10, zIndex: 99999,
+          background: '#fff', border: '1px solid #d1d5db', borderRadius: 6,
+          padding: '8px 12px', boxShadow: '0 4px 16px rgba(0,0,0,0.18)',
+          fontSize: 12, minWidth: 240, pointerEvents: 'none',
+        }}>
+          <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: 'left', padding: '2px 20px 4px 0', borderBottom: '1px solid #e5e7eb', color: '#6b7280', fontWeight: 600 }}>Számlaszám</th>
+                <th style={{ textAlign: 'right', padding: '2px 0 4px 0', borderBottom: '1px solid #e5e7eb', color: '#6b7280', fontWeight: 600 }}>Allokáció</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={i}>
+                  <td style={{ padding: '2px 20px 2px 0', color: '#111827' }}>{r.invoice_number}</td>
+                  <td style={{ padding: '2px 0', textAlign: 'right', color: '#111827', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>{fmt(r.amount)} {txnCurrency}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr><td colSpan={2} style={{ borderTop: '1px solid #e5e7eb', padding: '3px 0 0' }} /></tr>
+              <tr>
+                <td style={{ padding: '2px 20px 2px 0', fontWeight: 600, color: '#111827' }}>Összesen:</td>
+                <td style={{ padding: '2px 0', textAlign: 'right', fontWeight: 600, whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums', color: '#111827' }}>{fmt(totalAllocated)} {txnCurrency}</td>
+              </tr>
+              <tr>
+                <td style={{ padding: '2px 20px 2px 0', fontWeight: 600, color: diff > 0.5 ? '#b42318' : (diff < -0.5 ? '#b45309' : '#1e824c') }}>
+                  {diff > 0.5 ? 'Túlfizetés:' : (diff < -0.5 ? 'Maradvány:' : 'Egyezés:')}
+                </td>
+                <td style={{ padding: '2px 0', textAlign: 'right', fontWeight: 600, whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums', color: diff > 0.5 ? '#b42318' : (diff < -0.5 ? '#b45309' : '#1e824c') }}>
+                  {diff > 0.5 ? '+' : ''}{fmt(diff)} {txnCurrency}
+                </td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>,
+        document.body
+      )}
+    </span>
+  );
+};
+
 const BankStatements = () => {
   const [selectedCompanyId, setSelectedCompanyId] = React.useState(() => {
     try { return localStorage.getItem('selectedCompanyId'); } catch { return null; }
@@ -287,6 +369,7 @@ const BankStatements = () => {
   const [previewSourceStatementId, setPreviewSourceStatementId] = React.useState(null);
   const [fromDate, setFromDate] = React.useState('');
   const [toDate, setToDate] = React.useState('');
+  const [listSearchTerm, setListSearchTerm] = React.useState('');
   const [listPage, setListPage] = React.useState(1);
   const [listPageSize, setListPageSize] = React.useState(50);
   const [quickRange, setQuickRange] = React.useState('');
@@ -308,8 +391,18 @@ const BankStatements = () => {
     }
   });
   const [directionFilter, setDirectionFilter] = React.useState('all'); // all | incoming | outgoing
+  const [includeExternalInvoices, setIncludeExternalInvoices] = React.useState(() => {
+    try {
+      const raw = localStorage.getItem('bankStatements.includeExternalInvoices');
+      if (raw === null) return false;
+      return raw === '1';
+    } catch {
+      return false;
+    }
+  });
   const [customerModal, setCustomerModal] = React.useState({ open: false, hIdx: null, iIdx: null, item: null, customers: [], recommendedId: null, search: '', loading: false });
   const [allocationModal, setAllocationModal] = React.useState({ open: false, loading: false, hIdx: null, iIdx: null, item: null, invoices: [], allocations: {} });
+  const [allocationSort, setAllocationSort] = React.useState({ key: null, direction: 'asc' });
   const customerRowRefs = React.useRef({});
   const customerSearchInputRef = React.useRef(null);
   const fileInputRef = React.useRef(null);
@@ -380,6 +473,12 @@ const BankStatements = () => {
       localStorage.setItem('bankStatements.onlySavedPairings', onlySavedPairings ? '1' : '0');
     } catch {}
   }, [onlySavedPairings]);
+
+  React.useEffect(() => {
+    try {
+      localStorage.setItem('bankStatements.includeExternalInvoices', includeExternalInvoices ? '1' : '0');
+    } catch {}
+  }, [includeExternalInvoices]);
 
   React.useEffect(() => {
     try {
@@ -736,6 +835,57 @@ const BankStatements = () => {
     zIndex: 4,
   };
 
+  const toggleAllocationSort = React.useCallback((key) => {
+    setAllocationSort((prev) => {
+      if (prev.key === key) {
+        return { key, direction: prev.direction === 'asc' ? 'desc' : 'asc' };
+      }
+      return { key, direction: 'asc' };
+    });
+  }, []);
+
+  const allocationSortIndicator = React.useCallback((key) => {
+    if (allocationSort.key !== key) return '';
+    return allocationSort.direction === 'asc' ? ' ▲' : ' ▼';
+  }, [allocationSort]);
+
+  const allocationDisplayInvoices = React.useMemo(() => {
+    const rows = [...(allocationModal.invoices || [])];
+    if (!allocationSort.key) return rows;
+
+    const dir = allocationSort.direction === 'asc' ? 1 : -1;
+    const getVal = (inv) => {
+      switch (allocationSort.key) {
+        case 'invoice_number':
+          return String(inv?.invoice_number || inv?.invoiceNumber || '');
+        case 'partner':
+          return String(inv?.customer_name || inv?.supplier_name || '');
+        case 'due_date': {
+          const t = new Date(inv?.due_date || '').getTime();
+          return Number.isFinite(t) ? t : 0;
+        }
+        case 'outstanding':
+          return getInvoiceOutstandingInTxn(inv, allocationTxnCurrency);
+        case 'payable': {
+          const alloc = normalizeStornoAllocationValue(inv, allocationModal.allocations?.[inv?.id]);
+          return getInvoiceAllocationInTxn(inv, alloc, allocationTxnCurrency);
+        }
+        default:
+          return '';
+      }
+    };
+
+    rows.sort((a, b) => {
+      const av = getVal(a);
+      const bv = getVal(b);
+      if (typeof av === 'number' && typeof bv === 'number') {
+        return (av - bv) * dir;
+      }
+      return String(av).localeCompare(String(bv), 'hu', { sensitivity: 'base' }) * dir;
+    });
+    return rows;
+  }, [allocationModal.invoices, allocationModal.allocations, allocationSort, allocationTxnCurrency, getInvoiceOutstandingInTxn, getInvoiceAllocationInTxn, normalizeStornoAllocationValue]);
+
   const invoiceMatchStatus = (it) => {
     const txnAbs = Math.abs(amountNum(it.amount));
     const allocations = it.allocations || [];
@@ -942,7 +1092,7 @@ const BankStatements = () => {
             invoice_vat_amount_huf: amountNum(inv?.vat_amount_huf),
             invoice_outstanding: amountNum(inv?.outstanding),
           });
-          remaining -= Math.abs(getInvoiceAllocationInTxn(inv, alloc, txnCurrency));
+          remaining -= getInvoiceAllocationInTxn(inv, alloc, txnCurrency);
         }
       });
       const firstInvoice = selectedAllocs[0] && rows.find(r => String(r.id) === String(selectedAllocs[0].invoice_id));
@@ -1226,7 +1376,7 @@ const BankStatements = () => {
           invoice_vat_amount_huf: amountNum(inv?.vat_amount_huf),
           invoice_outstanding: amountNum(inv?.outstanding),
         });
-        remaining -= Math.abs(getInvoiceAllocationInTxn(inv, alloc, txnCurrency));
+        remaining -= getInvoiceAllocationInTxn(inv, alloc, txnCurrency);
       }
     });
 
@@ -1783,7 +1933,18 @@ const BankStatements = () => {
         setFiles([]);
       } else {
         setImportPct(25, 'XML/STM feldolgozás indítása');
-        const res = await bankStatementsAPI.importStmDryRun(selectedCompanyId, files, { skipExisting });
+        // Slowly crawl from 25→55% while backend processes, so bar doesn't look frozen
+        let _tickPct = 25;
+        const _ticker = setInterval(() => {
+          _tickPct = Math.min(55, _tickPct + 0.8);
+          setImportProgress(prev => prev.active ? { ...prev, percent: _tickPct, _slow: true } : prev);
+        }, 1000);
+        let res;
+        try {
+          res = await bankStatementsAPI.importStmDryRun(selectedCompanyId, files, { skipExisting });
+        } finally {
+          clearInterval(_ticker);
+        }
         setImportPct(60, 'Előnézeti tételek feldolgozása');
         const payload = res.data || {};
         const switched = maybeHandleCompanyMismatch(payload);
@@ -2354,6 +2515,7 @@ const BankStatements = () => {
 
   const openAllocationForItem = async (hIdx, iIdx, it, options = {}) => {
     const showAllInvoices = !!options?.showAllInvoices;
+    const includeExternal = options?.includeExternalInvoices ?? includeExternalInvoices;
     const txnAmount = amountNum(it.amount);
     const headerCurrency = stmPreview?.[hIdx]?.currency || null;
     const txnCurrency = normalizeCurrency(it?.statement_currency || headerCurrency || it?.currency || 'HUF');
@@ -2374,6 +2536,7 @@ const BankStatements = () => {
       allocations: {},
       mode: isIncomingTxn ? 'outgoing' : 'incoming',
       showAllInvoices,
+      includeExternalInvoices: includeExternal,
     });
     try {
       const normalizeInvoiceNo = (v) => String(v || '').trim().toUpperCase();
@@ -2514,8 +2677,9 @@ const BankStatements = () => {
           };
         });
 
-        setAllocationPct(45, 'Külső kimenő számlák egyeztetése');
-        try {
+        if (includeExternal) {
+          setAllocationPct(45, 'Külső kimenő számlák egyeztetése');
+          try {
           let customerDetails = null;
           try {
             const customerRes = await customerAPI.getCustomer(custId);
@@ -2655,7 +2819,8 @@ const BankStatements = () => {
           const externalFirst = rows.filter(r => r?.source === 'external_outgoing').sort(sortInvoiceRows);
           const regularAfter = rows.filter(r => r?.source !== 'external_outgoing').sort(sortInvoiceRows);
           rows = [...externalFirst, ...regularAfter];
-        } catch {}
+          } catch {}
+        }
 
         // Inject implied exchange rate for foreign-currency invoices when txnCurrency is HUF
         if (normalizeCurrency(txnCurrency) === 'HUF') {
@@ -3190,7 +3355,7 @@ const BankStatements = () => {
         }
         if (Math.abs(alloc) > 0.0001) {
           init[inv.id] = alloc;
-          remaining -= Math.abs(getInvoiceAllocationInTxn(inv, alloc, txnCurrency));
+          remaining -= getInvoiceAllocationInTxn(inv, alloc, txnCurrency);
         }
       });
       setAllocationPct(100, 'Kész');
@@ -3284,6 +3449,7 @@ const BankStatements = () => {
 
   const filteredList = React.useMemo(() => {
     const list = Array.isArray(data) ? data : (data?.results || []);
+    const normStr = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
     const inRange = (dateVal) => {
       const val = String(dateVal || '').slice(0, 10);
       if (!val) return false;
@@ -3299,13 +3465,30 @@ const BankStatements = () => {
     return list.filter((st) => {
       if (!inRange(st?.statement_date)) return false;
       if (hideZeroAmounts && isZeroTotal(st)) return false;
+      if (listSearchTerm.trim()) {
+        const terms = normStr(listSearchTerm).split(/\s+/).filter(Boolean);
+        const hay = normStr([
+          st?.sequence_number,
+          st?.bank_account,
+          st?.bank_account_name,
+          st?.currency,
+          st?.note,
+          st?.statement_date,
+          // Search inside items: remittance, counterparty_name, amount
+          ...(Array.isArray(st?.import_preview_items)
+            ? st.import_preview_items.flatMap(it => [it?.remittance, it?.comment, it?.counterparty_name, it?.amount])
+            : []
+          ),
+        ].join(' '));
+        if (!terms.every((t) => hay.includes(t))) return false;
+      }
       return true;
     });
-  }, [data, fromDate, toDate, hideZeroAmounts]);
+  }, [data, fromDate, toDate, hideZeroAmounts, listSearchTerm]);
 
   React.useEffect(() => {
     setListPage(1);
-  }, [fromDate, toDate, hideZeroAmounts, selectedCompanyId]);
+  }, [fromDate, toDate, hideZeroAmounts, selectedCompanyId, listSearchTerm]);
 
   const pagedFilteredList = React.useMemo(() => {
     const startIdx = Math.max(0, (listPage - 1) * listPageSize);
@@ -3333,7 +3516,17 @@ const BankStatements = () => {
         {!isImportPreviewPage && (
           <Header>
             <Title>Új bankkivonat - Import</Title>
-            <ActionButton to={importBackTarget}>{importBackLabel}</ActionButton>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 14, color: '#374151' }}>
+                <input
+                  type="checkbox"
+                  checked={includeExternalInvoices}
+                  onChange={(e) => setIncludeExternalInvoices(e.target.checked)}
+                />
+                Külső számlák is
+              </label>
+              <ActionButton to={importBackTarget}>{importBackLabel}</ActionButton>
+            </div>
           </Header>
         )}
         {!isImportPreviewPage && (
@@ -3387,7 +3580,7 @@ const BankStatements = () => {
                 <strong>{importProgress.percent}%</strong>
               </ProgressTop>
               <ProgressBarOuter>
-                <ProgressBarInner $percent={importProgress.percent} />
+                <ProgressBarInner $percent={importProgress.percent} $slow={importProgress._slow} />
               </ProgressBarOuter>
             </ProgressWrap>
           )}
@@ -3403,7 +3596,7 @@ const BankStatements = () => {
                   <strong>{importProgress.percent}%</strong>
                 </ProgressTop>
                 <ProgressBarOuter>
-                  <ProgressBarInner $percent={importProgress.percent} />
+                  <ProgressBarInner $percent={importProgress.percent} $slow={importProgress._slow} />
                 </ProgressBarOuter>
               </ProgressWrap>
             )}
@@ -3597,9 +3790,11 @@ const BankStatements = () => {
                                     title={txnIncoming ? 'Kattints az allokációhoz (Számlák)' : 'Kattints az allokációhoz (Bejövő)'}
                                   >
                                     <div style={{ display:'flex', alignItems:'center', gap:6, flexWrap:'wrap' }}>
-                                      <span style={{ overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }} title={proposedDisplay?.effectiveInvoiceNumber || ''}>
-                                        {proposedDisplay?.effectiveInvoiceNumber || '-'}
-                                      </span>
+                                      <ProposedInvoiceTooltip it={it}>
+                                        <span style={{ overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                                          {proposedDisplay?.effectiveInvoiceNumber || '-'}
+                                        </span>
+                                      </ProposedInvoiceTooltip>
                                       <span style={{ borderRadius:10, padding:'1px 6px', fontSize:11, background: (proposedDisplay?.effectiveInvoiceNumber || proposedDisplay?.firstAlloc) ? '#e6f7ed' : '#fff0f0', color: (proposedDisplay?.effectiveInvoiceNumber || proposedDisplay?.firstAlloc) ? '#1e824c' : '#b42318', border: `1px solid ${(proposedDisplay?.effectiveInvoiceNumber || proposedDisplay?.firstAlloc) ? '#bfe8d0' : '#fecaca'}` }}>
                                         {invLabel}
                                       </span>
@@ -3856,7 +4051,10 @@ const BankStatements = () => {
                           <input
                             type="checkbox"
                             checked={!!allocationModal.showAllInvoices}
-                            onChange={(e) => openAllocationForItem(allocationModal.hIdx, allocationModal.iIdx, allocationModal.item, { showAllInvoices: e.target.checked })}
+                            onChange={(e) => openAllocationForItem(allocationModal.hIdx, allocationModal.iIdx, allocationModal.item, {
+                              showAllInvoices: e.target.checked,
+                              includeExternalInvoices: !!allocationModal.includeExternalInvoices,
+                            })}
                           />
                           Minden számla
                         </label>
@@ -3871,7 +4069,7 @@ const BankStatements = () => {
                         <tr>
                           <th style={allocationHeaderCellStyle}>
                             {(() => {
-                              const _allIds = (allocationModal.invoices || []).map(i => i.id);
+                              const _allIds = allocationDisplayInvoices.map(i => i.id);
                               const _checkedCnt = _allIds.filter(id => Math.abs(amountNum(allocationModal.allocations?.[id])) > 0.0001).length;
                               const _allChk = _allIds.length > 0 && _checkedCnt === _allIds.length;
                               const _someChk = _checkedCnt > 0 && _checkedCnt < _allIds.length;
@@ -3905,15 +4103,25 @@ const BankStatements = () => {
                               );
                             })()}
                           </th>
-                          <th style={allocationHeaderCellStyle}>{allocationModal.mode === 'incoming' ? 'Bejövő számla' : 'Számla'}</th>
-                          <th style={allocationHeaderCellStyle}>Partner</th>
-                          <th style={allocationHeaderCellStyle}>Esedékes</th>
-                          <th style={allocationHeaderCellStyle}>Hátralék</th>
-                          <th style={allocationHeaderCellStyle}>Kifizetendő</th>
+                          <th style={{ ...allocationHeaderCellStyle, cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleAllocationSort('invoice_number')}>
+                            {allocationModal.mode === 'incoming' ? 'Bejövő számla' : 'Számla'}{allocationSortIndicator('invoice_number')}
+                          </th>
+                          <th style={{ ...allocationHeaderCellStyle, cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleAllocationSort('partner')}>
+                            Partner{allocationSortIndicator('partner')}
+                          </th>
+                          <th style={{ ...allocationHeaderCellStyle, cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleAllocationSort('due_date')}>
+                            Esedékes{allocationSortIndicator('due_date')}
+                          </th>
+                          <th style={{ ...allocationHeaderCellStyle, cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleAllocationSort('outstanding')}>
+                            Hátralék{allocationSortIndicator('outstanding')}
+                          </th>
+                          <th style={{ ...allocationHeaderCellStyle, cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleAllocationSort('payable')}>
+                            Kifizetendő{allocationSortIndicator('payable')}
+                          </th>
                         </tr>
                       </thead>
                       <tbody>
-                        {(allocationModal.invoices || []).map((inv) => {
+                        {allocationDisplayInvoices.map((inv) => {
                           const checked = Math.abs(amountNum(allocationModal.allocations?.[inv.id])) > 0.0001;
                           const allocVal = checked ? normalizeStornoAllocationValue(inv, allocationModal.allocations?.[inv.id]) : 0;
                           const outstandingVal = amountNum(inv.outstanding);
@@ -4094,7 +4302,14 @@ const BankStatements = () => {
     <Container>
       <Header>
         <Title>Bank kivonatok</Title>
-        <div style={{ display:'flex', gap:8 }}>
+        <div style={{ display:'flex', gap:8, alignItems:'center', flexWrap:'wrap' }}>
+          <input
+            type="text"
+            value={listSearchTerm}
+            onChange={(e) => setListSearchTerm(e.target.value)}
+            placeholder="Keresés számlaszám, megjegyzés alapján..."
+            style={{ padding:'8px 12px', border:'1px solid #ddd', borderRadius:4, fontSize:14, minWidth:300 }}
+          />
           <ActionButton to="/bank-statements/uploaded">Feltöltött bankkivonatok</ActionButton>
           <ActionButton to="/bank-statements/import">Import</ActionButton>
           <ActionButton to="/bank-statements/new">Új bankkivonat</ActionButton>
@@ -4152,8 +4367,15 @@ const BankStatements = () => {
               </tr>
             </thead>
             <tbody>
-              {pagedFilteredList.map((st) => (
-                <tr key={st.id}>
+              {pagedFilteredList.map((st) => {
+                const stItems = Array.isArray(st.import_preview_items) ? st.import_preview_items : (Array.isArray(st.items) ? st.items : []);
+                const tooltipText = stItems.length > 0
+                  ? stItems.slice(0, 10).map((it, i) =>
+                      `${i+1}. ${it.counterparty_name || it.remittance || '-'} | ${it.amount != null ? it.amount : '-'} ${st.currency || ''} | ${it.comment || it.remittance || ''}`
+                    ).join('\n') + (stItems.length > 10 ? `\n… és még ${stItems.length - 10} tétel` : '')
+                  : null;
+                return (
+                <tr key={st.id} title={tooltipText || undefined} style={{ cursor: tooltipText ? 'help' : undefined }}>
                   <Td
                     onDoubleClick={() => openStatementEditor(st.id)}
                     style={{ cursor: 'pointer' }}
@@ -4222,7 +4444,8 @@ const BankStatements = () => {
                     )}
                   </Td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </Table>
           <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '10px 12px' }}>
@@ -4428,9 +4651,11 @@ const BankStatements = () => {
                                   title={txnIncoming ? 'Kattints az allokációhoz (Számlák)' : 'Kattints az allokációhoz (Bejövő)'}
                                 >
                                   <div style={{ display:'flex', alignItems:'center', gap:6, flexWrap:'wrap' }}>
-                                    <span style={{ overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }} title={proposedDisplay?.effectiveInvoiceNumber || ''}>
-                                      {proposedDisplay?.effectiveInvoiceNumber || '-'}
-                                    </span>
+                                    <ProposedInvoiceTooltip it={it}>
+                                      <span style={{ overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                                        {proposedDisplay?.effectiveInvoiceNumber || '-'}
+                                      </span>
+                                    </ProposedInvoiceTooltip>
                                     <span style={{ borderRadius:10, padding:'1px 6px', fontSize:11, background: (proposedDisplay?.effectiveInvoiceNumber || proposedDisplay?.firstAlloc) ? '#e6f7ed' : '#fff0f0', color: (proposedDisplay?.effectiveInvoiceNumber || proposedDisplay?.firstAlloc) ? '#1e824c' : '#b42318', border: `1px solid ${(proposedDisplay?.effectiveInvoiceNumber || proposedDisplay?.firstAlloc) ? '#bfe8d0' : '#fecaca'}` }}>
                                       {invLabel}
                                     </span>
@@ -4677,7 +4902,10 @@ const BankStatements = () => {
                         <input
                           type="checkbox"
                           checked={!!allocationModal.showAllInvoices}
-                          onChange={(e) => openAllocationForItem(allocationModal.hIdx, allocationModal.iIdx, allocationModal.item, { showAllInvoices: e.target.checked })}
+                          onChange={(e) => openAllocationForItem(allocationModal.hIdx, allocationModal.iIdx, allocationModal.item, {
+                            showAllInvoices: e.target.checked,
+                            includeExternalInvoices: !!allocationModal.includeExternalInvoices,
+                          })}
                         />
                         Minden számla
                       </label>
@@ -4692,7 +4920,7 @@ const BankStatements = () => {
                       <tr>
                         <th style={allocationHeaderCellStyle}>
                           {(() => {
-                            const _allIds = (allocationModal.invoices || []).map(i => i.id);
+                            const _allIds = allocationDisplayInvoices.map(i => i.id);
                             const _checkedCnt = _allIds.filter(id => Math.abs(amountNum(allocationModal.allocations?.[id])) > 0.0001).length;
                             const _allChk = _allIds.length > 0 && _checkedCnt === _allIds.length;
                             const _someChk = _checkedCnt > 0 && _checkedCnt < _allIds.length;
@@ -4726,15 +4954,25 @@ const BankStatements = () => {
                             );
                           })()}
                         </th>
-                        <th style={allocationHeaderCellStyle}>{allocationModal.mode === 'incoming' ? 'Bejövő számla' : 'Számla'}</th>
-                        <th style={allocationHeaderCellStyle}>Partner</th>
-                        <th style={allocationHeaderCellStyle}>Esedékes</th>
-                        <th style={allocationHeaderCellStyle}>Hátralék</th>
-                        <th style={allocationHeaderCellStyle}>Kifizetendő</th>
+                        <th style={{ ...allocationHeaderCellStyle, cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleAllocationSort('invoice_number')}>
+                          {allocationModal.mode === 'incoming' ? 'Bejövő számla' : 'Számla'}{allocationSortIndicator('invoice_number')}
+                        </th>
+                        <th style={{ ...allocationHeaderCellStyle, cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleAllocationSort('partner')}>
+                          Partner{allocationSortIndicator('partner')}
+                        </th>
+                        <th style={{ ...allocationHeaderCellStyle, cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleAllocationSort('due_date')}>
+                          Esedékes{allocationSortIndicator('due_date')}
+                        </th>
+                        <th style={{ ...allocationHeaderCellStyle, cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleAllocationSort('outstanding')}>
+                          Hátralék{allocationSortIndicator('outstanding')}
+                        </th>
+                        <th style={{ ...allocationHeaderCellStyle, cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleAllocationSort('payable')}>
+                          Kifizetendő{allocationSortIndicator('payable')}
+                        </th>
                       </tr>
                     </thead>
                     <tbody>
-                      {(allocationModal.invoices || []).map((inv) => {
+                      {allocationDisplayInvoices.map((inv) => {
                         const checked = Math.abs(amountNum(allocationModal.allocations?.[inv.id])) > 0.0001;
                         const allocVal = checked ? normalizeStornoAllocationValue(inv, allocationModal.allocations?.[inv.id]) : 0;
                         const outstandingVal = amountNum(inv.outstanding);

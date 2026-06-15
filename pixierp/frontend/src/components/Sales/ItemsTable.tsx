@@ -39,6 +39,7 @@ interface Item {
   manufacturing_product_name?: string;
   service_name?: string;
   description?: string;
+  internal_description?: string;
   quantity: number;
   unit?: string;
   net_unit_price?: number;
@@ -911,6 +912,8 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
         onClose={() => setImpositionItem(null)}
         initialItemData={impositionItem?.imposition_data || null}
         itemContextLabel={impositionItem ? (impositionItem.product_name || impositionItem.material_name || impositionItem.manufacturing_product_name || impositionItem.service_name || impositionItem.description || `#${impositionItem.id}`) : undefined}
+        itemDescription={impositionItem?.description || undefined}
+        itemInternalDescription={impositionItem?.internal_description || undefined}
         onSaveToItem={async (snapshot) => {
           if (!impositionItem) return;
           await salesService.updateQuoteRequestItem(impositionItem.id, { imposition_data: snapshot });

@@ -3327,11 +3327,18 @@ class PdfMergeView(APIView):
 
     def post(self, request):
         files = request.FILES.getlist('pdfs')
-        if not files or len(files) < 2:
-            return Response({'error': 'Legalább 2 PDF fájl szükséges'}, status=400)
+        if not files:
+            return Response({'error': 'Legalább 1 PDF fájl szükséges'}, status=400)
 
         if len(files) > 50:
             return Response({'error': 'Maximum 50 PDF fűzhető össze'}, status=400)
+
+        # Single file: return it directly without merging
+        if len(files) == 1:
+            from django.http import HttpResponse
+            response = HttpResponse(files[0].read(), content_type='application/pdf')
+            response['Content-Disposition'] = 'attachment; filename="merged.pdf"'
+            return response
 
         try:
             import fitz
@@ -3352,11 +3359,18 @@ class PdfMergeView(APIView):
                         f.write(chunk)
                 try:
                     src = fitz.open(path)
+                    if src.is_encrypted:
+                        # Try opening without password (some PDFs have empty passwords)
+                        if not src.authenticate(''):
+                            src.close()
+                            merged.close()
+                            return Response({'error': f'A(z) {idx+1}. fájl titkosított (jelszóval védett)'}, status=400)
                     merged.insert_pdf(src)
                     src.close()
-                except Exception:
+                except Exception as e:
+                    err_msg = str(e)
                     merged.close()
-                    return Response({'error': f'A(z) {idx+1}. fájl nem érvényes PDF'}, status=400)
+                    return Response({'error': f'A(z) {idx+1}. fájl nem megnyitható: {err_msg}'}, status=400)
 
             out_path = os.path.join(tmpdir, 'merged.pdf')
             merged.save(out_path)

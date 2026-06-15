@@ -842,6 +842,15 @@ const BankStatementForm = () => {
           )}
 
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, marginTop: 16 }}>
+            {isEdit && (
+              <Button
+                type="button"
+                onClick={() => navigate(`/bank-statements/import/preview?openUploaded=${id}&source=uploaded`)}
+                style={{ background: '#2980b9', color: '#fff', borderColor: '#2980b9' }}
+              >
+                Megnyitás importnézetben
+              </Button>
+            )}
             <Button type="submit">Mentés</Button>
           </div>
         </form>

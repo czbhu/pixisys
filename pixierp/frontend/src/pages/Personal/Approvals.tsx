@@ -3,6 +3,7 @@ import EnhancedTable from '../../components/EnhancedTable';
 import { Button, Space, message, Tag, Input, Select, Modal, Tooltip } from 'antd';
 import { CheckOutlined, CloseOutlined, SearchOutlined, EyeOutlined } from '@ant-design/icons';
 import api from '../../services/api';
+import { useNewRowTracker, newDotColumn } from '../../hooks/useNewRowTracker';
 import dayjs from 'dayjs';
 import { useAuth } from '../../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
@@ -24,7 +25,9 @@ const Approvals: React.FC = () => {
         try {
             const response = await api.get('/sales/approval-requests/');
             const list = response.data.results || response.data;
-            setData(Array.isArray(list) ? list : []);
+            const approvalArr = Array.isArray(list) ? list : [];
+            setData(approvalArr);
+            loadNewApprovalIds(approvalArr.map((r: any) => r.id).filter(Boolean));
         } catch (error: any) {
             message.error(error?.response?.data?.error || 'Hiba a kérelmek betöltésekor');
             setData([]);
@@ -68,7 +71,10 @@ const Approvals: React.FC = () => {
         return true;
     });
 
+    const { newIds: newApprovalIds, markSeen: markApprovalSeen, loadNewIds: loadNewApprovalIds } = useNewRowTracker('/personal/approvals');
+
     const columns = [
+        newDotColumn(newApprovalIds),
         {
             title: 'Műveletek',
             key: 'actions',

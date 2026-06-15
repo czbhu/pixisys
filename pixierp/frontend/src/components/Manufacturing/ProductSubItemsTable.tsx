@@ -175,6 +175,24 @@ export const ProductSubItemsTable: React.FC<Props> = ({
       .catch(() => {});
   }, []);
 
+  // Resolve missing supplier_name / department_name once the lookup lists are loaded
+  useEffect(() => {
+    if (suppliers.length === 0 && departments.length === 0) return;
+    setItems(prev => prev.map(it => {
+      let changed = false;
+      let next = { ...it };
+      if (!it.supplier_name && it.supplier && suppliers.length > 0) {
+        const sup = suppliers.find(s => s.id === it.supplier);
+        if (sup) { next.supplier_name = sup.name; changed = true; }
+      }
+      if (!it.department_name && it.department && departments.length > 0) {
+        const dept = departments.find(d => d.id === it.department);
+        if (dept) { next.department_name = dept.name; changed = true; }
+      }
+      return changed ? next : it;
+    }));
+  }, [suppliers, departments]);
+
   const handleSupplierChange = async (id: number, supplierId: number | null) => {
     const prev = items;
     const next = items.map(it => {

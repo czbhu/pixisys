@@ -91,6 +91,8 @@ interface ItemSelectorModalProps {
   hideCodeField?: boolean;
   /** When provided, hides the inline footer buttons and exposes doSave via this ref */
   saveRef?: React.MutableRefObject<{ save: (keepOpen: boolean) => Promise<void> } | null>;
+  /** Callback to save an imposition snapshot at RFQ level (shows "Mentés az ajánlathoz" button in ImpositionHelperModal) */
+  onImpositionSaveToRfq?: (snapshot: any, autoName: string) => void | Promise<void>;
 }
 
 interface CostItem {
@@ -125,7 +127,7 @@ const { Search } = Input;
 
 const defaultVat = 27;
 
-export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defaultType = 'product', onCancel, onAdd, allowCreate = true, mode = 'add', initialSelection, initialValues, initialFormulas, customer, rfqId, rfqCurrency, initialManuPayload, quoteItemId, showCostTypeField, orderItems, expandCosts, renderInline = false, hideCodeField = false, saveRef }) => {
+export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defaultType = 'product', onCancel, onAdd, allowCreate = true, mode = 'add', initialSelection, initialValues, initialFormulas, customer, rfqId, rfqCurrency, initialManuPayload, quoteItemId, showCostTypeField, orderItems, expandCosts, renderInline = false, hideCodeField = false, saveRef, onImpositionSaveToRfq }) => {
   const navigate = useNavigate();
   const screens = Grid.useBreakpoint();
   const isMobile = !screens.md;
@@ -443,7 +445,6 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
     setManuSellCurrencyId(null);
     setManuCostCurrencyCode('HUF');
     setManuCostCurrencyId(null);
-    setIsRateLocked(false);
     setLockedExchangeRate(null);
     setLinkedItem(null);
     setLinkSearchQuery('');
@@ -470,6 +471,18 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
       }
     }
   }, [open, defaultType, mode, quoteItemId, savedPriceFromCalc]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Initialize sell currency from rfqCurrency for direct (no-MP) items in edit mode.
+  // Runs when manuCurrencies loads (which is async) so it reliably overrides the 'HUF' reset.
+  useEffect(() => {
+    if (!open || mode !== 'edit' || !quoteItemId) return;
+    if (!rfqCurrency || !manuCurrencies.length) return;
+    const rfqCurrObj = manuCurrencies.find((c: any) => c.code.toUpperCase() === rfqCurrency.toUpperCase());
+    if (rfqCurrObj) {
+      setManuSellCurrencyCode(rfqCurrObj.code.toUpperCase());
+      setManuSellCurrencyId(rfqCurrObj.id ?? null);
+    }
+  }, [open, mode, quoteItemId, rfqCurrency, manuCurrencies]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!open || !initialSelection) return;
@@ -526,7 +539,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           manu_quantity: Number(initialValues?.quantity) || 1,
           quantity_unit: initialValues?.unit || 'db',
           manu_net_unit_price: Number(initialValues?.net_unit_price) || 0,
-          manu_net_total: (Number(initialValues?.quantity) || 1) * (Number(initialValues?.net_unit_price) || 0),
+          manu_net_total: parseFloat(((Number(initialValues?.quantity) || 1) * (Number(initialValues?.net_unit_price) || 0)).toFixed(2)),
         });
         if (initialValues?.cost_items_data && initialValues.cost_items_data.length > 0) {
           const loadedItems: CostItem[] = initialValues.cost_items_data.map((ci: any, idx: number) => ({
@@ -546,16 +559,44 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           manu_quantity: Number(initialValues?.quantity) || 1,
           quantity_unit: initialValues?.unit || 'db',
           manu_net_unit_price: Number(initialValues?.net_unit_price) || 0,
-          manu_net_total: (Number(initialValues?.quantity) || 1) * (Number(initialValues?.net_unit_price) || 0),
+          manu_net_total: parseFloat(((Number(initialValues?.quantity) || 1) * (Number(initialValues?.net_unit_price) || 0)).toFixed(2)),
         });
+        // Initialize sell currency from RFQ currency for direct (no-MP) items
+        if (rfqCurrency && manuCurrencies.length > 0) {
+          const rfqCurrObj = manuCurrencies.find(c => c.code.toUpperCase() === rfqCurrency.toUpperCase());
+          if (rfqCurrObj) {
+            setManuSellCurrencyCode(rfqCurrObj.code.toUpperCase());
+            setManuSellCurrencyId(rfqCurrObj.id ?? null);
+          }
+        }
         if (initialValues?.is_rate_locked != null) setIsRateLocked(!!initialValues.is_rate_locked);
         if (initialValues?.locked_exchange_rate != null) setLockedExchangeRate(Number(initialValues.locked_exchange_rate));
         // Load saved cost items for direct (no-MP) items
         if (initialValues?.cost_items_data && initialValues.cost_items_data.length > 0) {
-          const loadedItems: CostItem[] = initialValues.cost_items_data.map((ci: any, idx: number) => ({
-            ...ci,
-            id: ci.id ?? -(idx + 1),
-          }));
+          const loadedItems: CostItem[] = initialValues.cost_items_data.map((ci: any, idx: number) => {
+            // Inject supplier into manuSuppliers list so the Select can show the name
+            if (!ci.is_internal && ci.supplier) {
+              const sName = ci.supplier_name || `#${ci.supplier}`;
+              setManuSuppliers(prev => {
+                if (prev.find((s: any) => s.id === ci.supplier)) return prev;
+                return [{ id: ci.supplier, name: sName }, ...prev];
+              });
+            }
+            if (ci.is_internal && ci.department) {
+              const dName = ci.department_name || `#${ci.department}`;
+              setManuDepartments(prev => {
+                if (prev.find((d: any) => d.id === ci.department)) return prev;
+                return [{ id: ci.department, name: dName }, ...prev];
+              });
+            }
+            return {
+              ...ci,
+              id: ci.id ?? -(idx + 1),
+              // Map API field names to CostItem interface names
+              supplier_id: ci.supplier_id ?? ci.supplier ?? null,
+              department_id: ci.department_id ?? ci.department ?? null,
+            };
+          });
           setManuCostItems(loadedItems);
           setSyncQtyRows(new Set(loadedItems.filter(i => i.syncQty).map(i => i.id)));
         }
@@ -662,6 +703,13 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
             setManuSuppliers(prev => {
               if (prev.find((s: any) => s.id === c.supplier)) return prev;
               return [{ id: c.supplier, name: c.supplier_name }, ...prev];
+            });
+          }
+          if (c.is_internal && c.department) {
+            const dName = c.department_name || `#${c.department}`;
+            setManuDepartments(prev => {
+              if (prev.find((d: any) => d.id === c.department)) return prev;
+              return [{ id: c.department, name: dName }, ...prev];
             });
           }
           return {
@@ -837,9 +885,19 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
       const manuSvcList = (manuSvcsRes as any).results ?? manuSvcsRes ?? [];
       setManuCostServices(Array.isArray(manuSvcList) ? manuSvcList : []);
       const rawSupps = (suppsRes as any).results ?? suppsRes ?? [];
-      setManuSuppliers(Array.isArray(rawSupps) ? rawSupps.sort((a: any, b: any) => a.name.localeCompare(b.name)) : []);
+      const suppList = Array.isArray(rawSupps) ? rawSupps.sort((a: any, b: any) => a.name.localeCompare(b.name)) : [];
+      setManuSuppliers(prev => {
+        const merged = [...suppList];
+        prev.forEach(p => { if (!merged.find(s => s.id === p.id)) merged.push(p); });
+        return merged;
+      });
       const deptList = (deptsRes as any).results ?? deptsRes ?? [];
-      setManuDepartments(Array.isArray(deptList) ? deptList : []);
+      const deptArr = Array.isArray(deptList) ? deptList : [];
+      setManuDepartments(prev => {
+        const merged = [...deptArr];
+        prev.forEach(p => { if (!merged.find(d => d.id === p.id)) merged.push(p); });
+        return merged;
+      });
       // Currencies
       const currList: ManuCurrency[] = Array.isArray(currencyRes) ? currencyRes : [];
       setManuCurrencies(currList);
@@ -1372,6 +1430,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           is_rate_locked: isRateLocked,
           locked_exchange_rate: isRateLocked ? lockedExchangeRate : null,
           cost_items_data: manuCostItems.map(ci => ({ ...ci, syncQty: syncQtyRows.has(ci.id) })),
+          _sellCurrencyCode: manuSellCurrencyCode,
           keepOpen,
           files: manuPendingFiles,
           fileRemarks: manuPendingFileRemarks,
@@ -2874,6 +2933,9 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         initialProductHeight={Number(manuForm.getFieldValue('length')) || undefined}
         initialProductQty={Number(manuForm.getFieldValue('manu_quantity')) || undefined}
         initialPresetId={impositionInitialPresetId}
+        itemDescription={String(form.getFieldValue('description') ?? initialValues?.description ?? '')}
+        itemInternalDescription={String(form.getFieldValue('internal_description') ?? initialValues?.internal_description ?? '')}
+        onSaveToRfq={onImpositionSaveToRfq}
       />
 
       {/* ── Cost item material / service search modal ─────────────────── */}

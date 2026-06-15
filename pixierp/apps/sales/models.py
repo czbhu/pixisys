@@ -93,6 +93,8 @@ class QuoteRequest(models.Model):
     # Érvényességi idő (napokban) és lejárati dátum
     validity_days = models.PositiveIntegerField(default=30, verbose_name="Érvényesség (nap)")
     valid_until = models.DateField(null=True, blank=True, verbose_name="Érvényes")
+    # RFQ-szintű impozíció presetek (lista)
+    imposition_presets = models.JSONField(default=list, blank=True, verbose_name="Impozíció presetek")
 
     class Meta:
         verbose_name = "Árajánlat"
@@ -691,9 +693,13 @@ class SearchStat(models.Model):
     ref_id = models.IntegerField()
     count = models.IntegerField(default=0)
     last_hit = models.DateTimeField(auto_now=True)
+    user = models.ForeignKey(
+        'auth.User', null=True, blank=True, on_delete=models.CASCADE,
+        related_name='search_stats', verbose_name="Felhasználó"
+    )
 
     class Meta:
-        unique_together = ('item_type', 'ref_id')
+        unique_together = ('item_type', 'ref_id', 'user')
         verbose_name = "Keresési statisztika"
         verbose_name_plural = "Keresési statisztikák"
 

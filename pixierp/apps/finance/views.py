@@ -186,6 +186,17 @@ class PixinvoiceClient:
 	def list_contacts(self, company_id=None):
 		return self._fetch_all('contacts', company_id=company_id)
 
+	def get_raw(self, path: str, params: dict = None, company_id=None):
+		"""Generic GET to the pixinvoice API."""
+		url = f"{self.base}/{path.strip('/')}/"
+		p = dict(params or {})
+		cid = company_id if company_id is not None else self.company_id
+		if cid:
+			p.setdefault('company_id', cid)
+		r = requests.get(url, headers=self.headers, params=p, timeout=20)
+		r.raise_for_status()
+		return r.json()
+
 	def get_contact(self, contact_id: str, company_id=None):
 		url = f"{self.base}/contacts/{contact_id}/"
 		params = {'company_id': company_id or self.company_id} if (company_id or self.company_id) else None

@@ -16,6 +16,7 @@ export default function EmailModal({
   invoiceId,
   attachmentsHint,
   attachments = [],
+  headerExtra = null,
 }) {
   const [from, setFrom] = useState(defaultFrom || '');
   const [replyTo, setReplyTo] = useState(defaultReplyTo || '');
@@ -123,6 +124,7 @@ export default function EmailModal({
       <div style={styles.modal}>
         <div style={styles.header}>
           <h3 style={{ margin: 0 }}>E-mail küldése</h3>
+          {headerExtra && <div style={{ marginTop: 8 }}>{headerExtra}</div>}
           {attachments && attachments.length > 0 ? (
             <div style={{ gridColumn: '1 / span 2', marginTop: 6 }}>
               <div style={{ marginBottom: 4, fontWeight: 500 }}>Csatolmányok:</div>
@@ -220,38 +222,38 @@ export default function EmailModal({
             )}
           </div>
           
-          {Array.isArray(contacts) && contacts.length > 0 && (
-            <div style={styles.contactsContainer}>
-              <div style={styles.contactsHeader}>
-                <div>Kapcsolattartók</div>
-                <div>
-                  <label style={{ marginRight: 8 }}>
-                    <input type="radio" name="assignTarget" value="to" checked={assignTarget==='to'} onChange={() => setAssignTarget('to')} /> To
-                  </label>
-                  <label style={{ marginRight: 8 }}>
-                    <input type="radio" name="assignTarget" value="cc" checked={assignTarget==='cc'} onChange={() => setAssignTarget('cc')} /> Cc
-                  </label>
-                  <label>
-                    <input type="radio" name="assignTarget" value="bcc" checked={assignTarget==='bcc'} onChange={() => setAssignTarget('bcc')} /> Bcc
-                  </label>
-                </div>
-              </div>
-              <div style={styles.contactsList}>
-                {contacts.map(c => {
-                  const name = [c.first_name, c.last_name].filter(Boolean).join(' ') || c.email || '—';
-                  const mail = c.email;
-                  if (!mail) return null;
-                  return (
-                    <button key={c.id || mail} type="button" style={styles.contactChip} onClick={() => addEmail(mail)} title={mail}>
-                      {name}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
         </div>
         </form>
+        {Array.isArray(contacts) && contacts.length > 0 && (
+          <div style={styles.contactsContainer}>
+            <div style={styles.contactsHeader}>
+              <div>Kapcsolattartók</div>
+              <div>
+                <label style={{ marginRight: 8 }}>
+                  <input type="radio" name="assignTarget" value="to" checked={assignTarget==='to'} onChange={() => setAssignTarget('to')} /> To
+                </label>
+                <label style={{ marginRight: 8 }}>
+                  <input type="radio" name="assignTarget" value="cc" checked={assignTarget==='cc'} onChange={() => setAssignTarget('cc')} /> Cc
+                </label>
+                <label>
+                  <input type="radio" name="assignTarget" value="bcc" checked={assignTarget==='bcc'} onChange={() => setAssignTarget('bcc')} /> Bcc
+                </label>
+              </div>
+            </div>
+            <div style={styles.contactsList}>
+              {contacts.map(c => {
+                const name = [c.first_name, c.last_name].filter(Boolean).join(' ') || c.email || '—';
+                const mail = c.email;
+                if (!mail) return null;
+                return (
+                  <button key={c.id || mail} type="button" style={styles.contactChip} onClick={() => addEmail(mail)} title={mail}>
+                    {c.contact_type === 'billing' && <span style={{ marginRight: 3 }}>💰</span>}{name}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
         <div style={styles.footer}>
           <div style={{ flex: 1, display: 'flex', alignItems: 'center' }}>
              <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', userSelect: 'none' }} title="Részletes státusz megjelenítése küldés közben">
@@ -350,10 +352,10 @@ const styles = {
     background: '#fafafa',
   },
   contactsContainer: {
-    gridColumn: '1 / span 2',
-    marginTop: 8,
-    paddingTop: 8,
+    padding: '8px 16px',
     borderTop: '1px solid #eee',
+    background: '#f8faff',
+    flexShrink: 0,
   },
   contactsHeader: {
     display: 'flex',

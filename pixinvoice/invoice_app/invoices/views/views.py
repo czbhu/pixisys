@@ -356,8 +356,9 @@ class CustomerViewSet(viewsets.ModelViewSet):
             if allowed_company_ids and str(company_id) not in {str(x) for x in allowed_company_ids}:
                 return Customer.objects.none()
             queryset = _filter_customers_by_companies(queryset, [company_id])
-        elif allowed_company_ids:
-            queryset = _filter_customers_by_companies(queryset, allowed_company_ids)
+        # Note: when no company_id is given, return ALL customers regardless of
+        # allowed_company_ids — Customer has no company FK, customers are global
+        # and the join-based filter hides customers with no invoice yet.
 
         search = self.request.query_params.get('search', None)
         if search:
@@ -1022,7 +1023,95 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         
         if invoice_block:
             queryset = queryset.filter(invoice_block_id=invoice_block)
-        if status_filter:
+        if status_filter in ('due', 'overdue'):
+            # DB-level due/overdue: unpaid transfers, due_date in the past, excluding storno invoices
+            from django.utils import timezone as _tz
+            _today = _tz.localdate()
+            queryset = queryset.filter(
+                Q(payment_method__iexact='TRANSFER') | Q(payment_method__iexact='COD')
+            ).filter(
+                payment_date__isnull=True
+            ).filter(
+                due_date__lt=_today
+            ).exclude(
+                status__in=['cancelled', 'paid']
+            ).exclude(
+                Q(notes__icontains='sztornó') | Q(notes__icontains='sztorno')
+            )
+            # Also include partial payments: payment_date set but not fully paid
+            # (e.g. amount_paid recorded but status not 'paid' and amount_paid > 0)
+            _partial_candidates = Invoice.objects.filter(
+                company_id__in=queryset.values('company_id').distinct() if company_filter else [company_filter] if company_filter else [],
+                payment_method__in=['transfer', 'TRANSFER', 'cod', 'COD'],
+                payment_date__isnull=False,
+                due_date__lt=_today,
+                amount_paid__gt=0,
+            ).exclude(
+                status__in=['cancelled', 'paid']
+            ).exclude(
+                Q(notes__icontains='sztornó') | Q(notes__icontains='sztorno')
+            )
+            if company_filter:
+                _partial_candidates = _partial_candidates.filter(company_id=company_filter)
+            _partial_unsettled_ids = []
+            for _pc in _partial_candidates.only('id', 'amount_paid', 'currency', 'payment_method'):
+                # Use sum of items to check if fully settled
+                from django.db.models import Sum, F as _F, ExpressionWrapper as _EW, DecimalField as _DC
+                import decimal as _dec
+                try:
+                    _gross_agg = Invoice.objects.filter(id=_pc.id).annotate(
+                        _g=_EW(
+                            _F('items__quantity') * _F('items__unit_price') * (1 + _F('items__vat_rate') / 100),
+                            output_field=_DC(max_digits=14, decimal_places=2)
+                        )
+                    ).aggregate(total=Sum('_g'))['total'] or _dec.Decimal('0')
+                    _paid = _dec.Decimal(str(_pc.amount_paid or 0))
+                    _curr = str(getattr(_pc, 'currency', '') or 'HUF').upper()
+                    _tol = _dec.Decimal('5.0') if _curr == 'HUF' else _dec.Decimal('0.01')
+                    if _gross_agg - _paid > _tol:
+                        _partial_unsettled_ids.append(_pc.id)
+                except Exception:
+                    pass
+            if _partial_unsettled_ids:
+                queryset = queryset | Invoice.objects.filter(id__in=_partial_unsettled_ids)
+            # Exclude stornoed originals: invoices that have a storno modification
+            # Path 1: via original_invoice FK
+            _stornoed_ids = set(
+                Invoice.objects.filter(
+                    Q(notes__icontains='sztornó') | Q(notes__icontains='sztorno')
+                ).exclude(original_invoice_id__isnull=True)
+                .values_list('original_invoice_id', flat=True)
+                .distinct()
+            )
+            # Path 2: stornos where FK is NULL but notes contain original number
+            import re as _re
+            _no_fk_stornos = Invoice.objects.filter(
+                Q(notes__icontains='sztornó') | Q(notes__icontains='sztorno')
+            ).filter(original_invoice_id__isnull=True).values_list('notes', flat=True)
+            _orig_nums_from_notes = []
+            for _n in _no_fk_stornos:
+                _m = _re.search(r'számlára:\s*([A-Z0-9]{5,})', _n or '', _re.IGNORECASE)
+                if _m:
+                    _orig_nums_from_notes.append(_m.group(1))
+            if _orig_nums_from_notes:
+                _stornoed_ids |= set(
+                    Invoice.objects.filter(invoice_number__in=_orig_nums_from_notes)
+                    .values_list('id', flat=True)
+                )
+            if _stornoed_ids:
+                queryset = queryset.exclude(id__in=_stornoed_ids)
+            # Exclude invoices that are paid via bank statement through IncomingInvoiceDigest
+            # (the outgoing Invoice model may not have payment_date set even though the
+            # IncomingInvoiceDigest counterpart was marked paid via a BankStatementItem)
+            _paid_via_incoming_nos = set(
+                IncomingInvoiceDigest.objects.filter(
+                    payment_date__isnull=False,
+                    amount_paid__gt=0,
+                ).values_list('invoice_number', flat=True)
+            )
+            if _paid_via_incoming_nos:
+                queryset = queryset.exclude(invoice_number__in=_paid_via_incoming_nos)
+        elif status_filter:
             queryset = queryset.filter(status=status_filter)
         if customer_filter:
             queryset = queryset.filter(customer_id=customer_filter)
@@ -3109,15 +3198,71 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         if invoice_ids:
             qs = qs.filter(id__in=invoice_ids)
 
+        # Build a map: original_invoice_number -> total storno amount covering it
+        # A storno invoice is identified by notes containing 'sztornó' or 'storno'
+        storno_qs = Invoice.objects.filter(
+            company=company
+        ).filter(
+            models.Q(notes__icontains='sztornó') | models.Q(notes__icontains='storno')
+        ).select_related('original_invoice')
+        # Map: invoice_number -> sum of |gross| of storno invoices that reference it
+        storno_coverage = {}  # original_invoice_number -> Decimal total storno coverage
+        _storno_notes_re = __import__('re').compile(r'számlára:\s*([A-Z0-9]{5,})', __import__('re').IGNORECASE)
+        for storno_inv in storno_qs:
+            # Resolve original invoice number: string field → FK → notes parse
+            orig_no = storno_inv.original_invoice_number or ''
+            if not orig_no and storno_inv.original_invoice_id:
+                try:
+                    orig_no = storno_inv.original_invoice.invoice_number or ''
+                except Exception:
+                    orig_no = ''
+            if not orig_no:
+                m = _storno_notes_re.search(storno_inv.notes or '')
+                orig_no = m.group(1) if m else ''
+            if not orig_no:
+                continue
+            storno_gross = abs(decimal.Decimal(str(storno_inv.total_gross_amount or 0)))
+            storno_coverage[orig_no] = storno_coverage.get(orig_no, decimal.Decimal('0')) + storno_gross
+
         status_labels = self._arrears_status_label_map()
         next_map = self._arrears_next_status_map()
+
+        # Build set of invoice numbers paid via IncomingInvoiceDigest (bank statement cross-reference)
+        _paid_via_incoming = set(
+            IncomingInvoiceDigest.objects.filter(
+                company=company,
+                payment_date__isnull=False,
+                amount_paid__gt=0,
+            ).values_list('invoice_number', flat=True)
+        )
+
         entries = []
         for inv in qs:
+            # Skip storno invoices themselves — they are not overdue receivables
+            notes_lower = (inv.notes or '').lower()
+            if 'sztornó' in notes_lower or 'storno' in notes_lower:
+                continue
+
+            # Skip invoices paid via bank statement (IncomingInvoiceDigest cross-reference)
+            if inv.invoice_number in _paid_via_incoming:
+                continue
+
             if not inv.due_date or inv.due_date >= today:
                 continue
             payable, remaining, is_settled = self._outgoing_payable_and_remaining(inv)
             if is_settled:
                 continue
+
+            # Apply storno coverage: reduce the remaining amount by storno invoices referencing this invoice
+            storno_cover = storno_coverage.get(inv.invoice_number, decimal.Decimal('0'))
+            if storno_cover > decimal.Decimal('0'):
+                currency = str(getattr(inv, 'currency', '') or 'HUF').upper()
+                tolerance = decimal.Decimal('5.0') if currency == 'HUF' else decimal.Decimal('0.01')
+                remaining = max(remaining - storno_cover, decimal.Decimal('0'))
+                if remaining < tolerance:
+                    # Fully covered by storno(s) — treat as paid, skip
+                    continue
+
             arrears_status = self._resolve_invoice_arrears_status(inv)
             next_status = next_map.get(arrears_status)
             if arrears_status == Invoice.ARREARS_STATUS_OVERDUE:
@@ -3139,15 +3284,25 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             })
         return entries
 
-    def _set_arrears_status(self, invoices, new_status):
+    def _set_arrears_status(self, invoices, new_status, email_sent=False):
         if not invoices:
             return 0
         now_ts = timezone.now()
+        status_labels = self._arrears_status_label_map()
         changed = 0
         for inv in invoices:
             inv.arrears_status = new_status
             inv.arrears_status_changed_at = now_ts
-            inv.save(update_fields=['arrears_status', 'arrears_status_changed_at', 'updated_at'])
+            # Append entry to arrears_log
+            log_entry = {
+                'timestamp': now_ts.isoformat(),
+                'status': new_status,
+                'status_label': status_labels.get(new_status, new_status),
+                'email_sent': email_sent,
+            }
+            existing_log = inv.arrears_log if isinstance(inv.arrears_log, list) else []
+            inv.arrears_log = existing_log + [log_entry]
+            inv.save(update_fields=['arrears_status', 'arrears_status_changed_at', 'arrears_log', 'updated_at'])
             changed += 1
         return changed
 
@@ -3202,6 +3357,22 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 pass
         except Exception as e:
             logger.error(f'_arrears_imap_append: unexpected error: {e}')
+
+    def _make_bilingual_arrears_subject_body(self, company, template_type, subject_hu, body_hu, inv):
+        """If the invoice belongs to a bilingual invoice block, prepend the EN template content."""
+        try:
+            if not _resolve_invoice_bilingual(inv):
+                return subject_hu, body_hu
+            tpl_en = get_company_email_template(company, template_type, language='en')
+            subj_en = tpl_en.get('subject_template') or ''
+            body_en = tpl_en.get('body_template') or ''
+            if subj_en and subj_en.strip() and subj_en.strip() != subject_hu.strip():
+                subject_hu = f"{subj_en} / {subject_hu}"
+            if body_en and body_en.strip():
+                body_hu = f"{body_en}<br><br><hr><br><br>{body_hu}"
+        except Exception:
+            pass
+        return subject_hu, body_hu
 
     def _send_arrears_emails_by_template(self, company, entries, template_type):
         import smtplib
@@ -3298,6 +3469,9 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             }
             subject = render_tpl(subject_tpl, ctx)
             body = render_tpl(body_tpl, ctx)
+            # Apply bilingual extension if invoice block has second_language
+            first_inv = items[0]['invoice']
+            subject, body = self._make_bilingual_arrears_subject_body(company, template_type, subject, body, first_inv)
 
             msg = EmailMessage()
             msg['Subject'] = subject
@@ -3339,6 +3513,78 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             'failed_customer_ids': failed_customer_ids,
         }
 
+    @action(detail=False, methods=['get'], url_path='overdue-customer-flags')
+    def overdue_customer_flags(self, request):
+        """Return per-customer overdue severity flags.
+        Used by invoice/ERP customer selectors to highlight overdue customers.
+        Returns: [{customer_id, customer_name, max_days_overdue, worst_status, level}]
+        level: 'overdue_10' (>=10 days, any status) | 'post_reminder_1' (reminder_2+)
+        """
+        company = getattr(request, 'company', None)
+        company_id = request.query_params.get('company_id') or request.query_params.get('company')
+        if not company and company_id:
+            company = Company.objects.filter(id=company_id).first()
+        if not company:
+            return Response({'error': 'company_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+
+        entries = self._collect_overdue_entries(company)
+        STATUS_SEVERITY = {
+            Invoice.ARREARS_STATUS_OVERDUE: 0,
+            Invoice.ARREARS_STATUS_NOTICE: 1,
+            Invoice.ARREARS_STATUS_REMINDER_1: 2,
+            Invoice.ARREARS_STATUS_REMINDER_2: 3,
+            Invoice.ARREARS_STATUS_LEGAL: 4,
+            Invoice.ARREARS_STATUS_PAYMENT_ORDER: 5,
+            Invoice.ARREARS_STATUS_LITIGATION: 6,
+            Invoice.ARREARS_STATUS_WON: 7,
+            Invoice.ARREARS_STATUS_LOST: 8,
+        }
+        POST_REMINDER_1 = {
+            Invoice.ARREARS_STATUS_REMINDER_2,
+            Invoice.ARREARS_STATUS_LEGAL,
+            Invoice.ARREARS_STATUS_PAYMENT_ORDER,
+            Invoice.ARREARS_STATUS_LITIGATION,
+        }
+        customer_map = {}
+        for e in entries:
+            inv = e['invoice']
+            cust = inv.customer
+            cid = str(cust.id)
+            days = e.get('days_overdue', 0)
+            st = e.get('arrears_status', Invoice.ARREARS_STATUS_OVERDUE)
+            if cid not in customer_map:
+                customer_map[cid] = {
+                    'customer_id': cid,
+                    'customer_name': cust.name,
+                    'max_days_overdue': days,
+                    'worst_status': st,
+                    'worst_severity': STATUS_SEVERITY.get(st, 0),
+                }
+            else:
+                if days > customer_map[cid]['max_days_overdue']:
+                    customer_map[cid]['max_days_overdue'] = days
+                sev = STATUS_SEVERITY.get(st, 0)
+                if sev > customer_map[cid]['worst_severity']:
+                    customer_map[cid]['worst_status'] = st
+                    customer_map[cid]['worst_severity'] = sev
+
+        result = []
+        for cid, v in customer_map.items():
+            level = None
+            if v['worst_status'] in POST_REMINDER_1:
+                level = 'post_reminder_1'
+            elif v['max_days_overdue'] >= 10:
+                level = 'overdue_10'
+            if level:
+                result.append({
+                    'customer_id': cid,
+                    'customer_name': v['customer_name'],
+                    'max_days_overdue': v['max_days_overdue'],
+                    'worst_status': v['worst_status'],
+                    'level': level,
+                })
+        return Response({'results': result})
+
     @action(detail=False, methods=['get'], url_path='arrears-list')
     def arrears_list(self, request):
         company = getattr(request, 'company', None)
@@ -3371,6 +3617,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 'total_net_amount': float(inv.total_net_amount or 0),
                 'total_vat_amount': float(inv.total_vat_amount or 0),
                 'total_gross_amount': float(inv.total_gross_amount or 0),
+                'amount_paid': float(inv.amount_paid or 0),
                 'remaining_amount': float(e['remaining']),
                 'days_overdue': e['days_overdue'],
                 'customer': {
@@ -3429,7 +3676,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 if str(e['invoice'].customer_id) not in failed_customer_ids
             ]
 
-        changed_count = self._set_arrears_status(changed_invoices, target_status)
+        changed_count = self._set_arrears_status(changed_invoices, target_status, email_sent=send_email)
         labels = self._arrears_status_label_map()
         return Response({
             'success': True,
@@ -3498,12 +3745,13 @@ class InvoiceViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'], url_path='arrears-email-compose')
     def arrears_email_compose(self, request):
-        """Render email fields for single invoice arrears email (preview before sending).
-        Params: company_id, invoice_id, target_status
+        """Render email fields for arrears email (preview before sending).
+        Params: company_id, invoice_id (single) OR invoice_ids (comma-separated for multi), target_status
         """
         import decimal
         company_id = request.query_params.get('company_id')
         invoice_id = request.query_params.get('invoice_id')
+        invoice_ids_param = request.query_params.get('invoice_ids') or ''
         target_status = (request.query_params.get('target_status') or '').strip()
 
         company = getattr(request, 'company', None)
@@ -3511,13 +3759,20 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             company = Company.objects.filter(id=company_id).first()
         if not company:
             return Response({'error': 'company_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
-        if not invoice_id:
-            return Response({'error': 'invoice_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
 
-        entries = self._collect_overdue_entries(company, invoice_ids=[invoice_id])
+        # Build invoice id list
+        if invoice_ids_param:
+            invoice_id_list = [i.strip() for i in invoice_ids_param.split(',') if i.strip()]
+        elif invoice_id:
+            invoice_id_list = [invoice_id]
+        else:
+            return Response({'error': 'invoice_id vagy invoice_ids kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+
+        entries = self._collect_overdue_entries(company, invoice_ids=invoice_id_list)
         if not entries:
             return Response({'error': 'Számla nem található vagy nem lejárt'}, status=status.HTTP_404_NOT_FOUND)
 
+        # Use first entry for customer/template resolution
         entry = entries[0]
         if target_status:
             template_type = self._arrears_template_for_target_status(target_status)
@@ -3563,8 +3818,10 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         body_tpl = tpl_data.get('body_template') or '<p>Tisztelt Ügyfél!</p><p>Nyilvántartásunk szerint lejárt tartozásuk van.</p>{invoices_table}<p>{today_city_date}</p><p>{signature_html}</p>'
 
         currency = (inv.currency or 'HUF').upper()
+        total_remaining = sum(decimal.Decimal(str(e['remaining'] or 0)) for e in entries)
         table_rows = [
-            f"<tr><td>{inv.invoice_number}</td><td>{inv.issue_date or ''}</td><td>{inv.due_date or ''}</td><td style='text-align:right'>{fmt_money(entry['remaining'], currency)}</td></tr>"
+            f"<tr><td>{e['invoice'].invoice_number}</td><td>{e['invoice'].issue_date or ''}</td><td>{e['invoice'].due_date or ''}</td><td style='text-align:right'>{fmt_money(e['remaining'], currency)}</td></tr>"
+            for e in entries
         ]
         invoices_table = (
             "<table border='1' cellpadding='6' cellspacing='0' style='border-collapse:collapse;width:100%'>"
@@ -3578,30 +3835,35 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             'today_date': today.strftime('%Y.%m.%d'),
             'today_city_date': today_city_date,
             'company_city': city,
-            'total_outstanding': fmt_money(entry['remaining'], currency),
-            'invoice_count': 1,
+            'total_outstanding': fmt_money(total_remaining, currency),
+            'invoice_count': len(entries),
             'currency': currency,
             'invoices_table': invoices_table,
             'sender_name': (getattr(ces, 'default_sender_name', None) if ces else '') or '',
             'sender_phone': (getattr(ces, 'default_sender_phone', None) if ces else '') or '',
             'signature_html': default_signature_html,
         }
+        _subject = render_tpl(subject_tpl, ctx)
+        _body = render_tpl(body_tpl, ctx)
+        # Apply bilingual extension if invoice block has second_language
+        _subject, _body = self._make_bilingual_arrears_subject_body(company, template_type, _subject, _body, inv)
         return Response({
             'from': from_addr,
             'to': [recipient] if recipient else [],
-            'subject': render_tpl(subject_tpl, ctx),
-            'body': render_tpl(body_tpl, ctx),
+            'subject': _subject,
+            'body': _body,
             'customer_id': str(customer.id),
             'customer_name': customer.name,
             'invoice_number': inv.invoice_number,
             'arrears_status': entry['arrears_status'],
             'target_status': target_status or '',
+            'invoices': [{'id': str(e['invoice'].id), 'invoice_number': e['invoice'].invoice_number} for e in entries],
         })
 
     @action(detail=False, methods=['post'], url_path='arrears-send-single')
     def arrears_send_single(self, request):
-        """Send arrears email for a single invoice.
-        Body: { company_id, invoice_id, from, to, cc, bcc, subject, advance_status }
+        """Send arrears email for one or more invoices of the same customer.
+        Body: { company_id, invoice_id (or invoice_ids[]), from, to, cc, bcc, subject, body, advance_status }
         The email body is always regenerated server-side from the template to preserve HTML table structure.
         """
         import smtplib, ssl, decimal
@@ -3615,9 +3877,14 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         if not company:
             return Response({'error': 'company_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
 
-        invoice_id = data.get('invoice_id')
-        if not invoice_id:
-            return Response({'error': 'invoice_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        invoice_ids_raw = data.get('invoice_ids') or []
+        invoice_id_single = data.get('invoice_id')
+        if invoice_ids_raw:
+            invoice_id_list = [str(i).strip() for i in (invoice_ids_raw if isinstance(invoice_ids_raw, list) else str(invoice_ids_raw).split(',')) if str(i).strip()]
+        elif invoice_id_single:
+            invoice_id_list = [str(invoice_id_single).strip()]
+        else:
+            return Response({'error': 'invoice_id vagy invoice_ids kötelező'}, status=status.HTTP_400_BAD_REQUEST)
 
         from_addr = (data.get('from') or '').strip()
         to_raw = data.get('to') or []
@@ -3637,7 +3904,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             return Response({'error': 'Tárgy kötelező'}, status=status.HTTP_400_BAD_REQUEST)
 
         # Regenerate body server-side to preserve HTML table
-        entries = self._collect_overdue_entries(company, invoice_ids=[invoice_id])
+        entries = self._collect_overdue_entries(company, invoice_ids=invoice_id_list)
         if not entries:
             return Response({'error': 'Számla nem található vagy nem lejárt'}, status=status.HTTP_404_NOT_FOUND)
         entry = entries[0]
@@ -3676,8 +3943,10 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         body_tpl = tpl_data.get('body_template') or '<p>Tisztelt Ügyfél!</p><p>Nyilvántartásunk szerint lejárt tartozásuk van.</p>{invoices_table}<p>{today_city_date}</p><p>{signature_html}</p>'
 
         currency = (inv.currency or 'HUF').upper()
+        total_remaining = sum(decimal.Decimal(str(e['remaining'] or 0)) for e in entries)
         table_rows = [
-            f"<tr><td>{inv.invoice_number}</td><td>{inv.issue_date or ''}</td><td>{inv.due_date or ''}</td><td style='text-align:right'>{fmt_money(entry['remaining'], currency)}</td></tr>"
+            f"<tr><td>{e['invoice'].invoice_number}</td><td>{e['invoice'].issue_date or ''}</td><td>{e['invoice'].due_date or ''}</td><td style='text-align:right'>{fmt_money(e['remaining'], currency)}</td></tr>"
+            for e in entries
         ]
         invoices_table = (
             "<table border='1' cellpadding='6' cellspacing='0' style='border-collapse:collapse;width:100%'>"
@@ -3692,8 +3961,8 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             'today_date': today.strftime('%Y.%m.%d'),
             'today_city_date': today_city_date,
             'company_city': city,
-            'total_outstanding': fmt_money(entry['remaining'], currency),
-            'invoice_count': 1,
+            'total_outstanding': fmt_money(total_remaining, currency),
+            'invoice_count': len(entries),
             'currency': currency,
             'invoices_table': invoices_table,
             'sender_name': (getattr(ces, 'default_sender_name', None) if ces else '') or '',
@@ -3726,6 +3995,16 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         msg.set_content('HTML levél')
         msg.add_alternative(body, subtype='html')
 
+        # Attach PDF for each invoice
+        for e in entries:
+            try:
+                pdf_bytes = _generate_pdf_bytes_v2(e['invoice'])
+                if pdf_bytes:
+                    filename = f"{e['invoice'].invoice_number or 'szamla'}.pdf"
+                    msg.add_attachment(pdf_bytes, maintype='application', subtype='pdf', filename=filename)
+            except Exception:
+                pass
+
         try:
             if port == 465:
                 context = ssl.create_default_context()
@@ -3749,7 +4028,13 @@ class InvoiceViewSet(viewsets.ModelViewSet):
 
         changed = 0
         if advance_to_status:
-            changed = self._set_arrears_status([inv], advance_to_status)
+            all_invs = [e['invoice'] for e in entries]
+            changed = self._set_arrears_status(all_invs, advance_to_status, email_sent=True)
+        else:
+            # Log email send without status change
+            all_invs = [e['invoice'] for e in entries]
+            self._set_arrears_status(all_invs, entries[0]['invoice'].arrears_status or Invoice.ARREARS_STATUS_OVERDUE, email_sent=True)
+            changed = 0
 
         return Response({'success': True, 'sent': 1, 'changed': changed})
 
@@ -3865,6 +4150,8 @@ class InvoiceViewSet(viewsets.ModelViewSet):
 
             subject = render_tpl(subject_tpl, ctx)
             body = render_tpl(body_tpl, ctx)
+            # Apply bilingual extension if invoice block has second_language
+            subject, body = self._make_bilingual_arrears_subject_body(company, template_type, subject, body, inv)
 
             msg = EmailMessage()
             msg['Subject'] = subject
@@ -5878,6 +6165,30 @@ class InvoiceViewSet(viewsets.ModelViewSet):
 
         ordered_qs = qs.order_by('-invoice_issue_date', '-invoice_number', '-ins_date')
         storno_invoice_q = Q(invoice_operation__icontains='STORNO') | Q(invoice_operation__icontains='CANCEL')
+
+        # For due/overdue: apply DB-level filters so pagination counts are accurate
+        if status_filter == 'due':
+            _today_str = timezone.localdate().isoformat()
+            # Exclude storno invoices themselves (notes contain 'sztorn')
+            ordered_qs = ordered_qs.exclude(
+                Q(notes__icontains='sztornó') | Q(notes__icontains='sztorno')
+            )
+            # Exclude invoices that have a storno referencing them (stornózott originals)
+            _storno_orig_ids = set(
+                ordered_qs
+                .filter(storno_invoice_q)
+                .exclude(original_invoice_id__isnull=True)
+                .values_list('original_invoice_id', flat=True)
+                .distinct()
+            )
+            if _storno_orig_ids:
+                ordered_qs = ordered_qs.exclude(id__in=_storno_orig_ids)
+            # Exclude invoices whose original_invoice_number appears in a storno's notes
+            # (for cases where original_invoice_number is NULL but notes reference the orig)
+            _storno_notes_qs = IncomingInvoiceDigest.objects.none()  # placeholder – handled below in Python loop
+            # Keep only past-due: due_date < today
+            ordered_qs = ordered_qs.filter(due_date__lt=_today_str)
+
         storno_original_numbers = set(
             ordered_qs
             .filter(storno_invoice_q)
@@ -5886,6 +6197,23 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             .values_list('original_invoice_number', flat=True)
             .distinct()
         )
+        # Build storno coverage map: original_invoice_number -> total |gross| covered by storno invoices
+        # IncomingInvoiceDigest has only original_invoice_number (no FK), so use notes-based parse as fallback
+        import re as _re_sc
+        storno_coverage_map = {}  # original_invoice_number -> Decimal total storno gross
+        _storno_rows = list(
+            ordered_qs
+            .filter(storno_invoice_q)
+            .values('original_invoice_number', 'invoice_net_amount', 'invoice_vat_amount', 'invoice_operation')
+        )
+        for sc_row in _storno_rows:
+            orig = (sc_row.get('original_invoice_number') or '').strip()
+            if not orig:
+                continue
+            sc_net = decimal.Decimal(str(sc_row.get('invoice_net_amount') or 0))
+            sc_vat = decimal.Decimal(str(sc_row.get('invoice_vat_amount') or 0))
+            sc_gross = abs(sc_net + sc_vat)
+            storno_coverage_map[orig] = storno_coverage_map.get(orig, decimal.Decimal('0')) + sc_gross
         paginator = Paginator(ordered_qs, page_size)
         page_obj = paginator.get_page(page)
         page_items_raw = list(page_obj.object_list)
@@ -5947,11 +6275,30 @@ class InvoiceViewSet(viewsets.ModelViewSet):
 
         items_all = []
 
-        def _normalize_tax_value(raw_value):
-            return ''.join(ch for ch in str(raw_value or '') if ch.isdigit())
+        # Build a map of invoice_number -> (paid_amount, payment_date) from IncomingInvoiceDigest
+        # for cross-referencing outgoing Invoices that were paid via bank statement
+        _incoming_paid_map = {}
+        if page_items_raw:
+            _page_inv_numbers = [r.invoice_number for r in page_items_raw if r.invoice_number]
+            _paid_digests = IncomingInvoiceDigest.objects.filter(
+                invoice_number__in=_page_inv_numbers,
+                payment_date__isnull=False,
+                amount_paid__gt=0,
+            ).values('invoice_number', 'amount_paid', 'payment_date')
+            for _d in _paid_digests:
+                _no = _d['invoice_number']
+                if _no and _no not in _incoming_paid_map:
+                    _incoming_paid_map[_no] = {
+                        'amount_paid': _d['amount_paid'],
+                        'payment_date': _d['payment_date'],
+                    }
 
         supplier_tax_values = set()
         supplier_name_values = set()
+
+        def _normalize_tax_value(raw_value):
+            return ''.join(ch for ch in str(raw_value or '') if ch.isdigit())
+
         for _row in page_items_raw:
             try:
                 tx = str(getattr(_row, 'supplier_tax_number', '') or '').strip()
@@ -6521,8 +6868,56 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                     is_paid = bool(payment_date) or payment_method in ['card','cash','voucher','other','utanvet']
             except Exception:
                 pass
-            
-            # Keep model paid state only if there is payment evidence.
+
+            # Apply storno coverage: storno invoices referencing this invoice count as payment
+            # If is_storno_invoice itself, mark as paid (storno invoices are not receivables)
+            try:
+                inv_no = str(getattr(r, 'invoice_number', '') or '')
+                op_val_tmp = str(getattr(r, 'invoice_operation', '') or '').upper()
+                if 'STORNO' in op_val_tmp or 'CANCEL' in op_val_tmp:
+                    # The storno invoice itself is not a receivable — treat as paid
+                    is_paid = True
+                    is_partial = False
+                    remaining_amount = decimal.Decimal('0')
+                elif inv_no in storno_coverage_map:
+                    sc = storno_coverage_map[inv_no]
+                    tol_sc = decimal.Decimal('5.0') if row_currency == 'HUF' else decimal.Decimal('0.01')
+                    if remaining_amount is not None:
+                        remaining_amount = max(remaining_amount - sc, decimal.Decimal('0'))
+                        if remaining_amount <= tol_sc:
+                            is_paid = True
+                            is_partial = False
+                            remaining_amount = decimal.Decimal('0')
+                    elif gross_val is not None:
+                        effective_remaining = gross_val - paid_amount - sc
+                        if effective_remaining <= tol_sc:
+                            is_paid = True
+                            is_partial = False
+                            remaining_amount = decimal.Decimal('0')
+            except Exception:
+                pass
+
+            # Apply IncomingInvoiceDigest cross-reference: if the same invoice_number
+            # was paid via a bank statement (through IncomingInvoiceDigest), mark as paid
+            try:
+                _incoming_paid = _incoming_paid_map.get(str(getattr(r, 'invoice_number', '') or ''))
+                if _incoming_paid and not is_paid:
+                    _ipaid_amt = decimal.Decimal(str(_incoming_paid.get('amount_paid') or 0))
+                    _igross = gross_val if gross_val is not None else _ipaid_amt
+                    _tol_ip = decimal.Decimal('5.0') if row_currency == 'HUF' else decimal.Decimal('0.01')
+                    if _ipaid_amt >= _igross - _tol_ip:
+                        is_paid = True
+                        is_partial = False
+                        remaining_amount = decimal.Decimal('0')
+                        if not payment_date:
+                            payment_date = _incoming_paid.get('payment_date')
+                            payment_display_date = payment_date
+                    elif _ipaid_amt > _tol_ip:
+                        is_partial = True
+                        remaining_amount = max((_igross - _ipaid_amt), decimal.Decimal('0'))
+            except Exception:
+                pass
+
             # This self-heals stale rows where a payment batch was already deleted earlier.
             try:
                 tol = decimal.Decimal('0.005')
@@ -12035,9 +12430,9 @@ class BankStatementViewSet(viewsets.ModelViewSet):
         # Build quick lookups
         from invoices.models import Customer, CustomerBankAccount, Invoice, IncomingInvoiceDigest
         proposals = []
+        import re as _re_mod
         def norm_digits(s):
-            import re
-            return re.sub(r'\D+', '', s or '')
+            return _re_mod.sub(r'\D+', '', s or '')
         def norm_alnum(s):
             import re
             return re.sub(r'[^A-Z0-9]+', '', str(s or '').upper())
@@ -12099,6 +12494,61 @@ class BankStatementViewSet(viewsets.ModelViewSet):
         # Preload customers once for fuzzy matching
         all_customers = list(Customer.objects.only('id', 'name'))
         customer_by_id = {str(c.id): c for c in all_customers}
+
+        # --- Batch-preload invoices for the whole statement to avoid per-item DB queries ---
+        # Collect all unique tokens across all items first, then query once
+        def _extract_tokens_from_remittance(rem_str):
+            tokens = []
+            for m in _re_mod.findall(r'([A-Z]{1,4}[-/]\d{4,})', rem_str):
+                if m: tokens.append(str(m).strip().upper())
+            for m in _re_mod.findall(r'([A-Z]{1,4}\s?\d{4}/\d{1,6})', rem_str):
+                if m: tokens.append(str(m).strip().upper())
+            for m in _re_mod.findall(r'([A-Z]{1,3}\d{4,10})', rem_str):
+                if m: tokens.append(str(m).strip().upper())
+            for m in _re_mod.findall(r'(\d{4}/\d{1,6})', rem_str):
+                if m: tokens.append(str(m).strip().upper())
+            # General: standalone pure numeric invoice tokens (6-12 digits not part of a longer digit run)
+            for m in _re_mod.findall(r'(?<!\d)(\d{6,12})(?!\d)', rem_str):
+                if m: tokens.append(str(m).strip())
+            return tokens
+
+        all_raw_tokens = set()
+        for it in items:
+            rem = str(it.get('remittance') or '')
+            for tok in _extract_tokens_from_remittance(rem):
+                all_raw_tokens.add(tok)
+        # Build a Q filter for batch invoice loading (company-specific outgoing invoices)
+        outgoing_by_token = {}  # token_substr -> [Invoice]
+        incoming_ext_by_token = {}  # token_substr -> [IncomingInvoiceDigest]
+        incoming_sup_by_token = {}  # token_substr -> [IncomingInvoiceDigest]
+        if all_raw_tokens:
+            from django.db.models import Q as _Q2
+            raw_token_list = list(all_raw_tokens)[:50]  # cap at 50 tokens
+            out_q = _Q2()
+            for tok in raw_token_list:
+                out_q |= _Q2(invoice_number__icontains=tok)
+            outgoing_qs = list(Invoice.objects.filter(company=company).filter(out_q).order_by('-issue_date').select_related('customer')[:500])
+            for inv in outgoing_qs:
+                for tok in raw_token_list:
+                    if tok.upper() in (inv.invoice_number or '').upper():
+                        outgoing_by_token.setdefault(tok, []).append(inv)
+            inc_q = _Q2()
+            for tok in raw_token_list:
+                inc_q |= _Q2(invoice_number__icontains=tok)
+            for inv in incoming_external_outgoing_qs.filter(inc_q).order_by('-invoice_issue_date')[:500]:
+                for tok in raw_token_list:
+                    if tok.upper() in (inv.invoice_number or '').upper():
+                        incoming_ext_by_token.setdefault(tok, []).append(inv)
+            for inv in incoming_supplier_qs.filter(inc_q).order_by('-invoice_issue_date')[:500]:
+                for tok in raw_token_list:
+                    if tok.upper() in (inv.invoice_number or '').upper():
+                        incoming_sup_by_token.setdefault(tok, []).append(inv)
+        # Preload recent invoices for amount-based matching (fallback, no token hit)
+        _recent_outgoing = list(Invoice.objects.filter(company=company).order_by('-issue_date').select_related('customer')[:200])
+        _recent_ext_incoming = list(incoming_external_outgoing_qs.order_by('-invoice_issue_date')[:300])
+        _recent_sup_incoming = list(incoming_supplier_qs.order_by('-invoice_issue_date')[:200])
+        # --- End batch preload ---
+
         for idx, it in enumerate(items):
             cp_acct = norm_alnum(it.get('counterparty_account') or '')
             ndig = norm_digits(cp_acct)
@@ -12161,6 +12611,11 @@ class BankStatementViewSet(viewsets.ModelViewSet):
                 v = str(m or '').strip().upper()
                 if v:
                     tokens.append(v)
+            # General: standalone pure numeric invoice tokens (6-12 digits not part of a longer digit run)
+            for m in re.findall(r'(?<!\d)(\d{6,12})(?!\d)', rem):
+                v = str(m or '').strip()
+                if v:
+                    tokens.append(v)
             seen_tokens = set()
             unique_tokens = []
             for tok in tokens:
@@ -12201,15 +12656,14 @@ class BankStatementViewSet(viewsets.ModelViewSet):
             except:
                 amt_val = 0
             
-            # Search by token
+            # Search by token — use preloaded batch dicts (no per-item DB queries)
             if expanded_tokens:
                 seen_cands = set()
                 for token_idx, token in enumerate(expanded_tokens[:12]):
                     token_norm = normalize_invoice_token(token)
                     # Positive bank transaction: prioritize own outgoing invoices, then external outgoing NAV invoices
                     if amt_val >= 0:
-                        qs = Invoice.objects.filter(company=company, invoice_number__icontains=token).order_by('-issue_date')[:10]
-                        for inv in qs:
+                        for inv in outgoing_by_token.get(token, []):
                             ckey = f"out:{inv.id}"
                             if ckey in seen_cands:
                                 continue
@@ -12231,10 +12685,7 @@ class BankStatementViewSet(viewsets.ModelViewSet):
                                 'is_storno_invoice': bool(storno_like),
                             })
 
-                        qs_ext = incoming_external_outgoing_qs.filter(
-                            invoice_number__icontains=token,
-                        ).order_by('-invoice_issue_date')[:10]
-                        for inv in qs_ext:
+                        for inv in incoming_ext_by_token.get(token, []):
                             ckey = f"ext:{inv.id}"
                             if ckey in seen_cands:
                                 continue
@@ -12257,10 +12708,7 @@ class BankStatementViewSet(viewsets.ModelViewSet):
 
                     # Negative bank transaction: incoming supplier invoices
                     if amt_val <= 0:
-                        qs_in = incoming_supplier_qs.filter(
-                            invoice_number__icontains=token,
-                        ).order_by('-invoice_issue_date')[:10]
-                        for inv in qs_in:
+                        for inv in incoming_sup_by_token.get(token, []):
                             ckey = f"in:{inv.id}"
                             if ckey in seen_cands:
                                 continue
@@ -12297,9 +12745,8 @@ class BankStatementViewSet(viewsets.ModelViewSet):
                 # This prevents tiny-amount "false positives" while still catching rounding differences.
                 _amt_tol = min(100.0, max(1.0, abs_amt * 0.005))
                 if amt_val > 0: # Payment IN -> Invoice
-                    qs = Invoice.objects.filter(company=company).order_by('-issue_date')[:100]
-                    # Filter for amount match
-                    for inv in qs:
+                    # Use preloaded recent outgoing invoices (no extra DB query)
+                    for inv in _recent_outgoing:
                         outstanding = float((inv.total_gross_amount or 0) - (inv.amount_paid or 0))
                         rounded_outstanding = round(outstanding)
                         rounded_paid = round(abs_amt)
@@ -12321,8 +12768,7 @@ class BankStatementViewSet(viewsets.ModelViewSet):
                                           '_token_norm': '',
                                           'is_storno_invoice': False,
                              })
-                    qs_ext = incoming_external_outgoing_qs.order_by('-invoice_issue_date')[:200]
-                    for inv in qs_ext:
+                    for inv in _recent_ext_incoming:
                         gross = abs(float((inv.invoice_net_amount or 0) + (inv.invoice_vat_amount or 0)))
                         paid = float(inv.amount_paid or 0)
                         outstanding = max(gross - paid, 0.0)
@@ -12348,8 +12794,8 @@ class BankStatementViewSet(viewsets.ModelViewSet):
                                 'is_storno_invoice': bool(outstanding < 0),
                             })
                 elif amt_val < 0: # Payment OUT -> IncomingInvoice
-                    qs_in = incoming_supplier_qs.order_by('-invoice_issue_date')[:100]
-                    for inv in qs_in:
+                    # Use preloaded recent supplier invoices (no extra DB query)
+                    for inv in _recent_sup_incoming:
                         gross = abs(float((inv.invoice_net_amount or 0) + (inv.invoice_vat_amount or 0)))
                         paid = float(inv.amount_paid or 0)
                         outstanding = max(gross - paid, 0.0)
@@ -12483,6 +12929,8 @@ class BankStatementViewSet(viewsets.ModelViewSet):
             if keys:
                 all_company_accounts.append((acc, keys))
 
+        company_accounts = list(CompanyBankAccount.objects.filter(company=company))
+
         for f in files:
             try:
                 content = f.read()
@@ -12521,7 +12969,7 @@ class BankStatementViewSet(viewsets.ModelViewSet):
                 acct_clean = re.sub(r'\D+', '', acct_raw)
                 bank_acc = None
                 # Better matching: find by digits substring
-                for acc in CompanyBankAccount.objects.filter(company=company):
+                for acc in company_accounts:
                     key = re.sub(r'\D+', '', (acc.account_number or acc.iban or ''))
                     if acct_clean and key and (acct_clean in key or key in acct_clean):
                         bank_acc = acc
@@ -13450,6 +13898,36 @@ class ProformaViewSet(viewsets.ModelViewSet):
     def create_advance_invoice(self, request, pk=None):
         return self._create_invoice_from_proforma(request, pk, category='ADVANCE')
 
+    @action(detail=True, methods=['post'], url_path='mark-paid')
+    def mark_paid(self, request, pk=None):
+        import decimal
+        pf = self.get_object()
+        data = request.data or {}
+        payment_date = data.get('payment_date') or timezone.localdate().isoformat()
+        gross = pf.total_gross_amount or decimal.Decimal('0')
+        amount_paid_raw = data.get('amount_paid')
+        if amount_paid_raw is not None:
+            try:
+                amount_paid = decimal.Decimal(str(amount_paid_raw))
+            except Exception:
+                amount_paid = decimal.Decimal(str(gross))
+        else:
+            amount_paid = decimal.Decimal(str(gross))
+        pf.amount_paid = amount_paid
+        pf.payment_date = payment_date
+        if amount_paid >= decimal.Decimal(str(gross)) - decimal.Decimal('0.005'):
+            pf.status = 'paid'
+        else:
+            pf.status = 'partial'
+        pf.save(update_fields=['status', 'payment_date', 'amount_paid', 'updated_at'])
+        return Response({
+            'success': True,
+            'status': pf.status,
+            'payment_date': str(pf.payment_date),
+            'amount_paid': str(pf.amount_paid),
+            'remaining': str(max(0, float(gross) - float(amount_paid))),
+        })
+
     def _create_invoice_from_proforma(self, request, pk, category=None):
         pf = self.get_object()
         payload = request.data or {}
@@ -13487,6 +13965,11 @@ class ProformaViewSet(viewsets.ModelViewSet):
             'order_reference': pf.proforma_number,
             'notes': pf.notes or '',
         }
+        # Use payment_date as delivery_date if proforma was paid
+        if pf.payment_date:
+            data['delivery_date'] = str(pf.payment_date)
+        elif pf.delivery_date:
+            data['delivery_date'] = str(pf.delivery_date)
         if invoice_block_id:
             data['invoice_block_id'] = invoice_block_id
         else:
@@ -15184,11 +15667,32 @@ class IncomingProformaViewSet(viewsets.ViewSet):
             p = IncomingProforma.objects.get(id=proforma_id, company=company)
         except IncomingProforma.DoesNotExist:
             return Response({'error': 'Díjbekérő nem található'}, status=status.HTTP_404_NOT_FOUND)
-        p.status = 'paid'
+        gross = p.gross_amount or decimal.Decimal('0')
+        # Accept partial amount
+        amount_paid_raw = data.get('amount_paid')
+        if amount_paid_raw is not None:
+            try:
+                amount_paid = decimal.Decimal(str(amount_paid_raw))
+            except Exception:
+                amount_paid = gross
+        else:
+            amount_paid = gross
+        p.amount_paid = amount_paid
         p.payment_date = payment_date
-        p.amount_paid = p.gross_amount or decimal.Decimal('0')
+        # Full payment
+        if amount_paid >= gross - decimal.Decimal('0.005'):
+            p.status = 'paid'
+        else:
+            p.status = 'partial'
         p.save(update_fields=['status', 'payment_date', 'amount_paid', 'updated_at'])
-        return Response({'success': True, 'status': p.status, 'payment_date': str(p.payment_date)})
+        remaining = float(gross) - float(amount_paid)
+        return Response({
+            'success': True,
+            'status': p.status,
+            'payment_date': str(p.payment_date),
+            'amount_paid': str(p.amount_paid),
+            'remaining': str(max(0, remaining)),
+        })
 
     # ── invoice links ────────────────────────────────────────────────────
     @action(detail=False, methods=['post'], url_path='add-invoice-link')

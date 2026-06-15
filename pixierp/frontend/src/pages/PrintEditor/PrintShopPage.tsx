@@ -167,9 +167,17 @@ const PrintShopPage: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [rfqSaving, setRfqSaving] = useState(false);
   const [orderModalOpen, setOrderModalOpen] = useState(false);
+  const [pdfCacheCleared, setPdfCacheCleared] = useState(false);
 
-  // Clear cached PDF on every page load so a fresh file is always required
-  useEffect(() => { clearPdfFromIDB(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // Clear cached PDF before mounting the PDF view to avoid loading a stale file.
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      await clearPdfFromIDB();
+      if (alive) setPdfCacheCleared(true);
+    })();
+    return () => { alive = false; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // from_rfq mode: opened from RFQ modal, show only Save button
   const fromRfqParams = new URLSearchParams(location.search);
@@ -180,6 +188,21 @@ const PrintShopPage: React.FC = () => {
   const editMfgId = fromRfqParams.get('edit_mfg_id') ? Number(fromRfqParams.get('edit_mfg_id')) : null;
   // return_url: the opener page URL to navigate back to after save
   const returnUrl = fromRfqParams.get('return_url') || null;
+
+  // RFQ "new" entry should never continue a previous PrintShop order context.
+  useEffect(() => {
+    if (!fromRfq || !!editMfgId) return;
+    setOrderId(null);
+    setItemId(null);
+    currentPdfFileRef.current = null;
+    try {
+      const s = localStorage.getItem(STORAGE_KEY);
+      const existing = s ? JSON.parse(s) : {};
+      delete existing.orderId;
+      delete existing.itemId;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(existing));
+    } catch {}
+  }, [fromRfq, editMfgId]);
 
   // Load printshop_params from the manufacturing product when editing
   useEffect(() => {
@@ -1105,17 +1128,23 @@ const PrintShopPage: React.FC = () => {
                   templateCategoryIds={templateCategoryIds}
                 />
               ) : (
-                <PrintCommentView
-                  orderId={orderId}
-                  itemId={itemId}
-                  isAdmin={isAdmin}
-                  locked={!isAdmin && previewLocked}
-                  authorName={user ? `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.username : 'Ismeretlen'}
-                  params={params}
-                  onPdfFileChange={handlePdfFileChange}
-                  exportRef={printViewExportRef}
-                  onSwitchToCanvas={() => setViewMode('canvas')}
-                />
+                pdfCacheCleared ? (
+                  <PrintCommentView
+                    orderId={orderId}
+                    itemId={itemId}
+                    isAdmin={isAdmin}
+                    locked={!isAdmin && previewLocked}
+                    authorName={user ? `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.username : 'Ismeretlen'}
+                    params={params}
+                    onPdfFileChange={handlePdfFileChange}
+                    exportRef={printViewExportRef}
+                    onSwitchToCanvas={() => setViewMode('canvas')}
+                  />
+                ) : (
+                  <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <Text type="secondary">PDF előkészítése...</Text>
+                  </div>
+                )
               )}
             </div>
           ) : (

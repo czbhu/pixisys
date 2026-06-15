@@ -163,10 +163,11 @@ const ManufacturingProductDetail: React.FC = () => {
   // ── Load product + reference data ─────────────────────────────────────────
 
   const loadProduct = useCallback(async () => {
-    if (!id) return;
+    const numId = Number(id);
+    if (!id || !Number.isFinite(numId) || numId <= 0) return;
     setLoading(true);
     try {
-      const p = await manufacturingService.getProduct(Number(id));
+      const p = await manufacturingService.getProduct(numId);
       setProduct(p);
 
       // Determine company_id and contact_ids
@@ -228,12 +229,12 @@ const ManufacturingProductDetail: React.FC = () => {
       setCostItems(mapped);
 
       // Load attachments
-      manufacturingService.getProductAttachments(Number(id))
+      manufacturingService.getProductAttachments(numId)
         .then(setAttachments)
         .catch(() => {});
 
       // Load linked customer order id (for ExtraWorksPanel)
-      salesService.getOrderIdForManufacturingProduct(Number(id))
+      salesService.getOrderIdForManufacturingProduct(numId)
         .then(ordId => setCustomerOrderId(ordId))
         .catch(() => {});
     } catch (e) {

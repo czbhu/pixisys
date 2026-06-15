@@ -20,6 +20,7 @@ import { useTimeTracker } from '../../contexts/TimeTrackerContext';
 import { useActionHistory } from '../../contexts/ActionHistoryContext';
 import UnifiedQuickSearchHeader from '../../components/Layout/UnifiedQuickSearchHeader';
 import { deepSearchMatch } from '../../utils/searchUtils';
+import { useNewRowTracker, newDotColumn } from '../../hooks/useNewRowTracker';
 import { isPdf, openPdfPreview } from '../../utils/pdfPreview';
 import ProductSubItemsTable from '../../components/Manufacturing/ProductSubItemsTable';
 import MaterialNeedsTree from '../../components/Manufacturing/MaterialNeedsTree';
@@ -596,7 +597,9 @@ interface CustomerOrder {
         },
       });
       const data = response.data.results || response.data;
-      setOrders(Array.isArray(data) ? data : []);
+      const ordersArr = Array.isArray(data) ? data : [];
+      setOrders(ordersArr);
+      loadNewOrderIds(ordersArr.map((r: any) => r.id).filter(Boolean));
     } catch (error) {
       console.error('Hiba a megrendelések betöltésekor:', error);
       message.error('Nem sikerült betölteni a megrendeléseket');
@@ -1676,7 +1679,10 @@ interface CustomerOrder {
     }
   };
 
+  const { newIds: newOrderIds, markSeen: markOrderSeen, loadNewIds: loadNewOrderIds } = useNewRowTracker('/sales/customer-orders');
+
   const columns: ColumnsType<CustomerOrder> = [
+    newDotColumn(newOrderIds),
     {
       title: 'Dátum',
       dataIndex: 'order_date',
@@ -2692,6 +2698,7 @@ interface CustomerOrder {
               if (expanded) {
                 setExpandedOrderKeys(prev => Array.from(new Set([...prev, record.id])));
                 loadOrderExpandedItems(record);
+                markOrderSeen(record);
               } else {
                 setExpandedOrderKeys(prev => prev.filter((k) => k !== record.id));
               }

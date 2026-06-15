@@ -1762,8 +1762,19 @@ const PrintCommentView: React.FC<Props> = ({
 
       renderPdf(mergedFile);
       message.success('PDF összefűzés kész');
-    } catch {
-      message.error('PDF összefűzési hiba');
+    } catch (err: any) {
+      let detail = '';
+      try {
+        const blob = err?.response?.data;
+        if (blob instanceof Blob) {
+          const text = await blob.text();
+          const json = JSON.parse(text);
+          detail = json.error || json.detail || '';
+        } else {
+          detail = err?.response?.data?.error || err?.response?.data?.detail || err?.message || '';
+        }
+      } catch { detail = err?.message || ''; }
+      message.error(detail ? `PDF összefűzési hiba: ${detail}` : 'PDF összefűzési hiba');
     } finally {
       setMerging(false);
     }
@@ -2229,7 +2240,8 @@ const PrintCommentView: React.FC<Props> = ({
               {canManagePdf && (
                 <Upload accept=".pdf" multiple showUploadList={false} beforeUpload={(file, fileList) => {
                   if (fileList && fileList.length > 0 && file === fileList[fileList.length - 1]) {
-                    handleMerge(fileList as unknown as File[]);
+                    const realFiles = fileList.map((f: any) => f.originFileObj || f).filter(Boolean) as File[];
+                    handleMerge(realFiles);
                   }
                   return false;
                 }}>

@@ -3956,3 +3956,131 @@ def qr_login_approve(request):
     cache.set(f'qr_login:{session_id}', approved_data, timeout=30)
 
     return Response({'status': 'ok', 'user': user.get_full_name() or user.username})
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def menu_badges_view(request):
+    """
+    Returns unread notification counts per menu path for the current user.
+    Live pending-item counts are now handled client-side via useNewRowTracker.
+    """
+    from apps.core.models import Notification
+
+    user = request.user
+    counts = {}
+
+    # --- Notification-based unread counts only ---
+    unread = Notification.objects.filter(user=user, is_read=False)
+    for note in unread:
+        link = note.link or ''
+        parts = link.strip('/').split('/')
+        key = ('/' + '/'.join(parts[:2])) if len(parts) >= 2 else ('/' + parts[0] if parts else '/other')
+        counts[key] = counts.get(key, 0) + 1
+
+    return Response(counts)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def record_seen_view(request):
+    """Mark one or more records as seen by the current user.
+    Body: { page_key: str, record_ids: int[] }
+    """
+    from apps.core.models import UserSeenRecord
+    page_key = request.data.get('page_key', '')
+    record_ids = request.data.get('record_ids', [])
+    if not page_key or not record_ids:
+        return Response({'error': 'page_key and record_ids required'}, status=400)
+    for rid in record_ids:
+        UserSeenRecord.objects.get_or_create(user=request.user, page_key=page_key, record_id=int(rid))
+    return Response({'ok': True, 'count': len(record_ids)})
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def page_visit_view(request):
+    """Record that the current user visited a page now.
+    Body: { page_key: str }
+    Returns the previous visit time (ISO string or null).
+    """
+    from apps.core.models import UserPageVisit
+    from django.utils import timezone
+    page_key = request.data.get('page_key', '')
+    if not page_key:
+        return Response({'error': 'page_key required'}, status=400)
+    try:
+        visit = UserPageVisit.objects.get(user=request.user, page_key=page_key)
+        prev = visit.visited_at.isoformat()
+        visit.save()  # triggers auto_now update
+    except UserPageVisit.DoesNotExist:
+        prev = None
+        UserPageVisit.objects.create(user=request.user, page_key=page_key)
+    return Response({'previous_visit': prev})
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def new_records_view(request):
+    """Return IDs of records that changed since the user's last visit.
+    Query params: page_key, ids (comma-separated record IDs to check)
+    Returns: { new_ids: int[], seen_ids: int[], previous_visit: str|null }
+    """
+    from apps.core.models import UserPageVisit, UserSeenRecord
+    import datetime
+    from django.utils import timezone
+    page_key = request.GET.get('page_key', '')
+    ids_str = request.GET.get('ids', '')
+    if not page_key or not ids_str:
+        return Response({'new_ids': [], 'seen_ids': [], 'previous_visit': None})
+
+    record_ids = [int(x) for x in ids_str.split(',') if x.strip().isdigit()]
+
+    try:
+        visit = UserPageVisit.objects.get(user=request.user, page_key=page_key)
+        prev_visit = visit.visited_at
+    except UserPageVisit.DoesNotExist:
+        prev_visit = None
+
+    seen_ids = set(
+        UserSeenRecord.objects.filter(
+            user=request.user, page_key=page_key, record_id__in=record_ids
+        ).values_list('record_id', flat=True)
+    )
+
+    baseline = prev_visit if prev_visit else (timezone.now() - datetime.timedelta(days=7))
+    new_ids = []
+    try:
+        if page_key == '/sales/rfqs':
+            from apps.sales.models import QuoteRequestItem
+            new_ids = list(QuoteRequestItem.objects.filter(
+                id__in=record_ids, updated_at__gt=baseline
+            ).exclude(id__in=seen_ids).values_list('id', flat=True))
+        elif page_key == '/sales/customer-orders':
+            from apps.sales.models import CustomerOrder
+            new_ids = list(CustomerOrder.objects.filter(
+                id__in=record_ids, updated_at__gt=baseline
+            ).exclude(id__in=seen_ids).values_list('id', flat=True))
+        elif page_key == '/sales/delivery-notes':
+            from apps.sales.models import DeliveryNoteItem
+            new_ids = list(DeliveryNoteItem.objects.filter(
+                id__in=record_ids, created_at__gt=baseline
+            ).exclude(id__in=seen_ids).values_list('id', flat=True))
+        elif page_key == '/personal/approvals':
+            from apps.sales.models import ApprovalRequest
+            new_ids = list(ApprovalRequest.objects.filter(
+                id__in=record_ids, updated_at__gt=baseline
+            ).exclude(id__in=seen_ids).values_list('id', flat=True))
+        elif page_key == '/manufacturing/ordered-products':
+            from apps.manufacturing.models import ManufacturingProduct
+            new_ids = list(ManufacturingProduct.objects.filter(
+                id__in=record_ids, updated_at__gt=baseline
+            ).exclude(id__in=seen_ids).values_list('id', flat=True))
+    except Exception:
+        pass
+
+    return Response({
+        'new_ids': new_ids,
+        'seen_ids': list(seen_ids),
+        'previous_visit': prev_visit.isoformat() if prev_visit else None,
+    })

@@ -44,12 +44,15 @@ const Td = styled.td`
   ${p=>p.$purple?'background:#f5f3ff;':''}
 `;
 const TableRow = styled.tr`
-  ${p=>p.$paid?'background:#E6F7ED;':''}
-  ${p=>p.$invoiced?'background:#e0f2fe;':''}
+  ${p=>p.$unpaid?'background:#dbeafe;':''}
+  ${p=>p.$partial?'background:#fef9c3;':''}
+  ${p=>p.$paid?'background:#fef9c3;':''}
+  ${p=>p.$invoiced?'background:#dcfce7;':''}
 `;
 const StatusPill = styled.span`
   display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600;
   ${p=>p.$v==='paid'?'background:#bbf7d0;color:#166534;':''}
+  ${p=>p.$v==='partial'?'background:#fde047;color:#854d0e;':''}
   ${p=>p.$v==='unpaid'?'background:#fde8d8;color:#9a3412;':''}
   ${p=>p.$v==='invoiced'?'background:#bae6fd;color:#0c4a6e;':''}
 `;
@@ -109,7 +112,7 @@ const BatchActionButton = styled.button`
   font-size: 13px;
   &:hover { opacity: 0.85; }
 `;
-const STATUS_LABELS = { unpaid: 'Kifizetetlen', paid: 'Kifizetett', invoiced: 'Kiszámlázott' };
+const STATUS_LABELS = { unpaid: 'Kifizetetlen', partial: 'Részben fizetve', paid: 'Kifizetett', invoiced: 'Kiszámlázott' };
 const PM_LABELS = { TRANSFER: 'Átutalás', CASH: 'Készpénz', CARD: 'Kártya', VOUCHER: 'Utalvány', UTANVET: 'Utánvét', OTHER: 'Egyéb' };
 
 function formatMoney(v) {
@@ -153,6 +156,11 @@ export default function IncomingProformas() {
   const [emailBody, setEmailBody] = useState('');
   const [sendingEmail, setSendingEmail] = useState(false);
   const [systemUsers, setSystemUsers] = useState([]);
+  // Pay modal
+  const [payRow, setPayRow] = useState(null);
+  const [payAmount, setPayAmount] = useState('');
+  const [payDate, setPayDate] = useState('');
+  const [paying, setPaying] = useState(false);
   const [userPickerValue, setUserPickerValue] = useState('');
 
   // Follow globally selected company from sidebar selector.
@@ -225,7 +233,33 @@ export default function IncomingProformas() {
   const openEdit = row => navigate(`/incoming-proformas/open?company_id=${encodeURIComponent(companyId)}&proforma_id=${encodeURIComponent(row.id)}`);
   const openNew = () => navigate(`/incoming-proformas/new?company_id=${encodeURIComponent(companyId)}`);
 
-  const statusColor = s => ({ unpaid: 'unpaid', paid: 'paid', invoiced: 'invoiced' }[s] || 'unpaid');
+  const openPay = (row) => {
+    setPayRow(row);
+    setPayAmount(String(parseFloat(row.gross_amount || 0)));
+    setPayDate(new Date().toISOString().slice(0, 10));
+  };
+
+  const handlePay = async () => {
+    if (!payRow) return;
+    setPaying(true);
+    try {
+      const res = await api.post('/api/incoming-proformas/mark-paid/', {
+        company_id: companyId,
+        id: payRow.id,
+        amount_paid: payAmount,
+        payment_date: payDate,
+      });
+      toast.success('Kifizetés rögzítve');
+      setPayRow(null);
+      loadItems();
+    } catch (e) {
+      toast.error(e?.response?.data?.error || 'Hiba a kifizetés rögzítésekor');
+    } finally {
+      setPaying(false);
+    }
+  };
+
+  const statusColor = s => ({ unpaid: 'unpaid', partial: 'partial', paid: 'paid', invoiced: 'invoiced' }[s] || 'unpaid');
   const selectedRows = items.filter(r => selected.has(r.id));
   const selectedCount = selectedRows.length;
   const selectedTotal = selectedRows.reduce((sum, r) => sum + Number(r?.gross_amount || 0), 0);
@@ -582,6 +616,7 @@ export default function IncomingProformas() {
   };
 
   return (
+    <>
     <PageWrap>
       <TopBar>
         <Title>Bejövő Díjbekérők</Title>
@@ -642,12 +677,15 @@ export default function IncomingProformas() {
               <tr><td colSpan={12} style={{textAlign:'center',padding:24,color:'#9ca3af'}}>Nincs találat</td></tr>
             ) : items.map(row => {
               const isPaid = row.status === 'paid';
+              const isPartial = row.status === 'partial';
+              const isUnpaid = row.status === 'unpaid';
               const isInvoiced = row.status === 'invoiced';
               const isCovered = row.is_fully_covered;
               const remaining = parseFloat(row.remaining_amount || 0);
               const isOverpaid = remaining < -0.005;
+              const amountPaid = parseFloat(row.amount_paid || 0);
               return (
-                <TableRow key={row.id} $paid={isPaid && !isInvoiced} $invoiced={isInvoiced}>
+                <TableRow key={row.id} $unpaid={isUnpaid} $partial={isPartial} $paid={isPaid && !isInvoiced} $invoiced={isInvoiced}>
                   <Td>
                     <input
                       type="checkbox"
@@ -668,7 +706,14 @@ export default function IncomingProformas() {
                   </Td>
                   <Td>{row.issue_date || '—'}</Td>
                   <Td>{row.due_date || '—'}</Td>
-                  <Td style={{textAlign:'right',fontWeight:600}}>{formatMoney(row.gross_amount)}</Td>
+                  <Td style={{textAlign:'right',fontWeight:600}}>
+                    <div>{formatMoney(row.gross_amount)}</div>
+                    {(isPaid || isPartial) && amountPaid > 0 && (
+                      <SmallMuted style={{color: isPaid ? '#166534' : '#854d0e'}}>
+                        {isPaid ? `Rendezve: ${row.payment_date || ''}` : `Fizetve: ${formatMoney(amountPaid)} — Maradék: ${formatMoney(parseFloat(row.gross_amount||0) - amountPaid)}`}
+                      </SmallMuted>
+                    )}
+                  </Td>
                   <Td>{row.currency}</Td>
                   <Td>{PM_LABELS[row.payment_method] || row.payment_method || '—'}</Td>
                   <Td>
@@ -696,10 +741,15 @@ export default function IncomingProformas() {
                   </Td>
                   <Td>
                     <StatusPill $v={statusColor(row.status)}>{STATUS_LABELS[row.status] || row.status}</StatusPill>
-                    {row.payment_date && <SmallMuted>Rendezve: {row.payment_date}</SmallMuted>}
+                    {row.payment_date && isPaid && <SmallMuted>Rendezve: {row.payment_date}</SmallMuted>}
                   </Td>
                   <Td>
-                    <div style={{display:'flex',gap:4}}>
+                    <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
+                      {(isUnpaid || isPartial) && (
+                        <IconButton onClick={()=>openPay(row)} title="Kifizet" style={{background:'#dcfce7',color:'#166534'}}>
+                          <span style={{fontSize:11,fontWeight:600}}>Fizet</span>
+                        </IconButton>
+                      )}
                       <IconButton onClick={()=>navigate(`/incoming-proformas/open?company_id=${encodeURIComponent(companyId)}&proforma_id=${encodeURIComponent(row.id)}`)} title="Megnyitás">
                         <Eye size={14}/>
                       </IconButton>
@@ -1014,5 +1064,53 @@ export default function IncomingProformas() {
       )}
 
     </PageWrap>
+
+    {/* Pay modal */}
+    {payRow && (
+      <ModalOverlay onClick={() => setPayRow(null)}>
+        <ModalContent onClick={e => e.stopPropagation()} style={{maxWidth:420}}>
+          <ModalHeader>
+            <ModalTitle>Kifizetés rögzítése – {payRow.proforma_number}</ModalTitle>
+            <CloseBtn onClick={() => setPayRow(null)}>Bezárás</CloseBtn>
+          </ModalHeader>
+          <ModalBody>
+            <div style={{display:'flex',flexDirection:'column',gap:12}}>
+              <div>
+                <label style={{fontSize:13,fontWeight:500,display:'block',marginBottom:4}}>Kifizetett összeg ({payRow.currency})</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={payAmount}
+                  onChange={e => setPayAmount(e.target.value)}
+                  style={{width:'100%',padding:'8px 10px',border:'1px solid #d1d5db',borderRadius:6,fontSize:14,boxSizing:'border-box'}}
+                  autoFocus
+                />
+                {parseFloat(payAmount || 0) < parseFloat(payRow.gross_amount || 0) - 0.005 && (
+                  <div style={{fontSize:12,color:'#b45309',marginTop:4}}>
+                    Fennmaradó: {formatMoney(parseFloat(payRow.gross_amount || 0) - parseFloat(payAmount || 0))} {payRow.currency}
+                  </div>
+                )}
+              </div>
+              <div>
+                <label style={{fontSize:13,fontWeight:500,display:'block',marginBottom:4}}>Fizetés dátuma</label>
+                <input
+                  type="date"
+                  value={payDate}
+                  onChange={e => setPayDate(e.target.value)}
+                  style={{width:'100%',padding:'8px 10px',border:'1px solid #d1d5db',borderRadius:6,fontSize:14,boxSizing:'border-box'}}
+                />
+              </div>
+              <div style={{display:'flex',gap:8,justifyContent:'flex-end',marginTop:4}}>
+                <SecondaryButton onClick={() => setPayRow(null)}>Mégse</SecondaryButton>
+                <PrimaryButton onClick={handlePay} disabled={paying || !payAmount || !payDate}>
+                  {paying ? 'Mentés…' : 'Kifizetés rögzítése'}
+                </PrimaryButton>
+              </div>
+            </div>
+          </ModalBody>
+        </ModalContent>
+      </ModalOverlay>
+    )}
+  </>  
   );
 }
