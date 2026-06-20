@@ -419,11 +419,11 @@ export const salesService = {
         return response.data;
     },
 
-    async sendQuoteRequestEmail(id: number, data: { to: string; cc?: string; template_key?: string; signature_key?: string; context?: any; body?: string; subject?: string; additional_rfq_ids?: number[]; item_ids?: number[] }) {
+        async sendQuoteRequestEmail(id: number | string, data: { to: string; cc?: string; template_key?: string; signature_key?: string; context?: any; body?: string; subject?: string; additional_rfq_ids?: Array<number | string>; item_ids?: number[] }) {
         const response = await api.post(`/sales/quote-requests/${id}/send_email/`, data);
         return response.data;
     },
-    async renderQuoteRequestEmail(id: number, data: { template_key?: string; signature_key?: string; context?: any; body?: string; subject?: string; additional_rfq_ids?: number[]; item_ids?: number[] }) {
+        async renderQuoteRequestEmail(id: number | string, data: { template_key?: string; signature_key?: string; context?: any; body?: string; subject?: string; additional_rfq_ids?: Array<number | string>; item_ids?: number[] }) {
         const response = await api.post(`/sales/quote-requests/${id}/render_email/`, data);
         return response.data;
     },

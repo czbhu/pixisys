@@ -260,7 +260,7 @@ const RFQs: React.FC = () => {
   const [sendRfqList, setSendRfqList] = useState<{ rfqId: number | string; additionalRfqIds?: (number | string)[]; itemIds?: number[]; sent: boolean }[]>([]);
   const [sendRfqIndex, setSendRfqIndex] = useState(0);
   // Cache per-RFQ form edits so navigating back restores user's changes
-  const sendFormCacheRef = React.useRef<Record<number, any>>({});
+  const sendFormCacheRef = React.useRef<Record<string, any>>({});
   // Track additionalRfqIds and itemIds for the currently open send modal (used in render/preview)
   const currentSendAdditionalRfqIdsRef = React.useRef<(number | string)[]>([]);
   const currentSendItemIdsRef = React.useRef<number[]>([]);
@@ -2447,10 +2447,11 @@ const RFQs: React.FC = () => {
     setSendPreview(null);
     currentSendAdditionalRfqIdsRef.current = additionalRfqIds || [];
     currentSendItemIdsRef.current = itemIds || [];
+    const cacheKey = String(rfqId);
 
     // Restore cached edits if the user previously edited this RFQ's email
-    if (sendFormCacheRef.current[rfqId]) {
-      sendForm.setFieldsValue(sendFormCacheRef.current[rfqId]);
+    if (sendFormCacheRef.current[cacheKey]) {
+      sendForm.setFieldsValue(sendFormCacheRef.current[cacheKey]);
       return;
     }
 
@@ -3218,7 +3219,7 @@ const RFQs: React.FC = () => {
       </Card>
       <Modal 
         title={(() => {
-            const rec = findRfqByRef((rfqs || []) as any[], sendOpenId);
+            const rec = sendOpenId == null ? null : findRfqByRef((rfqs || []) as any[], sendOpenId);
             const contactNames = (rec?.contacts || []).map((c: any) => c.name).filter(Boolean).join(', ');
             const recLabel = rec ? `${rec.request_number || rec.number || ''} (${rec.company?.name || ''}${contactNames ? ' - ' + contactNames : ''})` : '';
             const rfqProgress = sendRfqList.length > 1 ? ` [${sendRfqIndex + 1}/${sendRfqList.length}]` : '';
@@ -3302,11 +3303,11 @@ const RFQs: React.FC = () => {
           {sendRfqList.length > 1 && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 14, flexWrap: 'wrap', background: '#fafafa', border: '1px solid #f0f0f0', borderRadius: 6, padding: '8px 12px' }}>
               <Button size="small" icon={<LeftOutlined />} disabled={sendRfqIndex === 0}
-                onClick={() => { sendFormCacheRef.current[sendRfqList[sendRfqIndex].rfqId] = sendForm.getFieldsValue(); const ni = sendRfqIndex - 1; setSendRfqIndex(ni); openSendModal(sendRfqList[ni].rfqId, sendRfqList[ni].additionalRfqIds, sendRfqList[ni].itemIds); }}
+                onClick={() => { sendFormCacheRef.current[String(sendRfqList[sendRfqIndex].rfqId)] = sendForm.getFieldsValue(); const ni = sendRfqIndex - 1; setSendRfqIndex(ni); openSendModal(sendRfqList[ni].rfqId, sendRfqList[ni].additionalRfqIds, sendRfqList[ni].itemIds); }}
               />
               <span style={{ fontSize: 12, fontWeight: 500, minWidth: 36, textAlign: 'center' }}>{sendRfqIndex + 1} / {sendRfqList.length}</span>
               <Button size="small" icon={<RightOutlined />} disabled={sendRfqIndex === sendRfqList.length - 1}
-                onClick={() => { sendFormCacheRef.current[sendRfqList[sendRfqIndex].rfqId] = sendForm.getFieldsValue(); const ni = sendRfqIndex + 1; setSendRfqIndex(ni); openSendModal(sendRfqList[ni].rfqId, sendRfqList[ni].additionalRfqIds, sendRfqList[ni].itemIds); }}
+                onClick={() => { sendFormCacheRef.current[String(sendRfqList[sendRfqIndex].rfqId)] = sendForm.getFieldsValue(); const ni = sendRfqIndex + 1; setSendRfqIndex(ni); openSendModal(sendRfqList[ni].rfqId, sendRfqList[ni].additionalRfqIds, sendRfqList[ni].itemIds); }}
               />
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                 {sendRfqList.map((item, i) => {
@@ -3315,7 +3316,7 @@ const RFQs: React.FC = () => {
                     <Tag key={item.rfqId}
                       color={item.sent ? 'success' : i === sendRfqIndex ? 'processing' : 'default'}
                       style={{ cursor: 'pointer', margin: 0 }}
-                      onClick={() => { sendFormCacheRef.current[sendRfqList[sendRfqIndex].rfqId] = sendForm.getFieldsValue(); setSendRfqIndex(i); openSendModal(item.rfqId, item.additionalRfqIds, item.itemIds); }}
+                      onClick={() => { sendFormCacheRef.current[String(sendRfqList[sendRfqIndex].rfqId)] = sendForm.getFieldsValue(); setSendRfqIndex(i); openSendModal(item.rfqId, item.additionalRfqIds, item.itemIds); }}
                     >
                       {rec?.company?.name || rec?.number || item.rfqId}{item.sent ? ' ✓' : ''}
                     </Tag>

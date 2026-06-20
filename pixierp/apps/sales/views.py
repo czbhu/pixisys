@@ -3113,6 +3113,186 @@ class QuoteViewSet(viewsets.ModelViewSet):
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
+@api_view(['POST'])
+@permission_classes([AllowAny])
+@authentication_classes([])
+def public_upload_attachment(request, token: str):
+    """Publikus fájlfeltöltés az árajánlathoz"""
+    qr = get_object_or_404(QuoteRequest, public_token=token)
+    if qr.public_expires_at and timezone.now() > qr.public_expires_at:
+        return Response({'error': 'Link lejárt'}, status=410)
+
+    file = request.FILES.get('file')
+    if not file:
+        return Response({'error': 'Nincs fájl'}, status=400)
+
+    if file.size > 20 * 1024 * 1024:
+        return Response({'error': 'A fájl mérete nem haladhatja meg a 20 MB-ot'}, status=400)
+
+    allowed_types = {
+        'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml',
+        'application/pdf',
+        'application/msword',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/vnd.ms-excel',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'text/plain', 'text/csv',
+        'application/zip',
+    }
+    if file.content_type not in allowed_types:
+        return Response({'error': f'Nem engedélyezett fájltípus: {file.content_type}'}, status=400)
+
+    remark = request.data.get('remark', '')
+    att = QuoteRequestAttachment.objects.create(
+        quote_request=qr,
+        file=file,
+        original_filename=file.name,
+        remark=remark[:255] if remark else '',
+        uploaded_by=None,
+    )
+
+    _att_ip = _get_ip(request)
+    QuoteLog.objects.create(
+        quote=qr,
+        user=None,
+        action=f'Ügyfél csatolmányt töltött fel: {file.name}',
+        ip_address=_att_ip or None,
+    )
+    _notify_internal_team(
+        qr,
+        subject=f'Új csatolmány érkezett - {qr.number or qr.request_number}',
+        body=(
+            f'Az ügyfél csatolmányt töltött fel az ajánlathoz.\n\n'
+            f'Árajánlat: {qr.title}\n'
+            f'Szám: {qr.number or qr.request_number}\n'
+            f'Fájl: {file.name}\n'
+            f'IP: {_att_ip}\n'
+        ),
+    )
+
+    return Response({
+        'id': att.id,
+        'original_filename': att.original_filename,
+        'remark': att.remark,
+        'created_at': att.created_at.isoformat(),
+    }, status=201)
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+@authentication_classes([])
+def public_list_attachments(request, token: str):
+    """Publikusan feltöltött csatolmányok listája"""
+    qr = get_object_or_404(QuoteRequest, public_token=token)
+    atts = qr.attachments.all().order_by('created_at')
+    data = [
+        {
+            'id': a.id,
+            'original_filename': a.original_filename or a.file.name.split('/')[-1],
+            'remark': a.remark,
+            'created_at': a.created_at.isoformat(),
+        }
+        for a in atts
+    ]
+    return Response(data)
+
+
+@api_view(['DELETE'])
+@permission_classes([AllowAny])
+@authentication_classes([])
+def public_delete_attachment(request, token: str, att_id: int):
+    """Saját (session-kulccsal azonosított) csatolmány törlése"""
+    qr = get_object_or_404(QuoteRequest, public_token=token)
+    att = get_object_or_404(QuoteRequestAttachment, id=att_id, quote_request=qr, uploaded_by=None)
+    att.file.delete(save=False)
+    att.delete()
+    return Response(status=204)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+@authentication_classes([])
+def public_upload_item_attachment(request, token: str, item_id: int):
+    """Publikus fájlfeltöltés egy adott árajánlat-tételhez"""
+    qr = get_object_or_404(QuoteRequest, public_token=token)
+    if qr.public_expires_at and timezone.now() > qr.public_expires_at:
+        return Response({'error': 'Link lejárt'}, status=410)
+
+    item = get_object_or_404(QuoteRequestItem, id=item_id, quote_request=qr)
+
+    locked_statuses = {'ordered', 'archived'}
+    if item.item_status in locked_statuses:
+        return Response({'error': 'Megrendelt tételhez már nem tölthető fel csatolmány.'}, status=403)
+
+    file = request.FILES.get('file')
+    if not file:
+        return Response({'error': 'Nincs fájl'}, status=400)
+
+    if file.size > 20 * 1024 * 1024:
+        return Response({'error': 'A fájl mérete nem haladhatja meg a 20 MB-ot'}, status=400)
+
+    allowed_types = {
+        'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml',
+        'application/pdf',
+        'application/msword',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/vnd.ms-excel',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'text/plain', 'text/csv',
+        'application/zip',
+    }
+    if file.content_type not in allowed_types:
+        return Response({'error': f'Nem engedélyezett fájltípus: {file.content_type}'}, status=400)
+
+    remark = request.data.get('remark', '')
+    att = QuoteRequestItemAttachment.objects.create(
+        quote_item=item,
+        file=file,
+        original_filename=file.name,
+        remark=remark[:255] if remark else '',
+        uploaded_by=None,
+    )
+
+    _item_ip = _get_ip(request)
+    QuoteLog.objects.create(
+        quote=qr,
+        user=None,
+        action=f'Ügyfél tételhez csatolmányt töltött fel: {file.name}',
+        ip_address=_item_ip or None,
+    )
+    _notify_internal_team(
+        qr,
+        subject=f'Új tételcsatolmány érkezett - {qr.number or qr.request_number}',
+        body=(
+            f'Az ügyfél egy tételhez csatolmányt töltött fel.\n\n'
+            f'Árajánlat: {qr.title}\n'
+            f'Szám: {qr.number or qr.request_number}\n'
+            f'Fájl: {file.name}\n'
+            f'IP: {_item_ip}\n'
+        ),
+    )
+
+    return Response({
+        'id': att.id,
+        'original_filename': att.original_filename,
+        'remark': att.remark,
+        'created_at': att.created_at.isoformat(),
+    }, status=201)
+
+
+@api_view(['DELETE'])
+@permission_classes([AllowAny])
+@authentication_classes([])
+def public_delete_item_attachment(request, token: str, item_id: int, att_id: int):
+    """Publikusan feltöltött tétel csatolmány törlése"""
+    qr = get_object_or_404(QuoteRequest, public_token=token)
+    item = get_object_or_404(QuoteRequestItem, id=item_id, quote_request=qr)
+    att = get_object_or_404(QuoteRequestItemAttachment, id=att_id, quote_item=item, uploaded_by=None)
+    att.file.delete(save=False)
+    att.delete()
+    return Response(status=204)
+
+
 class QuoteRequestItemViewSet(viewsets.ModelViewSet):
     queryset = QuoteRequestItem.objects.all().select_related(
         'quote_request', 'product', 'material', 'manufacturing_product', 'service'
