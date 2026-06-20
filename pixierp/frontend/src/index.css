@@ -94,6 +94,20 @@ body,
 
 /* ─────────────────────────────────────────────────────────────────────────── */
 
+/* Timer modal: hide app header behind full-screen modal on mobile */
+@media (max-width: 767px) {
+  body.timer-modal-open .ant-layout-header,
+  body.timer-modal-open header,
+  body.timer-modal-open nav {
+    z-index: 0 !important;
+  }
+  .pixi-fullscreen-wrap {
+    z-index: 1100 !important;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────── */
+
 .pixi-unified-card-header {
   display: flex;
   align-items: stretch;

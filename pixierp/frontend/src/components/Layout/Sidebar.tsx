@@ -98,7 +98,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
       '/personal', '/hr', '/sales', '/manufacturing', '/finance', '/crm', '/orders', '/warehouse', '/pos', '/settings',
       '/personal/invitations', '/personal/orders', '/personal/attendance', '/personal/tasks', '/personal/approvals', '/personal/cash-registers', '/personal/tickets',
       '/hr/employees', '/hr/departments', '/hr/attendance', '/hr/work-logs', '/hr/payroll', '/hr/leaves', '/hr/analytics', '/hr/activity-log', '/hr/task-settings',
-      '/sales/rfqs', '/sales/invitations', '/sales/customer-orders', '/sales/delivery-notes', '/sales/invoicing', '/sales/projects', '/sales/forecasts',
+      '/sales/rfqs', '/sales/invitations', '/sales/delivery-notes', '/sales/invoicing', '/sales/projects', '/sales/forecasts',
       '/manufacturing/projects', '/manufacturing/products', '/manufacturing/ordered-products', '/manufacturing/queue', '/manufacturing/product-classes', '/manufacturing/product-editor', '/manufacturing/services', '/manufacturing/service-groups',
       '/manufacturing/print-templates',
       '/finance/payments', '/finance/cash-registers', '/finance/cash-register-setup', '/finance/budgets', '/finance/reports',
@@ -353,10 +353,6 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
         {
           key: '/sales/rfqs',
           label: labelWithBadge('Árajánlatok', '/sales/rfqs'),
-        },
-        {
-          key: '/sales/customer-orders',
-          label: labelWithBadge('Megrendelések', '/sales/customer-orders'),
         },
         {
           key: '/sales/delivery-notes',
@@ -669,7 +665,6 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
 
     // Sales
     '/sales/rfqs': 'sales.rfqs',
-    '/sales/customer-orders': 'sales.orders',
     '/sales/delivery-notes': 'sales.delivery_notes',
     '/sales/invoicing': 'sales.invoicing',
     '/sales/invitations': 'sales.invitations',

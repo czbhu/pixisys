@@ -1,21 +1,22 @@
 from rest_framework import viewsets, status, permissions
 from django.db import models
-from django.db.models import Q, Prefetch, Count, OuterRef, Subquery, Exists
+from django.db.models import Q, Prefetch, Count, OuterRef, Subquery, Exists, Exists, OuterRef, Subquery
 from django.template import Template, Context
 import datetime
-import re
 from rest_framework.decorators import action, api_view, permission_classes, authentication_classes
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from django.shortcuts import get_object_or_404
+from django.http import Http404
 from django.utils import timezone
 from apps.core.permissions import OwnDataFilterMixin
 from .models import (
     Customer, Product, QuoteRequest, Quote, QuoteItem, QuoteRequestItem,
     Order, OrderItem, Lead, Opportunity, Forecast, CustomerOrder, CustomerOrderItem, QuoteRequestCost, WorkLog, QuoteLog, ApprovalRequest,
     ChatThread, ChatMessage, ChatMessageAttachment, QuoteRequestAttachment, QuoteRequestItemAttachment,
-    DeliveryNote, DeliveryNoteItem, PickupLocation, ExtraWork,
-    POSCustomerIdentification, POSCoupon, POSTransaction, POSTransactionItem, POSPayment
+    QuoteRequestItemCostAttachment,
+    DeliveryNote, DeliveryNoteItem, ExtraWork,
+    POSCustomerIdentification, POSCoupon, POSTransaction, POSTransactionItem, POSPayment, PickupLocation
 )
 from .serializers import (
     CustomerSerializer, ProductSerializer, QuoteRequestSerializer, QuoteRequestItemSerializer,
@@ -25,72 +26,17 @@ from .serializers import (
     InvoiceableOrderSerializer,
     CustomerOrderItemSerializer, QuoteRequestCostSerializer, WorkLogSerializer,
     ChatThreadSerializer, ChatMessageSerializer,
-    DeliveryNoteSerializer, DeliveryNoteItemSerializer, PickupLocationSerializer, ApprovalRequestSerializer,
+    DeliveryNoteSerializer, DeliveryNoteItemSerializer, ApprovalRequestSerializer,
     ExtraWorkSerializer,
     POSCustomerIdentificationSerializer, POSCouponSerializer, POSTransactionSerializer,
-    POSTransactionItemSerializer, POSPaymentSerializer, POSTransactionCreateSerializer
+    POSTransactionItemSerializer, POSPaymentSerializer, POSTransactionCreateSerializer, PickupLocationSerializer
 )
-from apps.manufacturing.models import ManufacturingProduct, Project, Service
+from apps.manufacturing.models import ManufacturingProduct, ManufacturingCostItem, Project, Service
 from apps.manufacturing.serializers import ManufacturingProductSerializer
 from apps.core.models import Currency
 from apps.crm.models import Company as CrmCompany, Contact
-from .models import QuoteLog, QuoteRequestItemAttachment, SearchStat, QuoteRequestAttachment, QuoteRequestEmailLog, QuoteRequestInvitation, WorkLog
+from .models import QuoteLog, QuoteRequestItemAttachment, QuoteRequestItemCostAttachment, SearchStat, QuoteRequestAttachment, QuoteRequestEmailLog, QuoteRequestInvitation, WorkLog
 from .serializers import ServiceSerializer, QuoteLogSerializer, QuoteRequestItemAttachmentSerializer, QuoteRequestAttachmentSerializer, QuoteRequestInvitationSerializer
-
-
-def _get_ip(request):
-    """Extract real client IP from request headers."""
-    xff = request.META.get('HTTP_X_FORWARDED_FOR', '')
-    if xff:
-        return xff.split(',')[0].strip()
-    return request.META.get('REMOTE_ADDR', '')
-
-
-def _notify_internal_team(qr, subject, body):
-    """Send an email notification to the internal team (RFQ owner) about a public customer action."""
-    try:
-        from django.core.mail import get_connection, EmailMultiAlternatives
-        from apps.core.models import EmailServerConfig
-        email_config = EmailServerConfig.objects.filter(is_active=True).first()
-        if not email_config:
-            return
-        recipient = None
-        if qr.created_by and qr.created_by.email:
-            recipient = qr.created_by.email
-        elif qr.owner and qr.owner.email:
-            recipient = qr.owner.email
-        if not recipient:
-            return
-        connection = get_connection(
-            backend='django.core.mail.backends.smtp.EmailBackend',
-            host=email_config.smtp_host,
-            port=email_config.smtp_port,
-            username=email_config.smtp_username,
-            password=email_config.smtp_password,
-            use_tls=email_config.smtp_use_tls,
-            use_ssl=email_config.smtp_use_ssl,
-            fail_silently=True,
-            timeout=10,
-        )
-        from_email = (
-            f"{email_config.from_name} <{email_config.from_email}>"
-            if email_config.from_name else email_config.from_email
-        )
-        msg = EmailMultiAlternatives(
-            subject=subject,
-            body=body,
-            from_email=from_email,
-            to=[recipient],
-            connection=connection,
-        )
-        msg.send()
-        try:
-            from apps.core.email_utils import archive_to_imap_sent
-            archive_to_imap_sent(email_config, msg)
-        except Exception:
-            pass
-    except Exception:
-        pass
 from apps.core.models import EmailServerConfig, EmailTemplate, SignatureTemplate, Currency, Company as CoreCompany
 import smtplib, ssl, imaplib, email
 from email.mime.multipart import MIMEMultipart
@@ -100,7 +46,9 @@ from decimal import Decimal, InvalidOperation
 from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.conf import settings
-from apps.manufacturing.models import ManufacturingCostItem, ManufacturingProductAttachment
+from django.core.files.storage import default_storage
+from django.utils.text import get_valid_filename
+import posixpath
 
 
 def _bump_search_stat(item_type: str, ref_id: int, user=None):
@@ -111,6 +59,45 @@ def _bump_search_stat(item_type: str, ref_id: int, user=None):
     except Exception:
         # don't block main flow on stats errors
         pass
+
+
+def _rename_filefield_on_storage(file_field, requested_name: str):
+    """Rename a FileField object physically in storage and update its name.
+
+    Returns tuple: (final_basename, final_storage_path or None).
+    """
+    new_name = get_valid_filename((requested_name or '').strip())
+    if not new_name:
+        return None, None
+    if not file_field or not getattr(file_field, 'name', None):
+        return new_name, None
+
+    old_path = file_field.name
+    directory = posixpath.dirname(old_path)
+    target_path = posixpath.join(directory, new_name) if directory else new_name
+
+    # Nothing to do if path is already the same.
+    if old_path == target_path:
+        return new_name, old_path
+
+    base_name, ext = posixpath.splitext(new_name)
+    candidate = target_path
+    suffix = 1
+    while default_storage.exists(candidate):
+        dedup_name = f"{base_name}_{suffix}{ext}"
+        candidate = posixpath.join(directory, dedup_name) if directory else dedup_name
+        suffix += 1
+
+    # Copy to new path then remove old path, works on non-local storages as well.
+    with default_storage.open(old_path, 'rb') as src:
+        saved_path = default_storage.save(candidate, src)
+    try:
+        default_storage.delete(old_path)
+    except Exception:
+        pass
+
+    file_field.name = saved_path
+    return posixpath.basename(saved_path), saved_path
 
 
 def _user_can_approve_customer_orders(user):
@@ -186,18 +173,8 @@ def _apply_customer_order_status(order, new_status, changed_at=None):
             if mp_ids:
                 from apps.manufacturing.models import ManufacturingCostItem
                 ManufacturingCostItem.objects.filter(product_id__in=mp_ids).exclude(status='cancelled').update(status=new_status)
-            # Propagate status to cost_items_data sub-items for direct manufacturing items
-            for item in active_items:
-                qi = getattr(item, 'quote_item', None)
-                if qi and qi.manufacturing_product_id is None and isinstance(qi.cost_items_data, list) and qi.cost_items_data:
-                    updated = [
-                        {**ci, 'status': new_status} if ci.get('status') != 'cancelled' else ci
-                        for ci in qi.cost_items_data
-                    ]
-                    if updated != qi.cost_items_data:
-                        type(qi).objects.filter(id=qi.id).update(cost_items_data=updated)
 
-    # When order is marked delivered, confirm all associated unconfirmed DeliveryNotes
+    # When order is marked delivered, confirm all associated unconfirmed DeliveryNotes.
     if new_status == 'delivered':
         try:
             from apps.sales.models import DeliveryNote
@@ -211,6 +188,12 @@ def _apply_customer_order_status(order, new_status, changed_at=None):
             )
         except Exception:
             pass
+
+    try:
+        if order.quote_request_id:
+            _sync_rfq_primary_snapshot(order.quote_request)
+    except Exception:
+        pass
 
     return order
 
@@ -262,41 +245,10 @@ def _apply_customer_order_status_tree(order, new_status, changed_at=None):
 
 
 def _apply_quote_request_status(qr, new_status, changed_at=None):
-    """Apply an RFQ status and mirror order-like statuses to linked orders.
-    If status is in_production (or any order-sync status) and no CustomerOrder
-    exists yet, one is created automatically so the item appears in the queue."""
+    """Apply an RFQ status and mirror order-like statuses to linked orders."""
     active_orders = list(qr.customer_orders.exclude(status='cancelled').prefetch_related('items'))
 
-    if new_status in RFQ_ORDER_SYNC_STATUSES:
-        # Auto-create CustomerOrder if none exists yet
-        if not active_orders:
-            try:
-                from .models import CustomerOrder, CustomerOrderItem
-                from django.utils import timezone as tz
-                rfq_num = qr.number or qr.request_number or f"QR{qr.id}"
-                while CustomerOrder.objects.filter(order_number=rfq_num).exists():
-                    rfq_num = rfq_num + "_1"
-                order = CustomerOrder.objects.create(
-                    quote_request=qr,
-                    order_number=rfq_num,
-                    status='new',
-                    created_by=getattr(qr, 'created_by', None),
-                )
-                for it in qr.items.exclude(item_type='').all():
-                    CustomerOrderItem.objects.create(
-                        customer_order=order,
-                        quote_item=it,
-                        quantity=it.quantity,
-                        unit=it.unit or 'db',
-                        net_unit_price=it.net_unit_price or 0,
-                        vat_rate=it.vat_rate or 27,
-                        description=it.description or '',
-                        status='new',
-                    )
-                active_orders = [order]
-            except Exception:
-                pass  # don't block status change if order creation fails
-
+    if new_status in RFQ_ORDER_SYNC_STATUSES and active_orders:
         for order in active_orders:
             _apply_customer_order_status_tree(order, new_status, changed_at=changed_at)
         stored_status = 'ordered'
@@ -308,6 +260,56 @@ def _apply_quote_request_status(qr, new_status, changed_at=None):
         qr.save(update_fields=['status'])
 
     return stored_status
+
+
+def _sync_rfq_primary_snapshot(qr):
+    """Best-effort sync for RFQ-first snapshot fields.
+
+    Keeps RFQ-level mirrors updated while legacy item/order models still exist.
+    """
+    if not qr:
+        return
+
+    # Guard for environments where migration is not yet applied.
+    if not hasattr(qr, 'primary_item_name'):
+        return
+
+    root_items = list(qr.items.filter(parent__isnull=True).order_by('sort_order', 'id'))
+    item = root_items[0] if root_items else None
+    order = qr.customer_orders.exclude(status='cancelled').order_by('-id').first()
+
+    delivery_number = ''
+    if order:
+        dn = (
+            DeliveryNote.objects.filter(items__customer_order_item__customer_order=order)
+            .order_by('-created_at')
+            .first()
+        )
+        if dn and dn.delivery_note_number:
+            delivery_number = dn.delivery_note_number
+
+    updates = {
+        'primary_item_name': (item.item_name if item and item.item_name else '') if item else '',
+        'primary_item_description': (item.description or '') if item else '',
+        'primary_quantity': (item.quantity if item else 1),
+        'primary_unit': (item.unit if item and item.unit else 'db') if item else 'db',
+        'primary_net_unit_price': (item.net_unit_price if item else 0),
+        'primary_vat_rate': (item.vat_rate if item else 27),
+        'primary_discount_percent': (item.discount_percent if item else 0),
+        'primary_quote_item_id': (item.id if item else None),
+        'primary_order_number': (order.order_number if order and order.order_number else '') if order else '',
+        'primary_delivery_note_number': delivery_number,
+        'primary_invoice_number': (order.invoice_number if order and order.invoice_number else '') if order else '',
+    }
+
+    changed = []
+    for field, value in updates.items():
+        if getattr(qr, field, None) != value:
+            setattr(qr, field, value)
+            changed.append(field)
+
+    if changed:
+        qr.save(update_fields=changed)
 
 class CustomerViewSet(viewsets.ModelViewSet):
     queryset = Customer.objects.all()
@@ -323,7 +325,6 @@ class ManufacturingProductViewSet(viewsets.ModelViewSet):
     queryset = ManufacturingProduct.objects.all()
     serializer_class = ManufacturingProductSerializer
     permission_classes = [AllowAny]
-
 
 def _build_items_table_html(items_qs, currency_symbol=''):
     """HTML táblázat generálása email sablonhoz az ajánlat tételeiből."""
@@ -347,29 +348,20 @@ def _build_items_table_html(items_qs, currency_symbol=''):
 
         def fmt(val):
             try:
-                return '{:,.0f}'.format(float(val)).replace(',', '\u00a0')
-            except Exception:
-                return str(val)
-
-        def fmt2(val):
-            try:
-                f = float(val)
-                if f == int(f):
-                    return '{:,.0f}'.format(f).replace(',', '\u00a0')
-                return '{:,.2f}'.format(f).replace(',', '\u00a0')
+                return f"{float(val):,.0f}".replace(',', '\u00a0')
             except Exception:
                 return str(val)
 
         rows.append(
-            '<tr>'
-            '<td style="border:1px solid #ddd;padding:6px 10px;">' + str(name) + '</td>'
-            '<td style="border:1px solid #ddd;padding:6px 10px;">' + str(code) + '</td>'
-            '<td style="border:1px solid #ddd;padding:6px 10px;">' + str(description) + '</td>'
-            '<td style="border:1px solid #ddd;padding:6px 10px;text-align:right;">' + fmt(qty) + '</td>'
-            '<td style="border:1px solid #ddd;padding:6px 10px;">' + str(unit) + '</td>'
-            '<td style="border:1px solid #ddd;padding:6px 10px;text-align:right;">' + fmt2(net_unit) + ((' ' + cur) if cur else '') + '</td>'
-            '<td style="border:1px solid #ddd;padding:6px 10px;text-align:right;">' + fmt2(net_total) + ((' ' + cur) if cur else '') + '</td>'
-            '</tr>'
+            f'<tr>'
+            f'<td style="border:1px solid #ddd;padding:6px 10px;">{name}</td>'
+            f'<td style="border:1px solid #ddd;padding:6px 10px;">{code}</td>'
+            f'<td style="border:1px solid #ddd;padding:6px 10px;">{description}</td>'
+            f'<td style="border:1px solid #ddd;padding:6px 10px;text-align:right;">{fmt(qty)}</td>'
+            f'<td style="border:1px solid #ddd;padding:6px 10px;">{unit}</td>'
+            f'<td style="border:1px solid #ddd;padding:6px 10px;text-align:right;">{fmt(net_unit)}{(" " + cur) if cur else ""}</td>'
+            f'<td style="border:1px solid #ddd;padding:6px 10px;text-align:right;">{fmt(net_total)}{(" " + cur) if cur else ""}</td>'
+            f'</tr>'
         )
     rows_html = ''.join(rows)
     return (
@@ -382,8 +374,9 @@ def _build_items_table_html(items_qs, currency_symbol=''):
         '<th style="border:1px solid #ddd;padding:6px 10px;text-align:left;">Egység</th>'
         '<th style="border:1px solid #ddd;padding:6px 10px;text-align:right;">Nettó egységár</th>'
         '<th style="border:1px solid #ddd;padding:6px 10px;text-align:right;">Nettó ár</th>'
-        '</tr></thead><tbody>' + rows_html + '</tbody></table>'
+        f'</tr></thead><tbody>{rows_html}</tbody></table>'
     )
+
 
 class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
     queryset = QuoteRequest.objects.all()  # Base queryset
@@ -391,21 +384,86 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
     permission_classes = [AllowAny]
     permission_module = 'sales'
     permission_resource = 'sales.rfqs'
+    lookup_value_regex = r'[^/]+'
+
+    def _resolve_rfq_identifier(self, queryset, identifier):
+        ident = str(identifier or '').strip()
+        if not ident:
+            return None
+
+        if ident.isdigit():
+            obj = queryset.filter(pk=int(ident)).first()
+            if obj:
+                return obj
+
+        return queryset.filter(number=ident).first() or queryset.filter(request_number=ident).first()
+    lookup_value_regex = r'[^/]+'
+
+    def _resolve_rfq_identifier(self, queryset, identifier):
+        ident = str(identifier or '').strip()
+        if not ident:
+            return None
+
+        if ident.isdigit():
+            obj = queryset.filter(pk=int(ident)).first()
+            if obj:
+                return obj
+
+        return queryset.filter(number=ident).first() or queryset.filter(request_number=ident).first()
+    lookup_value_regex = r'[^/]+'
+    lookup_value_regex = r'[^/]+'
+
+    def _resolve_rfq_identifier(self, queryset, identifier):
+        ident = str(identifier or '').strip()
+        if not ident:
+            return None
+
+        if ident.isdigit():
+            obj = queryset.filter(pk=int(ident)).first()
+            if obj:
+                return obj
+
+        return queryset.filter(number=ident).first() or queryset.filter(request_number=ident).first()
     own_data_user_field = 'created_by'  # QuoteRequest.created_by = User
-    own_data_extra_user_fields = ['assignees', 'owner']  # assignee vagy owner is látja
+    own_data_extra_user_fields = ['assignees', 'owner', 'invitations__invitee']  # assignee, owner vagy meghívott is látja
+
+    def _resolve_rfq_identifier(self, queryset, identifier):
+        ident = str(identifier or '').strip()
+        if not ident:
+            return None
+
+        # Prefer numeric PK first, then fall back to business number slugs.
+        if ident.isdigit():
+            obj = queryset.filter(pk=int(ident)).first()
+            if obj:
+                return obj
+
+        return queryset.filter(number=ident).first() or queryset.filter(request_number=ident).first()
 
     def get_queryset(self):
         """Alapértelmezetten csak a nem törölt árajánlatok + OwnDataFilterMixin szűrés"""
+        # Először alkalmazzuk az OwnDataFilterMixin szűrést
         queryset = super().get_queryset()
+
+        # Invited users should always be able to open/list the RFQs they are invited to,
+        # even if role matrix does not include full sales.rfqs view rights.
+        user = getattr(self.request, 'user', None)
+        if user and user.is_authenticated and not user.is_superuser:
+            invited_ids = QuoteRequestInvitation.objects.filter(invitee=user).values_list('quote_request_id', flat=True)
+            queryset = queryset | QuoteRequest.objects.filter(id__in=invited_ids).distinct()
+
+        # Majd szűrjük a törölt elemeket
         queryset = queryset.filter(is_deleted=False)
 
-        # ?light=1: listanézet gyorsítása — csatolmányok és email logok kihagyása
+        # ?light=1: listanézet gyorsítása — a tételeknél kihagyjuk a csatolmányok prefetch-ét
+        # (csak a lista táblázathoz szükséges adatok kerülnek lekérdezésre)
         try:
             light = getattr(self, 'request', None) and self.request.query_params.get('light') == '1'
         except Exception:
             light = False
 
-        # SQL subquery annotations on items — eliminates N+1 for is_ordered/ordered_at/customer_order_id
+        # Annotate is_ordered / ordered_at using SQL subqueries — eliminates N+1
+        # (one EXISTS + one Subquery per row in the prefetch query, vs. 2 DB hits per item)
         _active_coi = CustomerOrderItem.objects.filter(
             quote_item=OuterRef('pk')
         ).exclude(customer_order__status='cancelled').exclude(status='cancelled')
@@ -427,28 +485,13 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                 'manufacturing_product__cost_items',
                 queryset=ManufacturingCostItem.objects.all(),
                 to_attr='prefetched_cost_items',
-            ),
-            Prefetch(
-                'customerorderitem_set',
-                queryset=CustomerOrderItem.objects.exclude(
-                    customer_order__status='cancelled'
-                ).exclude(status='cancelled').select_related(
-                    'customer_order'
-                ).prefetch_related(
-                    Prefetch(
-                        'delivery_items',
-                        queryset=DeliveryNoteItem.objects.select_related('delivery_note'),
-                        to_attr='prefetched_delivery_items',
-                    )
-                ).order_by('customer_order__created_at'),
-                to_attr='prefetched_active_cois',
-            ),
+            )
         )
         if not light:
             items_qs = items_qs.prefetch_related('attachments')
 
         prefetches = [
-            Prefetch('contacts', queryset=Contact.objects.select_related('company')),
+            'contacts',
             'assignees',
             Prefetch('items', queryset=items_qs),
             Prefetch('attachments', queryset=QuoteRequestAttachment.objects.all()),
@@ -471,9 +514,71 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             'customer', 'company', 'requested_by', 'created_by', 'project', 'currency', 'owner'
         ).prefetch_related(*prefetches)
 
+    def get_object(self):
+        lookup_url_kwarg = self.lookup_url_kwarg or self.lookup_field
+        lookup_value = self.kwargs.get(lookup_url_kwarg)
+        queryset = self.filter_queryset(self.get_queryset())
+        obj = self._resolve_rfq_identifier(queryset, lookup_value)
+        if obj is None:
+            raise Http404
+        self.check_object_permissions(self.request, obj)
+        return obj
+
+    def get_object(self):
+        lookup_url_kwarg = self.lookup_url_kwarg or self.lookup_field
+        lookup_value = self.kwargs.get(lookup_url_kwarg)
+        queryset = self.filter_queryset(self.get_queryset())
+        obj = self._resolve_rfq_identifier(queryset, lookup_value)
+        if obj is None:
+            raise Http404
+        self.check_object_permissions(self.request, obj)
+        return obj
+
     def list(self, request, *args, **kwargs):
         """List árajánlatok, automatikusan frissítve az archív státuszt"""
-        # Frissítjük az archív státuszt (max 1/perc/user, hogy ne lassítsa minden listát)
+        # Frissítjük az archív státuszt a lejárt árajánlatoknál (max 1/perc, ne lassítsa a listát)
+        from django.utils import timezone
+        from django.core.cache import cache
+        _cache_key = f'rfq_archive_upd_{getattr(request.user, "id", 0)}'
+        if not cache.get(_cache_key):
+            QuoteRequest.objects.filter(
+                deadline__lt=timezone.now().date()
+            ).exclude(
+                status__in=['archived', 'ordered']
+            ).update(status='archived')
+            cache.set(_cache_key, True, 60)
+
+        # Optional ?order_status=... filter — applied AFTER computing
+        # effective_status (in Python). Accepts comma-separated values.
+        order_status_param = request.query_params.get('order_status')
+        if not order_status_param:
+            return super().list(request, *args, **kwargs)
+
+        wanted = {s.strip() for s in order_status_param.split(',') if s.strip()}
+        # We must compute effective_status, so apply on serialized data.
+        queryset = self.filter_queryset(self.get_queryset()).filter(status='ordered')
+        page = self.paginate_queryset(queryset)
+        target = page if page is not None else queryset
+        serializer = self.get_serializer(target, many=True)
+        data = [d for d in serializer.data if d.get('effective_status') in wanted]
+        if page is not None:
+            return self.get_paginated_response(data)
+        from rest_framework.response import Response
+        return Response(data)
+
+    def get_object(self):
+        lookup_url_kwarg = self.lookup_url_kwarg or self.lookup_field
+        lookup_value = self.kwargs.get(lookup_url_kwarg)
+        queryset = self.filter_queryset(self.get_queryset())
+        obj = self._resolve_rfq_identifier(queryset, lookup_value)
+        if obj is None:
+            raise Http404
+        self.check_object_permissions(self.request, obj)
+        return obj
+
+    def list(self, request, *args, **kwargs):
+        """List árajánlatok, automatikusan frissítve az archív státuszt"""
+        # Frissítjük az archív státuszt a lejárt árajánlatoknál (max 1/perc, ne lassítsa a listát)
         from django.utils import timezone
         from django.core.cache import cache
         _cache_key = f'rfq_archive_upd_{getattr(request.user, "id", 0)}'
@@ -581,6 +686,18 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         
         return Response({'status': 'ok'})
 
+    @action(detail=False, methods=['get'], url_path='by_number/(?P<number>[^/]+)')
+    def by_number(self, request, number=None):
+        """Lookup RFQ by request_number or number slug (e.g. 2026061515)."""
+        if not number:
+            return Response({'error': 'number k\u00f6telez\u0151'}, status=status.HTTP_400_BAD_REQUEST)
+        qs = self.get_queryset()
+        obj = qs.filter(number=number).first() or qs.filter(request_number=number).first()
+        if not obj:
+            return Response({'error': 'Nem tal\u00e1lhat\u00f3'}, status=status.HTTP_404_NOT_FOUND)
+        serializer = self.get_serializer(obj)
+        return Response(serializer.data)
+
     @action(detail=False, methods=['get'])
     def next_number(self, request):
         """Előnézeti ajánlatszám a megadott dátumhoz (YYYY-MM-DD), alapértelmezés ma."""
@@ -641,16 +758,27 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
     def items_history(self, request):
         """Korábbi RFQ tételek egy céghez (betöltéshez másolásra)"""
         company_id = request.query_params.get('company_id')
-        if not company_id:
+        all_companies = str(request.query_params.get('all_companies', '')).lower() in ('1', 'true', 'yes')
+        if not company_id and not all_companies:
             return Response([])
 
         from django.db.models import Prefetch
+        rfq_filter = {'is_deleted': False}
+        if not all_companies:
+            rfq_filter['company_id'] = company_id
         rfqs = QuoteRequest.objects.filter(
-            company_id=company_id,
-            is_deleted=False,
-        ).prefetch_related(
+            **rfq_filter
+        ).select_related('company').prefetch_related(
             Prefetch('items', queryset=QuoteRequestItem.objects.select_related(
                 'product', 'material', 'manufacturing_product', 'service'
+            ).prefetch_related(
+                Prefetch(
+                    'customerorderitem_set',
+                    queryset=CustomerOrderItem.objects.exclude(
+                        customer_order__status='cancelled'
+                    ).exclude(status='cancelled').select_related('customer_order'),
+                    to_attr='active_order_items',
+                )
             )),
             Prefetch('costs', queryset=QuoteRequestCost.objects.select_related('supplier', 'material'))
         ).order_by('-created_at')[:50]
@@ -698,6 +826,10 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                     elif item.service:
                         name = item.service.name or ''
 
+                internal_description = ''
+                if item.manufacturing_product:
+                    internal_description = item.manufacturing_product.internal_description or ''
+
                 code = ''
                 if item.item_type == 'product' and item.product:
                     code = item.product.code or ''
@@ -714,17 +846,35 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                 elif item.item_type == 'service':
                     ref_id = item.service_id
 
+                # Compute effective status from linked CustomerOrderItem statuses
+                _STATUS_RANK = ['new', 'confirmed', 'in_production', 'ready', 'in_delivery', 'delivered', 'invoiced']
+                active_cois = getattr(item, 'active_order_items', [])
+                effective_status = ''
+                if active_cois:
+                    for coi in active_cois:
+                        coi_st = coi.status or coi.customer_order.status or ''
+                        if not effective_status:
+                            effective_status = coi_st
+                        elif coi_st in _STATUS_RANK and effective_status in _STATUS_RANK and _STATUS_RANK.index(coi_st) > _STATUS_RANK.index(effective_status):
+                            effective_status = coi_st
+                if not effective_status:
+                    effective_status = item.item_status or 'new'
+
                 result.append({
                     'rfq_id': rfq.id,
                     'rfq_number': rfq.number or rfq.request_number or f'#{rfq.id}',
                     'rfq_date': (rfq.issue_date.isoformat() if rfq.issue_date
                                  else rfq.created_at.date().isoformat()),
+                    'company_name': rfq.company.name if rfq.company else '',
                     'item_id': item.id,
                     'item_type': item.item_type,
+                    'item_status': effective_status,
                     'ref_id': ref_id,
                     'name': name,
                     'code': code,
+                    'quote_number': item.quote_number or '',
                     'description': item.description or '',
+                    'internal_description': internal_description,
                     'quantity': float(item.quantity),
                     'unit': item.unit or 'db',
                     'net_unit_price': float(item.net_unit_price),
@@ -738,7 +888,11 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
     @action(detail=True, methods=['get'])
     def attachments(self, request, pk=None):
         qr = self.get_object()
-        serializer = QuoteRequestAttachmentSerializer(qr.attachments.all(), many=True, context={'request': request})
+        only_manufacturing = str(request.query_params.get('manufacturing', '')).lower() in ('1', 'true', 'yes')
+        atts_qs = qr.attachments.all()
+        if only_manufacturing:
+            atts_qs = atts_qs.filter(is_manufacturing_file=True)
+        serializer = QuoteRequestAttachmentSerializer(atts_qs.order_by('-created_at'), many=True, context={'request': request})
         return Response(serializer.data)
 
     @attachments.mapping.post
@@ -746,12 +900,14 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         qr = self.get_object()
         file_obj = request.FILES.get('file')
         remark = request.data.get('remark', '')
+        is_manufacturing_file = str(request.data.get('is_manufacturing_file', '')).lower() in ('1', 'true', 'yes')
         if not file_obj:
             return Response({'error': 'file kötelező'}, status=status.HTTP_400_BAD_REQUEST)
         att = QuoteRequestAttachment.objects.create(
             quote_request=qr,
             file=file_obj,
             remark=remark,
+            is_manufacturing_file=is_manufacturing_file,
             original_filename=file_obj.name,
             uploaded_by=request.user if request.user and request.user.is_authenticated else None
         )
@@ -802,6 +958,42 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         return Response(QuoteRequestAttachmentSerializer(att, context={'request': request}).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=['post'])
+    def approve_attachment(self, request, pk=None):
+        qr = self.get_object()
+        att_id = request.data.get('attachment_id')
+        if not att_id:
+            return Response({'error': 'attachment_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        att = get_object_or_404(QuoteRequestAttachment, id=att_id, quote_request=qr)
+        att.approved_by = request.user if request.user and request.user.is_authenticated else None
+        att.approved_at = timezone.now()
+        att.save(update_fields=['approved_by', 'approved_at'])
+        return Response(QuoteRequestAttachmentSerializer(att, context={'request': request}).data)
+
+    @action(detail=True, methods=['post'])
+    def approve_attachment(self, request, pk=None):
+        qr = self.get_object()
+        att_id = request.data.get('attachment_id')
+        if not att_id:
+            return Response({'error': 'attachment_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        att = get_object_or_404(QuoteRequestAttachment, id=att_id, quote_request=qr)
+        att.approved_by = request.user if request.user and request.user.is_authenticated else None
+        att.approved_at = timezone.now()
+        att.save(update_fields=['approved_by', 'approved_at'])
+        return Response(QuoteRequestAttachmentSerializer(att, context={'request': request}).data)
+
+    @action(detail=True, methods=['post'])
+    def approve_attachment(self, request, pk=None):
+        qr = self.get_object()
+        att_id = request.data.get('attachment_id')
+        if not att_id:
+            return Response({'error': 'attachment_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        att = get_object_or_404(QuoteRequestAttachment, id=att_id, quote_request=qr)
+        att.approved_by = request.user if request.user and request.user.is_authenticated else None
+        att.approved_at = timezone.now()
+        att.save(update_fields=['approved_by', 'approved_at'])
+        return Response(QuoteRequestAttachmentSerializer(att, context={'request': request}).data)
+
+    @action(detail=True, methods=['post'])
     def update_attachment_remark(self, request, pk=None):
         qr = self.get_object()
         att_id = request.data.get('attachment_id')
@@ -825,25 +1017,11 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
 
     @action(detail=True, methods=['patch'], url_path=r'attachments/(?P<att_id>\d+)/rename')
     def rename_attachment(self, request, pk=None, att_id=None):
-        import os
-        from django.core.files.storage import default_storage
         qr = self.get_object()
         att = get_object_or_404(QuoteRequestAttachment, id=att_id, quote_request=qr)
-        new_name = request.data.get('original_filename', '').strip()
-        if new_name:
-            if att.file and att.file.name and default_storage.exists(att.file.name):
-                directory = os.path.dirname(att.file.name)
-                new_path = (directory + '/' + new_name) if directory else new_name
-                if att.file.name != new_path:
-                    try:
-                        old_abs = default_storage.path(att.file.name)
-                        new_abs = default_storage.path(new_path)
-                        if not os.path.exists(new_abs):
-                            os.rename(old_abs, new_abs)
-                            att.file.name = new_path
-                    except Exception:
-                        pass
-            att.original_filename = new_name
+        final_name, _ = _rename_filefield_on_storage(att.file, request.data.get('original_filename', ''))
+        if final_name:
+            att.original_filename = final_name
             att.save(update_fields=['original_filename', 'file'])
         file_url = request.build_absolute_uri(att.file.url) if att.file else None
         return Response({'original_filename': att.original_filename, 'file': att.file.name if att.file else None, 'file_url': file_url})
@@ -865,7 +1043,6 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         qr = self.get_object()
         product_id = request.data.get('product_id')
         material_id = request.data.get('material_id')
-        item_name = request.data.get('item_name', '')
         quantity = request.data.get('quantity', 1)
         description = request.data.get('description', '')
         net_unit_price_raw = request.data.get('net_unit_price')
@@ -906,7 +1083,6 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             item_type='product',
             product=product,
             material=material,
-            item_name=item_name or product_name,
             quantity=quantity_val,
             unit=unit,
             net_unit_price=net_unit_price,
@@ -927,7 +1103,6 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
     def add_manufacturing_item(self, request, pk=None):
         qr = self.get_object()
         mp_id = request.data.get('manufacturing_product_id')
-        item_name = request.data.get('item_name', '')
         quantity = request.data.get('quantity', 1)
         description = request.data.get('description', '')
         net_unit_price_raw = request.data.get('net_unit_price')
@@ -956,7 +1131,6 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             quote_request=qr,
             item_type='manufacturing',
             manufacturing_product=mp,
-            item_name=item_name or mp.name,
             quantity=quantity_val,
             unit=unit,
             net_unit_price=net_unit_price,
@@ -989,7 +1163,8 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         deadline = request.data.get('deadline')  # YYYY-MM-DD (régi metódusnál kötelező)
 
         if not name or quantity is None:
-            return Response({'error': 'name és quantity kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+            import logging; logging.getLogger('django').error(f'create_manufacturing_item 400: name={name!r} quantity={quantity!r} direct={request.data.get("direct")} data_keys={list(request.data.keys())}')
+            return Response({'error': 'name és quantity kötelező', 'debug': {'name': name, 'quantity': quantity, 'direct': request.data.get('direct')}}, status=status.HTTP_400_BAD_REQUEST)
 
         # Opcionális mezők
         description = request.data.get('description', '')
@@ -1004,14 +1179,17 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
 
         if direct:
             # ── ÚJ METÓDUS: csak QuoteRequestItem, ManufacturingProduct nélkül ──
-            from decimal import Decimal
             try:
+                from decimal import Decimal
                 net_unit_price_d = Decimal(str(net_unit_price if net_unit_price not in (None, '') else 0))
             except Exception:
+                from decimal import Decimal
                 net_unit_price_d = Decimal('0')
             try:
+                from decimal import Decimal
                 quantity_d = Decimal(str(quantity))
             except Exception:
+                from decimal import Decimal
                 quantity_d = Decimal('1')
             item = QuoteRequestItem.objects.create(
                 quote_request=qr,
@@ -1073,6 +1251,7 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                 pass
 
         mp = ManufacturingProduct.objects.create(**mp_kwargs)
+
         item = QuoteRequestItem.objects.create(
             quote_request=qr,
             item_type='manufacturing',
@@ -1080,7 +1259,7 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             quantity=quantity,
             unit=quantity_unit,
             net_unit_price=net_unit_price,
-            description=description,
+            description=description
         )
         QuoteLog.objects.create(quote=qr, user=request.user, action=f'Egyedi gyártás létrehozva és hozzáadva: {mp.name}')
         return Response(QuoteRequestItemSerializer(item, context={'request': request}).data, status=status.HTTP_201_CREATED)
@@ -1089,7 +1268,6 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
     def add_service_item(self, request, pk=None):
         qr = self.get_object()
         service_id = request.data.get('service_id')
-        item_name = request.data.get('item_name', '')
         quantity = request.data.get('quantity', 1)
         description = request.data.get('description', '')
         net_unit_price_raw = request.data.get('net_unit_price')
@@ -1115,7 +1293,6 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             quote_request=qr,
             item_type='service',
             service=service,
-            item_name=item_name or service.name,
             quantity=quantity_val,
             unit=unit,
             net_unit_price=net_unit_price,
@@ -1146,6 +1323,56 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         except Exception:
             pass
         return Response({'status': 'ok'})
+
+    @action(detail=True, methods=['patch'], url_path=r'update_item/(?P<item_id>\d+)')
+    def update_item(self, request, pk=None, item_id=None):
+        """QuoteRequestItem közvetlen módosítása (új metódus — MP nélküli tételeknél).
+        Régi MP-s tételeknél is működik, de az MP-t NEM módosítja.
+        """
+        qr = self.get_object()
+        try:
+            item = qr.items.get(id=item_id)
+        except QuoteRequestItem.DoesNotExist:
+            return Response({'error': 'Tétel nem található'}, status=status.HTTP_404_NOT_FOUND)
+
+        allowed = ['item_name', 'description', 'internal_description', 'net_unit_price',
+                   'quantity', 'unit', 'vat_rate', 'discount_percent', 'discount_amount',
+                   'is_rate_locked', 'locked_exchange_rate']
+        labels = {
+            'item_name': 'Tétel neve',
+            'description': 'Leírás',
+            'internal_description': 'Belső leírás',
+            'net_unit_price': 'Nettó egységár',
+            'quantity': 'Mennyiség',
+            'unit': 'Egység',
+            'vat_rate': 'ÁFA',
+            'discount_percent': 'Kedvezmény %',
+            'discount_amount': 'Kedvezmény összeg',
+            'is_rate_locked': 'Árfolyam rögzítés',
+            'locked_exchange_rate': 'Rögzített árfolyam',
+        }
+        old_values = {}
+        touched = []
+        for field in allowed:
+            if field in request.data:
+                touched.append(field)
+                old_values[field] = getattr(item, field)
+                setattr(item, field, request.data[field])
+        item.save()
+        changes = {}
+        for field in touched:
+            old_val = old_values.get(field)
+            new_val = getattr(item, field)
+            if str(old_val) != str(new_val):
+                key = labels.get(field, field)
+                changes[key] = {'old': old_val, 'new': new_val}
+        QuoteLog.objects.create(
+            quote=qr,
+            user=request.user if request.user and request.user.is_authenticated else None,
+            action=f'Tétel módosítva: {item.item_name or item.id}',
+            meta={'changes': changes} if changes else {},
+        )
+        return Response(QuoteRequestItemSerializer(item, context={'request': request}).data)
 
     @action(detail=True, methods=['get'])
     def logs(self, request, pk=None):
@@ -1222,46 +1449,46 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                 pass
 
         # Ensure there is a public token for link rendering
-        additional_rfq_ids = request.data.get('additional_rfq_ids', []) or []
-        item_ids = request.data.get('item_ids', []) or []
-        additional_qrs = []
-        if additional_rfq_ids:
-            additional_qrs = list(QuoteRequest.objects.filter(id__in=additional_rfq_ids))
-            for aqr in additional_qrs:
-                if not aqr.public_token:
-                    aqr.public_token = secrets.token_urlsafe(24)
-                    aqr.save(update_fields=['public_token'])
-
         if not qr.public_token:
             qr.public_token = secrets.token_urlsafe(24)
             qr.save(update_fields=['public_token'])
         # Render simple templates using format
-        public_url = _build_combined_public_url(qr, additional_qrs, item_ids or None)
+        public_url = f"{settings.FRONTEND_BASE_URL}/public/quote/{qr.public_token}/order"
         
         # Build contact names for personalized greeting
         contact_names = ', '.join([c.name for c in qr.contacts.all()]) if qr.contacts.exists() else 'Ügyfelünk'
-        
+
+        # Build project_name and item_names for rfqs_send template
+        _send_item_ids = request.data.get('item_ids') or []
+        _raw_project = getattr(qr.project, 'name', None) if getattr(qr, 'project', None) else None
+        _project_name = f'{_raw_project}: ' if _raw_project else ''
+        _items_qs = qr.items.filter(id__in=_send_item_ids).order_by('id') if _send_item_ids else qr.items.all().order_by('id')
+        _item_name_list = []
+        for _it in _items_qs:
+            _n = (_it.item_name if _it.item_name else None) or getattr(_it.manufacturing_product, 'name', None) or getattr(_it.product, 'name', None) or getattr(_it.material, 'name', None) or getattr(_it.service, 'name', None) or ''
+            if _n:
+                _item_name_list.append(_n)
+        _item_names = ', '.join(_item_name_list)
+        if len(_item_names) > 50:
+            _item_names = _item_names[:47].rstrip(', ') + '...'
+
         ctx = {
             'rfq_number': qr.number or qr.request_number,
             'rfq_title': qr.title,
             'company_name': qr.company.name if qr.company else '',
             'public_order_url': public_url,
             'contact_names': contact_names,
+            'project_name': _project_name,
+            'item_names': _item_names,
             **extra_context,
         }
-        # Build items_table HTML — replace BEFORE .format(**ctx) to avoid HTML curly braces issues
-        # Combine items from ALL RFQs (primary + additional) so all selected items appear in the table
-        _all_rfq_ids_send = [qr.id] + [aqr.id for aqr in additional_qrs]
-        _items_qs_send = QuoteRequestItem.objects.filter(quote_request_id__in=_all_rfq_ids_send).order_by('sort_order', 'id')
+        # Build items_table HTML (must be replaced BEFORE .format(**ctx) to avoid HTML curly braces issues)
         _currency_symbol = getattr(getattr(qr, 'currency', None), 'symbol', '') or ''
-        _items_table_html = _build_items_table_html(_items_qs_send, _currency_symbol)
+        _items_table_html = _build_items_table_html(_items_qs, _currency_symbol)
+
         subject = override_subject if override_subject is not None else (tpl.subject_template or '').format(**ctx)
         if override_body is not None:
             body = override_body.replace('{items_table}', _items_table_html)
-            body_core = body
-            # Replace any bare/stale public URL in the override body with the correct combined URL
-            base_url = f"{settings.FRONTEND_BASE_URL}/public/quote/{qr.public_token}/order"
-            body = re.sub(re.escape(base_url) + r'(?:\?[^"\' <>\s]*)?', public_url, body)
             body_core = body
         else:
             _body_tpl = (tpl.body_template or '').replace('{items_table}', _items_table_html)
@@ -1459,11 +1686,6 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             body_preview=(body_core[:500] if body_core else ''),
             sent_by=request.user if request.user.is_authenticated else None,
         )
-        if qr.status not in ('ordered', 'invoiced'):
-            _apply_quote_request_status(qr, 'sent')
-        for _aqr in additional_qrs:
-            if _aqr.status not in ('ordered', 'invoiced'):
-                _apply_quote_request_status(_aqr, 'sent')
         QuoteLog.objects.create(quote=qr, user=request.user, action='Ajánlat kiküldve e-mailben')
         return Response({'status': 'sent'})
 
@@ -1519,39 +1741,40 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             except Exception as e:
                 pass
 
-        additional_rfq_ids = request.data.get('additional_rfq_ids', []) or []
-        item_ids = request.data.get('item_ids', []) or []
-        additional_qrs = []
-        if additional_rfq_ids:
-            additional_qrs = list(QuoteRequest.objects.filter(id__in=additional_rfq_ids))
-            for aqr in additional_qrs:
-                if not aqr.public_token:
-                    aqr.public_token = secrets.token_urlsafe(24)
-                    aqr.save(update_fields=['public_token'])
-
         if not qr.public_token:
             qr.public_token = secrets.token_urlsafe(24)
             qr.save(update_fields=['public_token'])
-        public_url = _build_combined_public_url(qr, additional_qrs, item_ids or None)
+        public_url = f"{settings.FRONTEND_BASE_URL}/public/quote/{qr.public_token}/order"
+
+        # Build project_name and item_names for rfqs_send template
+        _render_item_ids = request.data.get('item_ids') or []
+        _raw_project = getattr(qr.project, 'name', None) if getattr(qr, 'project', None) else None
+        _project_name = f'{_raw_project}: ' if _raw_project else ''
+        _items_qs = qr.items.filter(id__in=_render_item_ids).order_by('id') if _render_item_ids else qr.items.all().order_by('id')
+        _item_name_list = []
+        for _it in _items_qs:
+            _n = (_it.item_name if _it.item_name else None) or getattr(_it.manufacturing_product, 'name', None) or getattr(_it.product, 'name', None) or getattr(_it.material, 'name', None) or getattr(_it.service, 'name', None) or ''
+            if _n:
+                _item_name_list.append(_n)
+        _item_names = ', '.join(_item_name_list)
+        if len(_item_names) > 50:
+            _item_names = _item_names[:47].rstrip(', ') + '...'
+
         ctx = {
             'rfq_number': qr.number or qr.request_number,
             'rfq_title': qr.title,
             'company_name': qr.company.name if qr.company else (qr.customer.name if qr.customer else ''),
             'public_order_url': public_url,
+            'project_name': _project_name,
+            'item_names': _item_names,
             **extra_context,
         }
-        # Build items_table HTML — replace BEFORE .format(**ctx) to avoid HTML curly braces issues
-        # Combine items from ALL RFQs (primary + additional) so all selected items appear in the table
-        _all_rfq_ids_render = [qr.id] + [aqr.id for aqr in additional_qrs]
-        _items_qs_render = QuoteRequestItem.objects.filter(quote_request_id__in=_all_rfq_ids_render).order_by('sort_order', 'id')
-        _currency_symbol = getattr(getattr(qr, 'currency', None), 'symbol', '') or ''
-        _items_table_html = _build_items_table_html(_items_qs_render, _currency_symbol)
         subject = override_subject if override_subject is not None else (tpl.subject_template or '').format(**ctx)
+        # Build items_table HTML (must be replaced BEFORE .format(**ctx) to avoid HTML curly braces issues)
+        _currency_symbol = getattr(getattr(qr, 'currency', None), 'symbol', '') or ''
+        _items_table_html = _build_items_table_html(_items_qs, _currency_symbol)
         if override_body is not None:
             body = override_body.replace('{items_table}', _items_table_html)
-            # Replace any bare/stale public URL in the override body with the correct combined URL
-            base_url = f"{settings.FRONTEND_BASE_URL}/public/quote/{qr.public_token}/order"
-            body = re.sub(re.escape(base_url) + r'(?:\?[^"\' <>\s]*)?', public_url, body)
         else:
             _body_tpl = (tpl.body_template or '').replace('{items_table}', _items_table_html)
             body_core = _body_tpl.format(**ctx)
@@ -1562,47 +1785,60 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
     def set_status(self, request, pk=None):
         qr = self.get_object()
         new_status = request.data.get('status')
-        valid = RFQ_ALLOWED_STATUSES
+        valid = [c[0] for c in QuoteRequest.STATUS_CHOICES]
         if new_status not in valid:
             return Response({'error': 'Érvénytelen státusz'}, status=status.HTTP_400_BAD_REQUEST)
         old_status = qr.status
         if old_status == new_status:
             return Response({'status': qr.status})
-        stored_status = _apply_quote_request_status(qr, new_status, changed_at=timezone.now())
+        qr.status = new_status
+        qr.save(update_fields=['status'])
         try:
             QuoteLog.objects.create(quote=qr, user=request.user, action=f'Státusz módosítva: {old_status} → {new_status}')
         except Exception:
             pass
-        return Response({'status': stored_status, 'requested_status': new_status})
+        return Response({'status': qr.status})
 
     @action(detail=True, methods=['post'])
     def update_basic(self, request, pk=None):
         qr = self.get_object()
         data = request.data or {}
+
+        def _to_bool(value):
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, (int, float)):
+                return bool(value)
+            if isinstance(value, str):
+                return value.strip().lower() in {'1', 'true', 'yes', 'on', 'igen'}
+            return bool(value)
+
+        # Snapshot old values for diff logging
+        _old_snap = {
+            'Cím': qr.title or '',
+            'Leírás': qr.description or '',
+            'Belső leírás': qr.internal_description or '',
+            'Kelt': str(qr.issue_date) if qr.issue_date else '',
+            'Határidő': str(qr.deadline) if qr.deadline else '',
+            'Érvényesség': str(qr.valid_until) if qr.valid_until else '',
+            'Érvényességi napok': qr.validity_days,
+            'Vállalat': qr.company.name if qr.company else '',
+            'Projekt': qr.project.name if qr.project else '',
+            'Pénznem': qr.currency.code if qr.currency else '',
+            'Részrendelés': qr.partial_order_allowed,
+            'Gyártható': 'IGEN' if qr.is_manufacturable else 'NEM',
+        }
         # Simple field updates
         for fld in ['title', 'description', 'internal_description']:
             if fld in data:
                 setattr(qr, fld, data.get(fld) or '')
         # Dates
-        for date_fld in ['issue_date', 'deadline', 'valid_until']:
-            if date_fld not in data:
-                continue
-            raw_value = data.get(date_fld)
-            if raw_value in (None, '', '0000-00-00'):
-                setattr(qr, date_fld, None)
-                continue
-            try:
-                setattr(qr, date_fld, timezone.datetime.strptime(raw_value, '%Y-%m-%d').date())
-            except Exception:
-                pass
-        # Validity days (positive integer)
-        if 'validity_days' in data:
-            try:
-                vd = int(data['validity_days'])
-                if vd > 0:
-                    qr.validity_days = vd
-            except (ValueError, TypeError):
-                pass
+        for date_fld in ['issue_date', 'deadline']:
+            if data.get(date_fld):
+                try:
+                    setattr(qr, date_fld, timezone.datetime.strptime(data.get(date_fld), '%Y-%m-%d').date())
+                except Exception:
+                    pass
         # Foreign keys
         company_id = data.get('company_id') or data.get('company')
         if company_id:
@@ -1695,7 +1931,22 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                 pass
         # Boolean flags
         if 'partial_order_allowed' in data:
-            qr.partial_order_allowed = bool(data['partial_order_allowed'])
+            qr.partial_order_allowed = _to_bool(data['partial_order_allowed'])
+        if 'is_manufacturable' in data:
+            old_is_manufacturable = bool(qr.is_manufacturable)
+            new_is_manufacturable = _to_bool(data['is_manufacturable'])
+            qr.is_manufacturable = new_is_manufacturable
+            if new_is_manufacturable and not old_is_manufacturable:
+                qr.manufacturable_marked_by = request.user if request.user and request.user.is_authenticated else None
+                qr.manufacturable_marked_at = timezone.now()
+            elif not new_is_manufacturable:
+                qr.manufacturable_marked_by = None
+                qr.manufacturable_marked_at = None
+        # RFQ-level imposition presets
+        if 'imposition_presets' in data:
+            presets = data.get('imposition_presets')
+            if isinstance(presets, list):
+                qr.imposition_presets = presets
         qr.save()
         # Many-to-many contacts
         contact_ids = data.get('contact_ids') or data.get('contacts') or []
@@ -1805,110 +2056,42 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                 print(f"[RFQs] Contact set failed: {e}")
                 pass
         try:
-            QuoteLog.objects.create(quote=qr, user=request.user, action='Árajánlat módosítva (alap adatok)')
+            _new_snap = {
+                'Cím': qr.title or '',
+                'Leírás': qr.description or '',
+                'Belső leírás': qr.internal_description or '',
+                'Kelt': str(qr.issue_date) if qr.issue_date else '',
+                'Határidő': str(qr.deadline) if qr.deadline else '',
+                'Érvényesség': str(qr.valid_until) if qr.valid_until else '',
+                'Érvényességi napok': qr.validity_days,
+                'Vállalat': qr.company.name if qr.company else '',
+                'Projekt': qr.project.name if qr.project else '',
+                'Pénznem': qr.currency.code if qr.currency else '',
+                'Részrendelés': qr.partial_order_allowed,
+                'Gyártható': 'IGEN' if qr.is_manufacturable else 'NEM',
+            }
+            _changes = {
+                k: {'old': _old_snap[k], 'new': _new_snap[k]}
+                for k in _old_snap
+                if str(_old_snap[k]) != str(_new_snap[k])
+            }
+            QuoteLog.objects.create(
+                quote=qr,
+                user=request.user,
+                action='Árajánlat módosítva (alap adatok)',
+                meta={'changes': _changes} if _changes else {},
+            )
         except Exception:
             pass
         return Response(QuoteRequestSerializer(qr, context={'request': request}).data)
 
     @action(detail=True, methods=['post'])
     def copy(self, request, pk=None):
-        def duplicate_manufacturing_product(original):
-            if not original:
-                return None
-
-            base_code = original.code or f'GY-{original.id}'
-            base = re.sub(r'-COPY(-\d+)?$', '', base_code)
-            n_copies = ManufacturingProduct.objects.filter(code__startswith=f'{base}-COPY').count()
-            new_code = f'{base}-COPY-{n_copies + 1}' if n_copies > 0 else f'{base}-COPY'
-
-            new_product = ManufacturingProduct.objects.create(
-                date=original.date,
-                name=original.name,
-                code=new_code,
-                description=original.description,
-                internal_description=original.internal_description,
-                quantity=original.quantity,
-                quantity_unit=original.quantity_unit,
-                is_fixed_quantity=original.is_fixed_quantity,
-                product_class=original.product_class,
-                project=original.project,
-                net_unit_price=original.net_unit_price,
-                net_total_price=original.net_total_price,
-                price_from_cost_calc=original.price_from_cost_calc,
-                currency=original.currency,
-                status='quote_request_priced',
-                contact=original.contact,
-                contact_external_id=original.contact_external_id,
-                deadline=original.deadline,
-                printshop_params=original.printshop_params,
-            )
-            if hasattr(original, 'created_by_id'):
-                new_product.created_by = request.user if request.user.is_authenticated else getattr(original, 'created_by', None)
-                new_product.save(update_fields=['created_by'])
-
-            new_product.allowed_companies.set(original.allowed_companies.all())
-            new_product.allowed_contacts.set(original.allowed_contacts.all())
-
-            cost_item_map = {}
-            for cost in original.cost_items.all().order_by('sort_order', 'id'):
-                duplicated_cost = ManufacturingCostItem.objects.create(
-                    product=new_product,
-                    type=cost.type,
-                    ref_id=cost.ref_id,
-                    name=cost.name,
-                    quantity=cost.quantity,
-                    unit=cost.unit,
-                    unit_price=cost.unit_price,
-                    cost_price=cost.cost_price,
-                    markup_percent=cost.markup_percent,
-                    selling_unit_price=cost.selling_unit_price,
-                    selling_price=cost.selling_price,
-                    supplier=cost.supplier,
-                    is_internal=cost.is_internal,
-                    department=cost.department,
-                    currency=cost.currency,
-                    is_per_unit=cost.is_per_unit,
-                    status=cost.status,
-                    notes=cost.notes,
-                    queue_position=cost.queue_position,
-                    is_paused=cost.is_paused,
-                    formulas=cost.formulas or {},
-                    sort_order=cost.sort_order,
-                )
-                cost_item_map[cost.id] = duplicated_cost
-
-            for cost in original.cost_items.exclude(parent=None):
-                duplicated_cost = cost_item_map.get(cost.id)
-                duplicated_parent = cost_item_map.get(cost.parent_id)
-                if duplicated_cost and duplicated_parent:
-                    duplicated_cost.parent = duplicated_parent
-                    duplicated_cost.save(update_fields=['parent'])
-
-            for att in original.attachments.all():
-                try:
-                    ManufacturingProductAttachment.objects.create(
-                        product=new_product,
-                        file=att.file,
-                        remark=att.remark,
-                        uploaded_by=request.user if request.user.is_authenticated else att.uploaded_by,
-                    )
-                except Exception:
-                    pass
-
-            return new_product
-
         src = self.get_object()
         today = timezone.now().date()
         today_str = today.strftime('%Y%m%d')
-        last_num = QuoteRequest.objects.filter(number__startswith=today_str).order_by('-number').values_list('number', flat=True).first()
-        if last_num:
-            try:
-                seq = int(last_num[len(today_str):]) + 1
-            except (ValueError, IndexError):
-                seq = 1
-        else:
-            seq = 1
-        new_number = f"{today_str}{seq:02d}"
+        daily_count = QuoteRequest.objects.filter(issue_date=today).count() + 1
+        new_number = f"{today_str}{daily_count:02d}"
 
         # Use the source deadline only if it's still in the future; otherwise
         # leave it unset so the auto-archive logic in list() doesn't immediately
@@ -1955,26 +2138,16 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             except Exception:
                 pass
         
-        duplicated_manufacturing_products = {}
-        item_map = {}
-
         # copy items
-        for it in src.items.all().order_by('sort_order', 'id'):
-            duplicated_manufacturing_product = None
-            if it.manufacturing_product_id:
-                duplicated_manufacturing_product = duplicated_manufacturing_products.get(it.manufacturing_product_id)
-                if duplicated_manufacturing_product is None:
-                    duplicated_manufacturing_product = duplicate_manufacturing_product(it.manufacturing_product)
-                    duplicated_manufacturing_products[it.manufacturing_product_id] = duplicated_manufacturing_product
-
+        for it in src.items.all():
             new_item = QuoteRequestItem.objects.create(
                 quote_request=dst,
                 item_type=it.item_type,
+                item_name=it.item_name,
                 product=it.product,
                 material=it.material,
-                manufacturing_product=duplicated_manufacturing_product,
+                manufacturing_product=it.manufacturing_product,
                 service=it.service,
-                item_name=it.item_name or getattr(it.product, 'name', '') or getattr(it.material, 'name', '') or getattr(it.manufacturing_product, 'name', '') or getattr(it.service, 'name', ''),
                 quantity=it.quantity,
                 unit=it.unit,
                 net_unit_price=it.net_unit_price,
@@ -1982,11 +2155,10 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                 discount_percent=it.discount_percent,
                 discount_amount=it.discount_amount,
                 description=it.description,
-                imposition_data=it.imposition_data or {},
-                formulas=it.formulas or {},
-                sort_order=it.sort_order,
+                internal_description=it.internal_description,
+                formulas=it.formulas,
+                cost_items_data=it.cost_items_data,
             )
-            item_map[it.id] = new_item
             # copy item-level attachments
             from apps.sales.models import QuoteRequestItemAttachment
             for item_att in it.attachments.all():
@@ -1999,13 +2171,20 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                     )
                 except Exception:
                     pass
-
-        for it in src.items.exclude(parent=None):
-            new_item = item_map.get(it.id)
-            new_parent = item_map.get(it.parent_id)
-            if new_item and new_parent:
-                new_item.parent = new_parent
-                new_item.save(update_fields=['parent'])
+            # copy cost item attachments (direct items)
+            for ci_att in it.cost_attachments.all():
+                try:
+                    QuoteRequestItemCostAttachment.objects.create(
+                        quote_item=new_item,
+                        cost_item_local_id=ci_att.cost_item_local_id,
+                        file=ci_att.file,
+                        original_filename=ci_att.original_filename,
+                        file_size=ci_att.file_size,
+                        remark=ci_att.remark,
+                        uploaded_by=request.user if request.user.is_authenticated else ci_att.uploaded_by,
+                    )
+                except Exception:
+                    pass
         try:
             QuoteLog.objects.create(quote=dst, user=request.user if request.user.is_authenticated else None, action=f'Árajánlat másolva forrásból: {src.number or src.request_number}')
         except Exception:
@@ -2038,15 +2217,8 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         """Create an empty demand (RFQ without items), optionally with company/contacts."""
         today = timezone.now().date()
         today_str = today.strftime('%Y%m%d')
-        last_num = QuoteRequest.objects.filter(number__startswith=today_str).order_by('-number').values_list('number', flat=True).first()
-        if last_num:
-            try:
-                seq = int(last_num[len(today_str):]) + 1
-            except (ValueError, IndexError):
-                seq = 1
-        else:
-            seq = 1
-        number = f"{today_str}{seq:02d}"
+        daily_count = QuoteRequest.objects.filter(issue_date=today).count() + 1
+        number = f"{today_str}{daily_count:02d}"
         title = request.data.get('title') or f"Ajánlat {number}"
         description = request.data.get('description') or ''
         deadline = request.data.get('deadline')
@@ -2293,10 +2465,14 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         if not request.user or not request.user.is_authenticated:
             return Response({'error': 'Auth required'}, status=401)
         # Bypass OwnDataFilterMixin – invitee may not be the creator
-        qr = get_object_or_404(QuoteRequest, pk=pk, is_deleted=False)
-        inv = QuoteRequestInvitation.objects.filter(quote_request=qr, invitee=request.user, status='pending').first()
+        qr = self._resolve_rfq_identifier(QuoteRequest.objects.filter(is_deleted=False), pk)
+        if not qr:
+            return Response({'error': 'Nem található'}, status=404)
+        inv = QuoteRequestInvitation.objects.filter(quote_request=qr, invitee=request.user).first()
         if not inv:
-            return Response({'error': 'Nincs függő meghívás'}, status=404)
+            return Response({'error': 'Nincs meghívás ehhez az ajánlathoz'}, status=404)
+        if inv.status == 'accepted':
+            return Response({'status': 'accepted'})
         with transaction.atomic():
             inv.status = 'accepted'
             inv.responded_at = timezone.now()
@@ -2313,14 +2489,19 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         if not request.user or not request.user.is_authenticated:
             return Response({'error': 'Auth required'}, status=401)
         # Bypass OwnDataFilterMixin – invitee may not be the creator
-        qr = get_object_or_404(QuoteRequest, pk=pk, is_deleted=False)
-        inv = QuoteRequestInvitation.objects.filter(quote_request=qr, invitee=request.user, status='pending').first()
+        qr = self._resolve_rfq_identifier(QuoteRequest.objects.filter(is_deleted=False), pk)
+        if not qr:
+            return Response({'error': 'Nem található'}, status=404)
+        inv = QuoteRequestInvitation.objects.filter(quote_request=qr, invitee=request.user).first()
         if not inv:
-            return Response({'error': 'Nincs függő meghívás'}, status=404)
+            return Response({'error': 'Nincs meghívás ehhez az ajánlathoz'}, status=404)
+        if inv.status == 'declined':
+            return Response({'status': 'declined'})
         with transaction.atomic():
             inv.status = 'declined'
             inv.responded_at = timezone.now()
             inv.save(update_fields=['status', 'responded_at'])
+            qr.assignees.remove(request.user)
             try:
                 QuoteLog.objects.create(quote=qr, user=request.user, action='Meghívás elutasítva')
             except Exception:
@@ -2344,185 +2525,6 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         serializer = ActivityLogSerializer(logs, many=True)
         return Response(serializer.data)
 
-    @action(detail=True, methods=['get'])
-    def timeline(self, request, pk=None):
-        """Comprehensive chronological timeline of all events for this RFQ."""
-        qr = self.get_object()
-        events = []
-
-        def user_info(u):
-            if not u:
-                return {'name': '', 'role': ''}
-            name = u.get_full_name() or u.username
-            role = ''
-            try:
-                depts = list(u.employee_profile.departments.values_list('name', flat=True))
-                role = ', '.join(depts)
-            except Exception:
-                pass
-            if not role:
-                groups = list(u.groups.values_list('name', flat=True))
-                role = ', '.join(groups)
-            return {'name': name, 'role': role}
-
-        def fmt_ts(dt):
-            if dt is None:
-                return None
-            if hasattr(dt, 'isoformat'):
-                return dt.isoformat()
-            return str(dt)
-
-        # 1. RFQ creation
-        u = user_info(qr.created_by)
-        events.append({
-            'timestamp': fmt_ts(qr.created_at),
-            'who_role': u['role'],
-            'who_name': u['name'],
-            'what': 'Létrehozás',
-            'category': 'rfq',
-        })
-
-        # 2. QuoteLog entries
-        for log in qr.logs.select_related('user').order_by('created_at'):
-            u = user_info(log.user)
-            who_name = u['name'] or (f'IP: {log.ip_address}' if log.ip_address else '')
-            events.append({
-                'timestamp': fmt_ts(log.created_at),
-                'who_role': u['role'],
-                'who_name': who_name,
-                'what': log.action,
-                'category': 'log',
-                'meta': log.meta or {},
-            })
-
-        # 3. Email logs (árajánlat e-mail kiküldve) — fresh query to avoid deferred field conflict
-        from .models import QuoteRequestEmailLog as _EmailLog
-        for el in _EmailLog.objects.filter(quote_request=qr).select_related('sent_by').order_by('sent_at'):
-            u = user_info(el.sent_by)
-            to_short = (el.to or '')[:80]
-            events.append({
-                'timestamp': fmt_ts(el.sent_at),
-                'who_role': u['role'],
-                'who_name': u['name'],
-                'what': f'E-mail kiküldve: {el.subject} → {to_short}',
-                'category': 'email',
-            })
-
-        # 4. Customer orders + lifecycle timestamps
-        for order in qr.customer_orders.select_related('created_by').order_by('order_date'):
-            u = user_info(order.created_by)
-            events.append({
-                'timestamp': fmt_ts(order.order_date),
-                'who_role': u['role'],
-                'who_name': u['name'],
-                'what': f'Megrendelés létrehozva: {order.order_number}',
-                'category': 'order',
-            })
-            if order.production_started_at:
-                events.append({
-                    'timestamp': fmt_ts(order.production_started_at),
-                    'who_role': u['role'],
-                    'who_name': u['name'],
-                    'what': f'Gyártásba küldés: {order.order_number}',
-                    'category': 'production',
-                })
-            if order.ready_at:
-                events.append({
-                    'timestamp': fmt_ts(order.ready_at),
-                    'who_role': '',
-                    'who_name': '',
-                    'what': f'Készre jelölve: {order.order_number}',
-                    'category': 'ready',
-                })
-            if order.delivery_started_at:
-                events.append({
-                    'timestamp': fmt_ts(order.delivery_started_at),
-                    'who_role': '',
-                    'who_name': '',
-                    'what': f'Szállítás megkezdve: {order.order_number}',
-                    'category': 'delivery',
-                })
-            if order.delivered_at:
-                events.append({
-                    'timestamp': fmt_ts(order.delivered_at),
-                    'who_role': '',
-                    'who_name': '',
-                    'what': f'Leszállítva: {order.order_number}',
-                    'category': 'delivered',
-                })
-            if order.invoice_number:
-                events.append({
-                    'timestamp': fmt_ts(order.updated_at),
-                    'who_role': '',
-                    'who_name': '',
-                    'what': f'Számlázva: {order.invoice_number}',
-                    'category': 'invoice',
-                })
-
-        # 5. Delivery notes linked to this RFQ
-        from .models import DeliveryNote
-        delivery_notes = (
-            DeliveryNote.objects
-            .filter(items__customer_order_item__customer_order__quote_request=qr)
-            .distinct()
-            .select_related('created_by')
-            .order_by('created_at')
-        )
-        for dn in delivery_notes:
-            u = user_info(dn.created_by)
-            events.append({
-                'timestamp': fmt_ts(dn.created_at),
-                'who_role': u['role'],
-                'who_name': u['name'],
-                'what': f'Szállítólevél: {dn.delivery_note_number}',
-                'category': 'delivery_note',
-            })
-            if dn.is_confirmed and dn.confirmed_at:
-                confirmed_by = dn.confirmed_by_info or (dn.confirmed_by_user.get_full_name() if dn.confirmed_by_user else '')
-                u2 = user_info(dn.confirmed_by_user)
-                events.append({
-                    'timestamp': fmt_ts(dn.confirmed_at),
-                    'who_role': u2['role'],
-                    'who_name': confirmed_by or u2['name'],
-                    'what': f'Szállítólevél visszaigazolva: {dn.delivery_note_number}',
-                    'category': 'delivery_confirmed',
-                })
-
-        # 6. Manufacturing cost items linked to this RFQ's quote items
-        from apps.manufacturing.models import ManufacturingCostItem as MCI
-        mci_status_map = dict(MCI.STATUS_CHOICES)
-        for qi in qr.items.select_related('manufacturing_product').filter(manufacturing_product__isnull=False):
-            mp = qi.manufacturing_product
-            for ci in mp.cost_items.select_related('department', 'supplier').order_by('sort_order', 'id'):
-                if ci.is_internal:
-                    dept_name = ci.department.name if ci.department else ''
-                    role = f'Belső: {dept_name}' if dept_name else 'Belső'
-                    who = dept_name
-                else:
-                    role = 'Külső'
-                    who = ci.supplier.name if ci.supplier else ''
-                status_display = mci_status_map.get(ci.status, ci.status)
-                notes_part = f' – {ci.notes.strip()}' if ci.notes and ci.notes.strip() else ''
-                events.append({
-                    'timestamp': fmt_ts(mp.created_at),
-                    'who_role': role,
-                    'who_name': who,
-                    'what': f'{ci.name} ({status_display}){notes_part}',
-                    'category': 'cost_item',
-                })
-                if ci.supplier_email_sent_at:
-                    events.append({
-                        'timestamp': fmt_ts(ci.supplier_email_sent_at),
-                        'who_role': role,
-                        'who_name': who,
-                        'what': f'Beszállítói e-mail: {ci.name}',
-                        'category': 'email',
-                    })
-
-        # Sort chronologically
-        events.sort(key=lambda e: (e['timestamp'] or ''))
-        return Response(events)
-
     @action(detail=True, methods=['post'])
     def create_quote(self, request, pk=None):
         """Create a Quote from RFQ (demand), preserving company and contacts on RFQ."""
@@ -2533,19 +2535,15 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             from django.contrib.auth import get_user_model
             User = get_user_model()
             creator = User.objects.filter(is_staff=True).first() or User.objects.first()
+        if not creator:
+            return Response({'error': 'Nem található létrehozó felhasználó'}, status=status.HTTP_400_BAD_REQUEST)
         quote = Quote.objects.create(
             quote_request=qr,
             quote_number=quote_number,
             valid_until=timezone.now().date() + timezone.timedelta(days=30),
-            created_by=creator
+            created_by=creator,
+            status='draft',
         )
-        old_status = qr.status
-        qr.status = 'quoted'
-        qr.save(update_fields=['status'])
-        try:
-            QuoteLog.objects.create(quote=qr, user=creator, action=f'Ajánlat létrehozva: {quote_number}; státusz: {old_status} → quoted')
-        except Exception:
-            pass
         return Response(QuoteSerializer(quote).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=['post'])
@@ -2554,14 +2552,12 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         logger = logging.getLogger(__name__)
         logger.info(f"order_all called for RFQ {pk}")
         qr = self.get_object()
-        # Guard: if a non-cancelled order already exists, return it instead of creating a duplicate
-        existing = qr.customer_orders.exclude(status='cancelled').order_by('-id').first()
+        # Idempotency: if a non-cancelled order already exists, return it (don't create duplicate)
+        from .models import CustomerOrder as _CO
+        existing = _CO.objects.filter(quote_request=qr).exclude(status='cancelled').order_by('id').first()
         if existing:
-            return Response({
-                'order_id': existing.id,
-                'order_number': existing.order_number,
-                'already_exists': True,
-            }, status=200)
+            logger.info(f"order_all: existing order {existing.order_number} found for RFQ {pk}, returning it")
+            return Response({'order_id': existing.id, 'order_number': existing.order_number, 'already_exists': True}, status=status.HTTP_200_OK)
         items = list(qr.items.all())
         logger.info(f"Creating order with {len(items)} items")
         return self._create_order_from_items(request, qr, items, set_status='ordered')
@@ -2570,9 +2566,10 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
     def order_partial(self, request, pk=None):
         qr = self.get_object()
         item_ids = request.data.get('item_ids') or []
-        if not isinstance(item_ids, list) or not item_ids:
-            return Response({'error': 'item_ids kötelező (lista)'}, status=status.HTTP_400_BAD_REQUEST)
-        items = list(qr.items.filter(id__in=item_ids))
+        # RFQ-first compatibility: if item_ids is omitted, treat as all RFQ items.
+        if not isinstance(item_ids, list):
+            return Response({'error': 'item_ids érvénytelen (lista kell)'}, status=status.HTTP_400_BAD_REQUEST)
+        items = list(qr.items.filter(id__in=item_ids)) if item_ids else list(qr.items.all())
         if not items:
             return Response({'error': 'Nincs rendelhető tétel'}, status=status.HTTP_400_BAD_REQUEST)
         return self._create_order_from_items(request, qr, items, set_status='partially_ordered')
@@ -2580,15 +2577,15 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
     def _create_order_from_items(self, request, qr, items, set_status: str):
         from .models import CustomerOrder, CustomerOrderItem
 
-        # Use the RFQ's own number as order_number (megrendelés szám = ajánlat szám)
+        # Use the RFQ's own number as order_number (user request: megrendelés szám = ajánlat szám)
         rfq_num = qr.number or qr.request_number or f"QR{qr.id}"
-        # If multiple orders exist for this RFQ (partial ordering), append a suffix
+        # If multiple orders exist for this RFQ (partial ordering), append a numeric suffix
         existing_count = CustomerOrder.objects.filter(quote_request=qr).count()
         if existing_count == 0:
             order_number = rfq_num
         else:
             order_number = f"{rfq_num}{existing_count + 1}"
-        # Collision safety
+        # Collision safety (e.g. race condition or number reuse)
         while CustomerOrder.objects.filter(order_number=order_number).exists():
             existing_count += 1
             order_number = f"{rfq_num}{existing_count}"
@@ -2646,50 +2643,17 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             )
         except Exception:
             pass
+
+        try:
+            _sync_rfq_primary_snapshot(qr)
+        except Exception:
+            pass
         
         return Response({
             'order_id': order.id, 
             'order_number': order.order_number, 
             'items': created_items
         }, status=status.HTTP_201_CREATED)
-
-
-def _combined_items_for_public(qr, request):
-    """Return items for a public quote page, optionally merging extra RFQs via ?extra_tokens
-    and filtering to specific item IDs via ?item_ids."""
-    extra_tokens = request.query_params.get('extra_tokens', '')
-    item_ids_raw = request.query_params.get('item_ids', '')
-    all_items = list(qr.items.all())
-    if extra_tokens:
-        for t in extra_tokens.split(','):
-            t = t.strip()
-            if t:
-                try:
-                    extra_qr = QuoteRequest.objects.get(public_token=t)
-                    all_items.extend(list(extra_qr.items.all()))
-                except QuoteRequest.DoesNotExist:
-                    pass
-    if item_ids_raw:
-        try:
-            allowed_ids = set(int(i) for i in item_ids_raw.split(',') if i.strip())
-            all_items = [item for item in all_items if item.id in allowed_ids]
-        except (ValueError, TypeError):
-            pass
-    return all_items
-
-
-def _build_combined_public_url(primary_qr, additional_qrs, item_ids=None):
-    """Build the public order URL, appending extra_tokens and item_ids when provided."""
-    base = f"{settings.FRONTEND_BASE_URL}/public/quote/{primary_qr.public_token}/order"
-    params = []
-    if additional_qrs:
-        extra = ','.join(aqr.public_token for aqr in additional_qrs if aqr.public_token)
-        if extra:
-            params.append(f"extra_tokens={extra}")
-    if item_ids:
-        params.append(f"item_ids={','.join(str(i) for i in item_ids)}")
-    return f"{base}?{'&'.join(params)}" if params else base
-
 
 @api_view(['GET'])
 @permission_classes([AllowAny])
@@ -2718,9 +2682,21 @@ def public_order_view(request, token: str):
             street_line = f"{qr.company.street_name} {plc}{(' ' + house) if house else ''}".strip()
             if extras:
                 street_line = f"{street_line} {extras}".strip()
+        _full_tax = getattr(qr.company, 'full_tax_number', '') or ''
+        if not _full_tax and qr.company.external_id:
+            try:
+                from apps.finance.views import PixinvoiceClient
+                _client = PixinvoiceClient()
+                _remote = _client.get_customer(qr.company.external_id, company_id=_client.company_id)
+                _full_tax = _remote.get('full_tax_number') or ''
+                if _full_tax:
+                    qr.company.full_tax_number = _full_tax
+                    qr.company.save(update_fields=['full_tax_number'])
+            except Exception:
+                pass
         customer_data = {
             'name': qr.company.name,
-            'tax_number': qr.company.tax_number or '',
+            'tax_number': _full_tax or qr.company.tax_number or '',
             'address': street_line,
             'city': qr.company.city or '',
             'postal_code': qr.company.postal_code or '',
@@ -2729,7 +2705,7 @@ def public_order_view(request, token: str):
     elif qr.customer:
         customer_data = {
             'name': qr.customer.name,
-            'tax_number': getattr(qr.customer, 'tax_number', ''),
+            'tax_number': getattr(qr.customer, 'full_tax_number', '') or getattr(qr.customer, 'tax_number', ''),
             'address': getattr(qr.customer, 'address', ''),
             'city': getattr(qr.customer, 'city', ''),
             'postal_code': getattr(qr.customer, 'postal_code', ''),
@@ -2826,15 +2802,9 @@ def public_order_view(request, token: str):
         'partial_order_allowed': qr.partial_order_allowed,
         'currency_code': qr.currency.code if qr.currency else 'HUF',
         'currency_symbol': qr.currency.symbol if qr.currency else 'Ft',
-        'valid_until': qr.valid_until,
-        'is_expired': (qr.valid_until is not None and qr.valid_until < timezone.now().date()),
         'customer': customer_data,
         'supplier': supplier_data,
-        'items': QuoteRequestItemSerializer(
-            _combined_items_for_public(qr, request),
-            many=True,
-            context={'request': request}
-        ).data,
+        'items': QuoteRequestItemSerializer(qr.items.all(), many=True, context={'request': request}).data,
     })
 
 
@@ -2842,62 +2812,61 @@ def public_order_view(request, token: str):
 @permission_classes([AllowAny])
 @authentication_classes([])
 def public_submit_order(request, token: str):
-    """Publikus megrendelés beküldése – kezeli az extra_tokens QR tételeit is"""
+    """Publikus megrendelés beküldése"""
+    import logging as _dbg_log; _dbg_log.getLogger('django').error(f"[SUBMIT-DBG] token={token[:10]}... host={request.META.get('HTTP_HOST')} ct={request.content_type} data={dict(request.data)}")
     qr = get_object_or_404(QuoteRequest, public_token=token)
     if qr.public_expires_at and timezone.now() > qr.public_expires_at:
         return Response({'error': 'Link lejárt'}, status=410)
-    if qr.valid_until and qr.valid_until < timezone.now().date():
-        return Response({'error': 'Az ajánlat érvényessége lejárt, megrendelés nem lehetséges.'}, status=410)
+
+    # Ha az ajánlat már megrendelve vagy afeletti státuszban van, nem rendelhető újra
+    ORDERED_OR_ABOVE = ['ordered', 'partially_ordered', 'confirmed', 'in_production', 'ready', 'in_delivery', 'delivered', 'invoiced']
+    if qr.status in ORDERED_OR_ABOVE:
+        return Response({'error': 'Ez az ajánlat már feldolgozás alatt van – ismételt megrendelés nem lehetséges.'}, status=409)
 
     items_data = request.data.get('items', [])
+    import logging as _logging; _logging.getLogger('django.request').warning(f"[DEBUG submit-order] token={token[:10]} content_type={request.content_type} data_keys={list(request.data.keys()) if request.data else 'EMPTY'} items_data={items_data}")
     if not items_data:
         return Response({'error': 'Nincs megrendelendő tétel'}, status=400)
+    
+    # Ellenőrizzük, hogy az összes tétel létezik-e
+    item_ids = [item['item_id'] for item in items_data]
+    valid_items = qr.items.filter(id__in=item_ids)
+    if valid_items.count() != len(item_ids):
+        return Response({'error': 'Érvénytelen tétel azonosító'}, status=400)
 
-    # Extra token QR-ek betöltése
-    extra_tokens_raw = request.data.get('extra_tokens', '')
-    accessible_qrs = {qr.id: qr}
-    if extra_tokens_raw:
-        for t in extra_tokens_raw.split(','):
-            t = t.strip()
-            if t and t != token:
-                try:
-                    extra_qr = QuoteRequest.objects.get(public_token=t)
-                    if extra_qr.valid_until and extra_qr.valid_until < timezone.now().date():
-                        continue  # lejárt extra QR kihagyása
-                    accessible_qrs[extra_qr.id] = extra_qr
-                except QuoteRequest.DoesNotExist:
-                    pass
-
-    # Tételek hozzárendelése a megfelelő QR-hez
-    items_by_qr = {}  # qr_id -> {'qr': ..., 'items': [item_data, ...]}
-    for item_data in items_data:
-        item_id = item_data['item_id']
-        owner_qr = None
-        for q in accessible_qrs.values():
-            if q.items.filter(id=item_id).exists():
-                owner_qr = q
-                break
-        if not owner_qr:
-            return Response({'error': f'Érvénytelen tétel azonosító: {item_id}'}, status=400)
-        grp = items_by_qr.setdefault(owner_qr.id, {'qr': owner_qr, 'items': []})
-        grp['items'].append(item_data)
-
-    # Már megrendelt tételek ellenőrzése (összes csoport)
-    for grp in items_by_qr.values():
-        grp_qr = grp['qr']
-        grp_ids = [d['item_id'] for d in grp['items']]
-        already = list(
-            grp_qr.items.filter(id__in=grp_ids, customerorderitem__isnull=False)
-            .exclude(customerorderitem__customer_order__status='cancelled')
-            .exclude(customerorderitem__status='cancelled')
-            .values_list('id', flat=True).distinct()
-        )
-        if already:
-            return Response({'error': f'A következő tételek már meg vannak rendelve: {already}'}, status=409)
-
+    # Már megrendelt tételek elutasítása
+    already_ordered_ids = list(
+        valid_items.filter(customerorderitem__isnull=False)
+        .exclude(customerorderitem__customer_order__status='cancelled')
+        .values_list('id', flat=True).distinct()
+    )
+    if already_ordered_ids:
+        return Response({'error': f'A következő tételek már meg vannak rendelve: {already_ordered_ids}'}, status=409)
+    
+    # Megrendelés létrehozása
     from django.db import transaction
-
-    # Szállítási határidő
+    
+    # Megrendelésszám generálás — az ajánlat számát tartjuk meg, ha lehetséges
+    rfq_num = qr.number or qr.request_number
+    if rfq_num and not CustomerOrder.objects.filter(order_number=rfq_num).exists():
+        order_number = rfq_num
+    else:
+        # Fallback: O{dátum}{sorrend} formátum
+        today = timezone.now().date()
+        date_str = today.strftime('%Y%m%d')
+        last_order = CustomerOrder.objects.filter(
+            order_number__startswith=f'O{date_str}'
+        ).order_by('-order_number').first()
+        if last_order:
+            try:
+                new_seq = int(last_order.order_number[len(f'O{date_str}'):]) + 1
+            except ValueError:
+                new_seq = 1
+        else:
+            new_seq = 1
+        order_number = f'O{date_str}{new_seq:02d}'
+    
+    # Optional desired delivery date from customer
     deadline_raw = request.data.get('desired_date') or None
     deadline_val = None
     if deadline_raw:
@@ -2907,378 +2876,110 @@ def public_submit_order(request, token: str):
         except Exception:
             pass
 
-    notes_val = request.data.get('notes', '')
-    _order_ip = _get_ip(request)
-    all_order_numbers = []
-    all_order_details = []
-
+    order_details = []
+    
     try:
         with transaction.atomic():
-            today = timezone.now().date()
-            date_str = today.strftime('%Y%m%d')
-
-            for grp in items_by_qr.values():
-                grp_qr = grp['qr']
-
-                # Megrendelésszám: meglévő aktív rendelést reuse-oljuk ugyanehhez az RFQ-hoz
-                rfq_num = grp_qr.number or grp_qr.request_number or f"QR{grp_qr.id}"
-                existing_order = CustomerOrder.objects.filter(
-                    quote_request=grp_qr
-                ).exclude(status='cancelled').first()
-                if existing_order:
-                    order = existing_order
-                    order_number = existing_order.order_number
-                    if notes_val:
-                        order.notes = notes_val
-                    if deadline_val:
-                        order.deadline = deadline_val
-                    order.save(update_fields=['notes', 'deadline'])
-                    # Remove old COIs so we can recreate with fresh quantities
-                    order.items.all().delete()
-                else:
-                    order_number = rfq_num
-                    # Safety: avoid conflict with other QRs
-                    conflict_qs = CustomerOrder.objects.exclude(status='cancelled').exclude(quote_request=grp_qr)
-                    if conflict_qs.filter(order_number=order_number).exists():
-                        suffix = 2
-                        order_number = f"{rfq_num}-{suffix}"
-                        while conflict_qs.filter(order_number=order_number).exists():
-                            suffix += 1
-                            order_number = f"{rfq_num}-{suffix}"
-                    order = CustomerOrder.objects.create(
-                        quote_request=grp_qr,
-                        order_number=order_number,
-                        status='new',
-                        notes=notes_val,
-                        deadline=deadline_val,
-                        ip_address=_order_ip or None,
-                    )
-
-                order_details = []
-                for item_data in grp['items']:
-                    item = grp_qr.items.get(id=item_data['item_id'])
-                    quantity = item_data['quantity']
-                    CustomerOrderItem.objects.create(
-                        customer_order=order,
-                        quote_item=item,
-                        quantity=quantity,
-                        unit=item.unit,
-                        net_unit_price=item.net_unit_price,
-                        vat_rate=item.vat_rate,
-                        discount_percent=item.discount_percent,
-                        description=item.description,
-                    )
-                    # item_status frissítés
-                    item.item_status = 'ordered'
-                    item.save(update_fields=['item_status'])
-
-                    if item.product:
-                        item_megnevezes = item.product.name
-                    elif item.manufacturing_product:
-                        item_megnevezes = item.manufacturing_product.name
-                    elif item.service:
-                        item_megnevezes = item.service.name
-                    elif item.material:
-                        item_megnevezes = item.material.name
-                    elif item.description:
-                        item_megnevezes = item.description[:100]
-                    else:
-                        item_megnevezes = 'Tétel'
-                    line = f"- {item_megnevezes}: {quantity} {item.unit}"
-                    if item.description and item.description != item_megnevezes:
-                        line += f"\n    Leírás: {item.description[:200]}"
-                    order_details.append(line)
-
-                # QR státusz → ordered
-                grp_qr.status = 'ordered'
-                grp_qr.save(update_fields=['status'])
-
-                all_order_numbers.append(order_number)
-                all_order_details.extend(order_details)
-
-        # Napló + email (tranzakción kívül)
-        combined_numbers = ', '.join(all_order_numbers)
-        for grp in items_by_qr.values():
-            grp_qr = grp['qr']
-            QuoteLog.objects.create(
-                quote=grp_qr, user=None,
-                action=f'Ügyfél megrendelést küldött be (megrendelésszám: {combined_numbers})',
-                ip_address=_order_ip or None,
+            # Megrendelés létrehozása
+            order = CustomerOrder.objects.create(
+                quote_request=qr,
+                order_number=order_number,
+                status='new',
+                notes=request.data.get('notes', ''),
+                deadline=deadline_val,
+                # created_by None, mivel publikus
             )
+            for item_data in items_data:
+                item = qr.items.get(id=item_data['item_id'])
+                quantity = item_data['quantity']
+                
+                CustomerOrderItem.objects.create(
+                    customer_order=order,
+                    quote_item=item,
+                    quantity=quantity,
+                    unit=item.unit,
+                    net_unit_price=item.net_unit_price,
+                    vat_rate=item.vat_rate,
+                    discount_percent=item.discount_percent,
+                    description=item.description
+                )
+                
+                # Tétel megnevezés feloldása típus szerint
+                if item.product:
+                    item_megnevezes = item.product.name
+                elif item.manufacturing_product:
+                    item_megnevezes = item.manufacturing_product.name
+                elif item.service:
+                    item_megnevezes = item.service.name
+                elif item.material:
+                    item_megnevezes = item.material.name
+                elif item.description:
+                    item_megnevezes = item.description[:100]
+                else:
+                    item_megnevezes = 'Tétel'
+                line = f"- {item_megnevezes}: {quantity} {item.unit}"
+                if item.description and item.description != item_megnevezes:
+                    line += f"\n    Leírás: {item.description[:200]}"
+                order_details.append(line)
+            
+            # Státusz frissítés - megrendelve (NEM archív!)
+            qr.status = 'ordered'
+            qr.save(update_fields=['status'])
 
-        # Email értesítés
-        try:
-            from django.core.mail import get_connection, EmailMultiAlternatives
-            from apps.core.models import EmailServerConfig
-            email_config = EmailServerConfig.objects.filter(is_active=True).first()
-            if email_config:
-                _customer_name = (
-                    getattr(qr.company, 'name', None) or
-                    ', '.join([c.name for c in qr.contacts.all() if c.name]) or
-                    'Ismeretlen'
-                )
-                _currency_symbol = getattr(getattr(qr, 'currency', None), 'symbol', '') or ''
-                _ordered_ids = [d['item_id'] for grp in items_by_qr.values() for d in grp['items']]
-                _items_qs_notif = QuoteRequestItem.objects.filter(id__in=_ordered_ids).order_by('sort_order', 'id')
-                _items_table_html = _build_items_table_html(_items_qs_notif, _currency_symbol)
-                email_body_html = (
-                    f'<p>Új megrendelés érkezett a publikus megrendelő felületen keresztül.</p>'
-                    f'<p><strong>Ügyfél neve:</strong> {_customer_name}</p>'
-                    f'{_items_table_html}'
-                )
-                email_body_plain = (
-                    f'Új megrendelés érkezett a publikus megrendelő felületen keresztül.'
-                    f'\n\nÜgyfél neve: {_customer_name}'
-                )
-                connection = get_connection(
-                    backend='django.core.mail.backends.smtp.EmailBackend',
-                    host=email_config.smtp_host,
-                    port=email_config.smtp_port,
-                    username=email_config.smtp_username,
-                    password=email_config.smtp_password,
-                    use_tls=email_config.smtp_use_tls,
-                    use_ssl=email_config.smtp_use_ssl,
-                    fail_silently=False,
-                    timeout=10,
-                )
-                from_email = f"{email_config.from_name} <{email_config.from_email}>" if email_config.from_name else email_config.from_email
-                recipient = qr.created_by.email if qr.created_by and qr.created_by.email else 'admin@pixisys.eu'
-                msg = EmailMultiAlternatives(
-                    subject=f'Új megrendelés: {combined_numbers} ({qr.number or qr.request_number})',
-                    body=email_body_plain,
-                    from_email=from_email,
-                    to=[recipient],
-                    connection=connection,
-                )
-                msg.attach_alternative(email_body_html, 'text/html')
-                msg.send()
-                try:
-                    from apps.core.email_utils import archive_to_imap_sent
-                    archive_to_imap_sent(email_config, msg)
-                except Exception:
-                    pass
-        except Exception as email_err:
-            print(f"Email küldési hiba: {email_err}")
+        # Email küldés (csak sikeres tranzakció esetén)
+        from django.core.mail import get_connection, EmailMultiAlternatives
+        from apps.core.models import EmailServerConfig
+        
+        email_body = f"""Új megrendelés érkezett a publikus megrendelő felületen keresztül.
+
+Ajánlat megnevezése: {qr.title}
+Árajánlat száma: {qr.number or qr.request_number}
+Megrendelésszám: {order_number}
+
+Megrendelt tételek:
+{chr(10).join(order_details)}
+{f'{chr(10)}*** Az ügyfél határidőt adott meg: {deadline_raw} ***' if deadline_raw else ''}
+{f'{chr(10)}Megjegyzés: {request.data.get("notes", "").strip()}' if request.data.get('notes', '').strip() else ''}
+"""
+        # EmailServerConfig használata
+        email_config = EmailServerConfig.objects.filter(is_active=True).first()
+        if email_config:
+            connection = get_connection(
+                backend='django.core.mail.backends.smtp.EmailBackend',
+                host=email_config.smtp_host,
+                port=email_config.smtp_port,
+                username=email_config.smtp_username,
+                password=email_config.smtp_password,
+                use_tls=email_config.smtp_use_tls,
+                use_ssl=email_config.smtp_use_ssl,
+                fail_silently=False,
+                timeout=10,
+            )
+            
+            from_email = f"{email_config.from_name} <{email_config.from_email}>" if email_config.from_name else email_config.from_email
+            recipient = qr.created_by.email if qr.created_by and qr.created_by.email else 'admin@pixisys.eu'
+            
+            msg = EmailMultiAlternatives(
+                subject=f'Új megrendelés: {order_number} ({qr.number or qr.request_number})',
+                body=email_body,
+                from_email=from_email,
+                to=[recipient],
+                connection=connection
+            )
+            msg.send()
+            try:
+                from apps.core.email_utils import archive_to_imap_sent
+                archive_to_imap_sent(email_config, msg)
+            except Exception:
+                pass
 
     except Exception as e:
+        # Ha hiba van, logoljuk és error-t dobunk, de a tranzakció rollbackel
         print(f"Hiba a megrendelés létrehozásakor: {e}")
         return Response({'error': 'Hiba történt a megrendelés feldolgozása során.'}, status=500)
-
+    qr.save(update_fields=['status'])
+    
     return Response({'success': True, 'message': 'Megrendelés sikeresen rögzítve'})
-
-
-@api_view(['POST'])
-@permission_classes([AllowAny])
-@authentication_classes([])
-def public_upload_attachment(request, token: str):
-    """Publikus fájlfeltöltés az árajánlathoz"""
-    qr = get_object_or_404(QuoteRequest, public_token=token)
-    if qr.public_expires_at and timezone.now() > qr.public_expires_at:
-        return Response({'error': 'Link lejárt'}, status=410)
-
-    file = request.FILES.get('file')
-    if not file:
-        return Response({'error': 'Nincs fájl'}, status=400)
-
-    # Security: limit size to 20 MB
-    if file.size > 20 * 1024 * 1024:
-        return Response({'error': 'A fájl mérete nem haladhatja meg a 20 MB-ot'}, status=400)
-
-    # Security: validate content type
-    ALLOWED_TYPES = {
-        'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml',
-        'application/pdf',
-        'application/msword',
-        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        'application/vnd.ms-excel',
-        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        'text/plain', 'text/csv',
-        'application/zip',
-    }
-    if file.content_type not in ALLOWED_TYPES:
-        return Response({'error': f'Nem engedélyezett fájltípus: {file.content_type}'}, status=400)
-
-    remark = request.data.get('remark', '')
-    att = QuoteRequestAttachment.objects.create(
-        quote_request=qr,
-        file=file,
-        original_filename=file.name,
-        remark=remark[:255] if remark else '',
-        uploaded_by=None,
-    )
-
-    # QuoteLog + email értesítő
-    _att_ip = _get_ip(request)
-    QuoteLog.objects.create(
-        quote=qr, user=None,
-        action=f'Ügyfél csatolmányt töltött fel: {file.name}',
-        ip_address=_att_ip or None,
-    )
-    _notify_internal_team(
-        qr,
-        subject=f'Új csatolmány érkezett – {qr.number or qr.request_number}',
-        body=(
-            f'Az ügyfél csatolmányt töltött fel az ajánlathoz.\n\n'
-            f'Árajánlat: {qr.title}\n'
-            f'Szám: {qr.number or qr.request_number}\n'
-            f'Fájl: {file.name}\n'
-            f'IP: {_att_ip}\n'
-        ),
-    )
-
-    return Response({
-        'id': att.id,
-        'original_filename': att.original_filename,
-        'remark': att.remark,
-        'created_at': att.created_at.isoformat(),
-    }, status=201)
-
-
-@api_view(['GET'])
-@permission_classes([AllowAny])
-@authentication_classes([])
-def public_list_attachments(request, token: str):
-    """Publikusan feltöltött csatolmányok listája"""
-    qr = get_object_or_404(QuoteRequest, public_token=token)
-    atts = qr.attachments.all().order_by('created_at')
-    data = [
-        {
-            'id': a.id,
-            'original_filename': a.original_filename or a.file.name.split('/')[-1],
-            'remark': a.remark,
-            'created_at': a.created_at.isoformat(),
-        }
-        for a in atts
-    ]
-    return Response(data)
-
-
-@api_view(['DELETE'])
-@permission_classes([AllowAny])
-@authentication_classes([])
-def public_delete_attachment(request, token: str, att_id: int):
-    """Saját (session-kulccsal azonosított) csatolmány törlése"""
-    qr = get_object_or_404(QuoteRequest, public_token=token)
-    att = get_object_or_404(QuoteRequestAttachment, id=att_id, quote_request=qr, uploaded_by=None)
-    att.file.delete(save=False)
-    att.delete()
-    return Response(status=204)
-
-
-@api_view(['POST'])
-@permission_classes([AllowAny])
-@authentication_classes([])
-def public_upload_item_attachment(request, token: str, item_id: int):
-    """Publikus fájlfeltöltés egy adott árajánlat-tételhez"""
-    qr = get_object_or_404(QuoteRequest, public_token=token)
-    if qr.public_expires_at and timezone.now() > qr.public_expires_at:
-        return Response({'error': 'Link lejárt'}, status=410)
-
-    # Ellenőrzés: a tétel ehhez az árajánlathoz tartozik-e
-    item = get_object_or_404(QuoteRequestItem, id=item_id, quote_request=qr)
-
-    # Megrendelt vagy archivált tételhez nem lehet feltölteni
-    LOCKED_STATUSES = {'ordered', 'archived'}
-    if item.item_status in LOCKED_STATUSES:
-        return Response({'error': 'Megrendelt tételhez már nem tölthető fel csatolmány.'}, status=403)
-
-    file = request.FILES.get('file')
-    if not file:
-        return Response({'error': 'Nincs fájl'}, status=400)
-
-    if file.size > 20 * 1024 * 1024:
-        return Response({'error': 'A fájl mérete nem haladhatja meg a 20 MB-ot'}, status=400)
-
-    ALLOWED_TYPES = {
-        'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml',
-        'application/pdf',
-        'application/msword',
-        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        'application/vnd.ms-excel',
-        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        'text/plain', 'text/csv',
-        'application/zip',
-    }
-    if file.content_type not in ALLOWED_TYPES:
-        return Response({'error': f'Nem engedélyezett fájltípus: {file.content_type}'}, status=400)
-
-    remark = request.data.get('remark', '')
-    att = QuoteRequestItemAttachment.objects.create(
-        quote_item=item,
-        file=file,
-        original_filename=file.name,
-        remark=remark[:255] if remark else '',
-        uploaded_by=None,
-    )
-
-    # QuoteLog + email értesítő
-    _item_ip = _get_ip(request)
-    QuoteLog.objects.create(
-        quote=qr, user=None,
-        action=f'Ügyfél tételhez csatolmányt töltött fel: {file.name}',
-        ip_address=_item_ip or None,
-    )
-    _notify_internal_team(
-        qr,
-        subject=f'Új tételcsatolmány érkezett – {qr.number or qr.request_number}',
-        body=(
-            f'Az ügyfél egy tételhez csatolmányt töltött fel.\n\n'
-            f'Árajánlat: {qr.title}\n'
-            f'Szám: {qr.number or qr.request_number}\n'
-            f'Fájl: {file.name}\n'
-            f'IP: {_item_ip}\n'
-        ),
-    )
-
-    return Response({
-        'id': att.id,
-        'original_filename': att.original_filename,
-        'remark': att.remark,
-        'created_at': att.created_at.isoformat(),
-    }, status=201)
-
-
-@api_view(['DELETE'])
-@permission_classes([AllowAny])
-@authentication_classes([])
-def public_delete_item_attachment(request, token: str, item_id: int, att_id: int):
-    """Publikusan feltöltött tétel csatolmány törlése"""
-    qr = get_object_or_404(QuoteRequest, public_token=token)
-    item = get_object_or_404(QuoteRequestItem, id=item_id, quote_request=qr)
-    att = get_object_or_404(QuoteRequestItemAttachment, id=att_id, quote_item=item, uploaded_by=None)
-    att.file.delete(save=False)
-    att.delete()
-    return Response(status=204)
-
-
-    @action(detail=True, methods=['post'])
-    def create_quote(self, request, pk=None):
-        """Ajánlat kérésből ajánlat létrehozása"""
-        quote_request = self.get_object()
-
-        quote_number = f"Q{timezone.now().strftime('%Y%m%d')}{Quote.objects.count() + 1:02d}"
-
-        quote = Quote.objects.create(
-            quote_request=quote_request,
-            quote_number=quote_number,
-            valid_until=timezone.now().date() + timezone.timedelta(days=30),
-            created_by=request.user
-        )
-
-        quote_request.status = 'quoted'
-        quote_request.save()
-
-        serializer = QuoteSerializer(quote)
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
-    def search(self, request):
-        q = request.query_params.get('q', '')
-        qs = self.queryset
-        if q:
-            qs = qs.filter(
-                models.Q(name__icontains=q) |
-                models.Q(description__icontains=q)
-            )
-        return Response(self.serializer_class(qs, many=True).data)
 
     @action(detail=True, methods=['post'])
     def render_email(self, request, pk=None):
@@ -3411,93 +3112,128 @@ class QuoteViewSet(viewsets.ModelViewSet):
         serializer = OrderSerializer(order)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
-class QuoteItemViewSet(viewsets.ModelViewSet):
-    queryset = QuoteItem.objects.all()
-    serializer_class = QuoteItemSerializer
-    permission_classes = [AllowAny]
 
 class QuoteRequestItemViewSet(viewsets.ModelViewSet):
-    queryset = QuoteRequestItem.objects.all()
+    queryset = QuoteRequestItem.objects.all().select_related(
+        'quote_request', 'product', 'material', 'manufacturing_product', 'service'
+    )
     serializer_class = QuoteRequestItemSerializer
     permission_classes = [AllowAny]
 
-    @action(detail=True, methods=['get'])
-    def attachments(self, request, pk=None):
-        item = self.get_object()
-        serializer = QuoteRequestItemAttachmentSerializer(item.attachments.all(), many=True, context={'request': request})
-        return Response(serializer.data)
+class QuoteItemViewSet(viewsets.ModelViewSet):
+    queryset = QuoteRequest.objects.all()  # Base queryset
+    serializer_class = QuoteRequestSerializer
+    permission_classes = [AllowAny]
+    permission_module = 'sales'
+    permission_resource = 'sales.rfqs'
+    lookup_value_regex = r'[^/]+'
+    own_data_user_field = 'created_by'  # QuoteRequest.created_by = User
+    own_data_extra_user_fields = ['assignees', 'owner', 'invitations__invitee']  # assignee, owner vagy meghívott is látja
 
-    @attachments.mapping.post
-    def upload_attachment(self, request, pk=None):
-        item = self.get_object()
-        file_obj = request.FILES.get('file')
-        remark = request.data.get('remark', '')
-        if not file_obj:
-            return Response({'error': 'file kötelező'}, status=status.HTTP_400_BAD_REQUEST)
-        att = QuoteRequestItemAttachment.objects.create(
-            quote_item=item,
-            file=file_obj,
-            remark=remark,
-            original_filename=file_obj.name,
-            uploaded_by=request.user if request.user and request.user.is_authenticated else None
-        )
-        # Storage bejegyzés létrehozása az RFQ és összes kapcsolódó megrendelés mappájában
+    def _resolve_rfq_identifier(self, queryset, identifier):
+        ident = str(identifier or '').strip()
+        if not ident:
+            return None
+
+        if ident.isdigit():
+            obj = queryset.filter(pk=int(ident)).first()
+            if obj:
+                return obj
+
+        return queryset.filter(number=ident).first() or queryset.filter(request_number=ident).first()
+
+    def get_queryset(self):
+        """Alapértelmezetten csak a nem törölt árajánlatok + OwnDataFilterMixin szűrés"""
+        queryset = super().get_queryset()
+
+        user = getattr(self.request, 'user', None)
+        if user and user.is_authenticated and not user.is_superuser:
+            invited_ids = QuoteRequestInvitation.objects.filter(invitee=user).values_list('quote_request_id', flat=True)
+            queryset = (queryset | QuoteRequest.objects.filter(id__in=invited_ids)).distinct()
+
+        queryset = queryset.filter(is_deleted=False)
+
         try:
-            from apps.core.models import StorageFolder, StorageFile as SF
-            qr = item.quote_request
-            owner = request.user
-            # Részletek megállapítása: tétel neve
-            item_label = item.description[:40] if item.description else f'item-{item.id}'
-
-            # 1. Fő bejegyzés az RFQ mappában
-            rfq_root, _ = StorageFolder.objects.get_or_create(name='rfq', parent=None, defaults={'owner': owner})
-            rfq_folder, _ = StorageFolder.objects.get_or_create(
-                name=qr.request_number or str(qr.id), parent=rfq_root, defaults={'owner': owner}
-            )
-            sf = SF(
-                name=file_obj.name,
-                folder=rfq_folder,
-                size=att.file.size if att.file else 0,
-                content_type=file_obj.content_type or '',
-                owner=owner,
-            )
-            sf.file.name = att.file.name
-            sf.save()
-            att.storage_file_id = sf.id
-            att.save(update_fields=['storage_file_id'])
-
-            # 2. Alias-ok minden kapcsolódó megrendelés mappájában
-            orders_root, _ = StorageFolder.objects.get_or_create(name='orders', parent=None, defaults={'owner': owner})
-            for linked_order in qr.customer_orders.all():
-                order_folder, _ = StorageFolder.objects.get_or_create(
-                    name=linked_order.order_number, parent=orders_root, defaults={'owner': owner}
-                )
-                alias = SF(name=file_obj.name, folder=order_folder, alias_of=sf,
-                           size=sf.size, content_type=sf.content_type, owner=owner)
-                alias.file.name = sf.file.name
-                alias.save()
+            light = getattr(self, 'request', None) and self.request.query_params.get('light') == '1'
         except Exception:
-            pass
-        return Response(QuoteRequestItemAttachmentSerializer(att, context={'request': request}).data, status=status.HTTP_201_CREATED)
+            light = False
 
-    @action(detail=True, methods=['post'])
-    def update_attachment_remark(self, request, pk=None):
-        item = self.get_object()
-        att_id = request.data.get('attachment_id')
-        remark = request.data.get('remark', '')
-        if not att_id:
-            return Response({'error': 'attachment_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
-        att = get_object_or_404(QuoteRequestItemAttachment, id=att_id, quote_item=item)
-        att.remark = remark
-        att.save(update_fields=['remark'])
-        return Response({'status': 'ok'})
+        _active_coi = CustomerOrderItem.objects.filter(
+            quote_item=OuterRef('pk')
+        ).exclude(customer_order__status='cancelled').exclude(status='cancelled')
 
-    @action(detail=True, methods=['post'])
-    def delete_attachment(self, request, pk=None):
-        item = self.get_object()
-        att_id = request.data.get('attachment_id')
-        if not att_id:
-            return Response({'error': 'attachment_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        items_qs = QuoteRequestItem.objects.select_related(
+            'product', 'material', 'manufacturing_product', 'service'
+        ).annotate(
+            _is_ordered=Exists(_active_coi),
+            _ordered_at=Subquery(
+                _active_coi.order_by('customer_order__created_at')
+                .values('customer_order__created_at')[:1]
+            ),
+            _customer_order_id=Subquery(
+                _active_coi.order_by('customer_order__created_at')
+                .values('customer_order_id')[:1]
+            ),
+        ).prefetch_related(
+            Prefetch(
+                'manufacturing_product__cost_items',
+                queryset=ManufacturingCostItem.objects.all(),
+                to_attr='prefetched_cost_items',
+            ),
+            Prefetch(
+                'customerorderitem_set',
+                queryset=CustomerOrderItem.objects.exclude(
+                    customer_order__status='cancelled'
+                ).exclude(status='cancelled').select_related(
+                    'customer_order'
+                ).prefetch_related(
+                    Prefetch(
+                        'delivery_items',
+                        queryset=DeliveryNoteItem.objects.select_related('delivery_note'),
+                        to_attr='prefetched_delivery_items',
+                    )
+                ).order_by('customer_order__created_at'),
+                to_attr='prefetched_active_cois',
+            ),
+        )
+        if not light:
+            items_qs = items_qs.prefetch_related('attachments')
+
+        prefetches = [
+            Prefetch('contacts', queryset=Contact.objects.select_related('company')),
+            'assignees',
+            Prefetch('items', queryset=items_qs),
+            Prefetch('attachments', queryset=QuoteRequestAttachment.objects.all()),
+            Prefetch(
+                'invitations',
+                queryset=QuoteRequestInvitation.objects.filter(status='pending').select_related('invitee')
+            ),
+            Prefetch(
+                'customer_orders',
+                queryset=CustomerOrder.objects.exclude(status='cancelled').prefetch_related(
+                    Prefetch('items', queryset=CustomerOrderItem.objects.exclude(status='cancelled'))
+                ),
+                to_attr='prefetched_active_orders',
+            ),
+        ]
+        if not light:
+            prefetches.append(Prefetch('email_logs', to_attr='prefetched_email_logs'))
+
+        return queryset.select_related(
+            'customer', 'company', 'requested_by', 'created_by', 'project', 'currency', 'owner'
+        ).prefetch_related(*prefetches)
+
+    def get_object(self):
+        lookup_url_kwarg = self.lookup_url_kwarg or self.lookup_field
+        lookup_value = self.kwargs.get(lookup_url_kwarg)
+        queryset = self.filter_queryset(self.get_queryset())
+        obj = self._resolve_rfq_identifier(queryset, lookup_value)
+        if obj is None:
+            raise Http404
+        self.check_object_permissions(self.request, obj)
+        return obj
+
+    def list(self, request, *args, **kwargs):
         att = get_object_or_404(QuoteRequestItemAttachment, id=att_id, quote_item=item)
         att.file.delete(save=False)
         att.delete()
@@ -3505,42 +3241,74 @@ class QuoteRequestItemViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['patch'], url_path=r'attachments/(?P<att_id>\d+)/rename')
     def rename_attachment(self, request, pk=None, att_id=None):
-        import os
-        from django.core.files.storage import default_storage
         item = self.get_object()
         att = get_object_or_404(QuoteRequestItemAttachment, id=att_id, quote_item=item)
-        new_name = request.data.get('original_filename', '').strip()
-        if new_name:
-            if att.file and att.file.name and default_storage.exists(att.file.name):
-                directory = os.path.dirname(att.file.name)
-                new_path = (directory + '/' + new_name) if directory else new_name
-                if att.file.name != new_path:
-                    try:
-                        old_abs = default_storage.path(att.file.name)
-                        new_abs = default_storage.path(new_path)
-                        if not os.path.exists(new_abs):
-                            os.rename(old_abs, new_abs)
-                            att.file.name = new_path
-                    except Exception:
-                        pass
-            att.original_filename = new_name
+        final_name, _ = _rename_filefield_on_storage(att.file, request.data.get('original_filename', ''))
+        if final_name:
+            att.original_filename = final_name
             att.save(update_fields=['original_filename', 'file'])
         file_url = request.build_absolute_uri(att.file.url) if att.file else None
         return Response({'original_filename': att.original_filename, 'file': att.file.name if att.file else None, 'file_url': file_url})
 
-    @action(detail=True, methods=['post'])
-    def update_cost_items_status(self, request, pk=None):
-        """Set all ManufacturingCostItems of this item's manufacturing product to the given status."""
+    # ── Direct cost item attachments (cost_items_data JSON altételek) ──
+
+    @action(detail=True, methods=['get', 'post'], url_path=r'cost-item-attachments')
+    def cost_item_attachments(self, request, pk=None):
         item = self.get_object()
-        new_status = request.data.get('status')
-        VALID_STATUSES = ['new', 'sent', 'ordered', 'confirmed', 'in_production', 'ready', 'in_delivery', 'delivered', 'rejected']
-        if new_status not in VALID_STATUSES:
-            return Response({'error': 'Érvénytelen státusz'}, status=status.HTTP_400_BAD_REQUEST)
-        mp = getattr(item, 'manufacturing_product', None)
-        if not mp:
-            return Response({'error': 'Nincs gyártási termék'}, status=status.HTTP_400_BAD_REQUEST)
-        updated = mp.cost_items.exclude(status='cancelled').update(status=new_status)
-        return Response({'status': new_status, 'updated': updated})
+        if request.method == 'GET':
+            local_id = request.query_params.get('local_id')
+            qs = item.cost_attachments.all()
+            if local_id is not None:
+                qs = qs.filter(cost_item_local_id=int(local_id))
+            data = [{
+                'id': a.id,
+                'cost_item_local_id': a.cost_item_local_id,
+                'file_url': request.build_absolute_uri(a.file.url) if a.file else None,
+                'original_filename': a.original_filename,
+                'file_size': a.file_size,
+                'remark': a.remark,
+                'created_at': a.created_at,
+            } for a in qs]
+            return Response(data)
+        # POST: upload
+        file_obj = request.FILES.get('file')
+        if not file_obj:
+            return Response({'error': 'file kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        local_id = request.data.get('cost_item_local_id') or request.query_params.get('local_id')
+        if not local_id:
+            return Response({'error': 'cost_item_local_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        remark = request.data.get('remark', '')
+        att = QuoteRequestItemCostAttachment.objects.create(
+            quote_item=item,
+            cost_item_local_id=int(local_id),
+            file=file_obj,
+            original_filename=file_obj.name,
+            file_size=file_obj.size,
+            remark=remark,
+            uploaded_by=request.user if request.user and request.user.is_authenticated else None,
+        )
+        return Response({
+            'id': att.id,
+            'cost_item_local_id': att.cost_item_local_id,
+            'file_url': request.build_absolute_uri(att.file.url),
+            'original_filename': att.original_filename,
+            'file_size': att.file_size,
+            'remark': att.remark,
+            'created_at': att.created_at,
+        }, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['patch', 'delete'], url_path=r'cost-item-attachments/(?P<att_id>\d+)')
+    def cost_item_attachment_detail(self, request, pk=None, att_id=None):
+        item = self.get_object()
+        att = get_object_or_404(QuoteRequestItemCostAttachment, id=att_id, quote_item=item)
+        if request.method == 'DELETE':
+            att.file.delete(save=False)
+            att.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        # PATCH: update remark
+        att.remark = request.data.get('remark', att.remark)
+        att.save(update_fields=['remark'])
+        return Response({'id': att.id, 'remark': att.remark})
 
 class OrderViewSet(viewsets.ModelViewSet):
     queryset = Order.objects.all()
@@ -3992,8 +3760,17 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
 
     def _prepare_confirmation_email_content(self, order, template_key='order_confirmation', signature_key=None, extra_context=None, additional_order_ids=None):
         if extra_context is None: extra_context = {}
+        if additional_order_ids is None: additional_order_ids = []
         cfg = EmailServerConfig.objects.filter(is_active=True).first()
         if not cfg: return None
+
+        # Collect primary + additional orders (same recipient/company flow)
+        extra_orders = list(
+            CustomerOrder.objects.filter(id__in=additional_order_ids).select_related(
+                'quote_request', 'quote_request__company', 'quote_request__customer'
+            ).prefetch_related('items__quote_item', 'quote_request__contacts')
+        ) if additional_order_ids else []
+        all_orders = [order] + [o for o in extra_orders if o.id != order.id]
 
         # Determine Recipient
         to_email = None
@@ -4043,118 +3820,120 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
                 contact_name = ", ".join(contact_names)
             else:
                 contact_name = customer_name
+        
+        # Build joined order identifiers and combined item table
+        all_order_numbers = [str(o.order_number) for o in all_orders if getattr(o, 'order_number', None)]
+        all_order_numbers = list(dict.fromkeys(all_order_numbers))
+        all_order_ids = [str(o.id) for o in all_orders]
+        order_numbers_str = ', '.join(all_order_numbers)
+        order_ids_str = ', '.join(all_order_ids)
 
-        # Group all orders for the same quote_request into one email
-        if order.quote_request_id:
-            related_orders = list(
-                CustomerOrder.objects
-                .filter(quote_request_id=order.quote_request_id)
-                .order_by('order_number')
-                .prefetch_related('items__quote_item', 'quote_request')
-            )
-        else:
-            related_orders = [order]
+        combined_items = []
+        for _o in all_orders:
+            try:
+                combined_items.extend(list(_o.items.select_related('quote_item', 'quote_item__product', 'quote_item__material', 'quote_item__service', 'quote_item__manufacturing_product').all()))
+            except Exception:
+                combined_items.extend(list(_o.items.all()))
 
-        # Also include orders from other quote_requests (cross-RFQ grouping by customer)
-        if additional_order_ids:
-            existing_ids = {o.id for o in related_orders}
-            extra_orders = list(
-                CustomerOrder.objects
-                .filter(id__in=additional_order_ids)
-                .exclude(id__in=existing_ids)
-                .order_by('order_number')
-                .prefetch_related('items__quote_item', 'quote_request')
-            )
-            related_orders = related_orders + extra_orders
-
-        order_numbers_str = ", ".join(o.order_number for o in related_orders)
-        currency = (order.quote_request.currency.code if order.quote_request and order.quote_request.currency else 'HUF')
-
-        # Build items HTML table from all related orders
-        items_rows = []
-        for rel_order in related_orders:
-            for item in rel_order.items.all():
-                item_name = ''
-                if item.quote_item:
-                    item_name = item.quote_item.item_name or item.description or ''
-                else:
-                    item_name = item.description or ''
-                net_total = float(item.net_unit_price) * float(item.quantity)
-                items_rows.append(
-                    f"<tr>"
-                    f"<td style='padding:4px 8px;border-bottom:1px solid #eee'>{item_name}</td>"
-                    f"<td style='padding:4px 8px;border-bottom:1px solid #eee;text-align:right'>{float(item.quantity):g}</td>"
-                    f"<td style='padding:4px 8px;border-bottom:1px solid #eee'>{item.unit}</td>"
-                    f"<td style='padding:4px 8px;border-bottom:1px solid #eee;text-align:right'>{float(item.net_unit_price):,.0f} {currency}</td>"
-                    f"<td style='padding:4px 8px;border-bottom:1px solid #eee;text-align:right'>{net_total:,.0f} {currency}</td>"
-                    f"</tr>"
+        def _build_customer_order_items_table_html(order_items, currency_symbol=''):
+            rows = []
+            for oi in order_items:
+                qi = getattr(oi, 'quote_item', None)
+                name = (
+                    (getattr(qi, 'item_name', '') if qi else '') or
+                    (getattr(getattr(qi, 'manufacturing_product', None), 'name', None) if qi else None) or
+                    (getattr(getattr(qi, 'product', None), 'name', None) if qi else None) or
+                    (getattr(getattr(qi, 'material', None), 'name', None) if qi else None) or
+                    (getattr(getattr(qi, 'service', None), 'name', None) if qi else None) or
+                    ''
                 )
+                code = (
+                    (getattr(getattr(qi, 'manufacturing_product', None), 'code', None) if qi else None) or
+                    (getattr(getattr(qi, 'material', None), 'code', None) if qi else None) or
+                    (getattr(getattr(qi, 'service', None), 'code', None) if qi else None) or
+                    (getattr(qi, 'quote_number', None) if qi else None) or
+                    ''
+                )
+                description = oi.description or (getattr(qi, 'description', '') if qi else '') or ''
+                qty = oi.quantity
+                unit = oi.unit or ''
+                net_unit = oi.net_unit_price or 0
+                net_total = qty * net_unit
+                cur = currency_symbol
 
-        if items_rows:
-            items_html = (
-                "<table style='width:100%;border-collapse:collapse;font-size:13px;margin:12px 0'>"
-                "<thead><tr style='background:#f5f5f5'>"
-                "<th style='padding:4px 8px;text-align:left'>Megnevezés</th>"
-                "<th style='padding:4px 8px;text-align:right'>Mennyiség</th>"
-                "<th style='padding:4px 8px;text-align:left'>Egység</th>"
-                "<th style='padding:4px 8px;text-align:right'>Nettó egységár</th>"
-                "<th style='padding:4px 8px;text-align:right'>Nettó összeg</th>"
-                "</tr></thead><tbody>"
-                + "".join(items_rows)
-                + "</tbody></table>"
+                def fmt(val):
+                    try:
+                        return f"{float(val):,.0f}".replace(',', '\u00a0')
+                    except Exception:
+                        return str(val)
+
+                rows.append(
+                    f'<tr>'
+                    f'<td style="border:1px solid #ddd;padding:6px 10px;">{name}</td>'
+                    f'<td style="border:1px solid #ddd;padding:6px 10px;">{code}</td>'
+                    f'<td style="border:1px solid #ddd;padding:6px 10px;">{description}</td>'
+                    f'<td style="border:1px solid #ddd;padding:6px 10px;text-align:right;">{fmt(qty)}</td>'
+                    f'<td style="border:1px solid #ddd;padding:6px 10px;">{unit}</td>'
+                    f'<td style="border:1px solid #ddd;padding:6px 10px;text-align:right;">{fmt(net_unit)}{(" " + cur) if cur else ""}</td>'
+                    f'<td style="border:1px solid #ddd;padding:6px 10px;text-align:right;">{fmt(net_total)}{(" " + cur) if cur else ""}</td>'
+                    f'</tr>'
+                )
+            rows_html = ''.join(rows)
+            return (
+                '<table style="border-collapse:collapse;width:100%;font-size:13px;">'
+                '<thead><tr style="background:#f5f5f5;">'
+                '<th style="border:1px solid #ddd;padding:6px 10px;text-align:left;">Termék neve</th>'
+                '<th style="border:1px solid #ddd;padding:6px 10px;text-align:left;">Cikkszám</th>'
+                '<th style="border:1px solid #ddd;padding:6px 10px;text-align:left;">Leírás</th>'
+                '<th style="border:1px solid #ddd;padding:6px 10px;text-align:right;">Mennyiség</th>'
+                '<th style="border:1px solid #ddd;padding:6px 10px;text-align:left;">Egység</th>'
+                '<th style="border:1px solid #ddd;padding:6px 10px;text-align:right;">Nettó egységár</th>'
+                '<th style="border:1px solid #ddd;padding:6px 10px;text-align:right;">Nettó ár</th>'
+                f'</tr></thead><tbody>{rows_html}</tbody></table>'
             )
-        else:
-            items_html = ""
 
-        # Order link(s) — one per unique quote_request/public_token
-        from django.conf import settings as django_settings
-        frontend_url = getattr(django_settings, 'FRONTEND_BASE_URL', '')
-        link_urls = []
-        seen_tokens = set()
-        for rel_order in related_orders:
-            if rel_order.quote_request and rel_order.quote_request.public_token:
-                token = rel_order.quote_request.public_token
-                if token not in seen_tokens:
-                    seen_tokens.add(token)
-                    link_urls.append(f"{frontend_url}/public/quote/{token}/order")
-
-        if len(link_urls) == 1:
-            order_link_html = f'<p><a href="{link_urls[0]}" style="color:#1677ff">Megrendelés megtekintése online</a></p>'
-        elif len(link_urls) > 1:
-            items_li = "".join(f'<li><a href="{url}" style="color:#1677ff">Megrendelés megtekintése</a></li>' for url in link_urls)
-            order_link_html = f'<p>Megrendelések megtekintése:<ul>{items_li}</ul></p>'
-        else:
-            order_link_html = ''
-        order_link = link_urls[0] if link_urls else ''  # kept for backward compat with older templates
+        currency_symbol = ''
+        try:
+            currency_symbol = getattr(getattr(order.quote_request, 'currency', None), 'symbol', '') or ''
+        except Exception:
+            currency_symbol = ''
+        items_table_html = _build_customer_order_items_table_html(combined_items, currency_symbol)
 
         context = {
-            'order_number': order.order_number,
+            'order_number': order_numbers_str or order.order_number,
+            'primary_order_number': order.order_number,
             'order_numbers': order_numbers_str,
-            'order_date': str(order.order_date)[:10],
+            'order_ids': order_ids_str,
+            'order_id': str(order.id),
+            'order_date': str(order.order_date),
             'company_name': from_name,
             'customer_name': customer_name,
             'contact_name': contact_name,
-            'items_html': items_html,
-            'order_link': order_link,
-            'order_link_html': order_link_html,
+            'items_table': items_table_html,
             **extra_context
         }
 
+        def _safe_format(template_text: str, ctx: dict) -> str:
+            if not template_text:
+                return ''
+            rendered = template_text
+            for k, v in ctx.items():
+                rendered = rendered.replace(f"{{{k}}}", str(v))
+            return rendered
+
         # Subject & Body
-        subject = f"Megrendelés visszaigazolás - {order_numbers_str}"
+        subject = f"Megrendelés visszaigazolás - {order_numbers_str or order.order_number}"
         body = ""
         is_html = False
 
         if tpl:
             is_html = tpl.is_html
             if tpl.subject_template:
-                try: subject = tpl.subject_template.format(**context)
-                except: pass
+                subject = _safe_format(tpl.subject_template, context)
             
             body_core = ""
             if tpl.body_template:
-                try: body_core = tpl.body_template.format(**context)
-                except: body_core = tpl.body_template
+                body_core = _safe_format(tpl.body_template, context)
             
             body = f"{body_core}{sig.body_html if sig else ''}" if is_html else f"{body_core}\n\n{sig.body_html if sig else ''}"
         else:
@@ -4162,10 +3941,8 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
             is_html = True
             body = f"""<p>Tisztelt {context['contact_name']}!</p>
 <p>Megrendelését köszönettel megkaptuk és ezúton visszaigazoljuk.</p>
-<p><strong>Megrendelés száma:</strong> {order_numbers_str}<br>
-<strong>Dátum:</strong> {context['order_date']}</p>
-{items_html}
-{order_link_html}
+<p><strong>Megrendelés száma:</strong> {order.order_number}<br>
+<strong>Dátum:</strong> {order.order_date}</p>
 <p>Amennyiben kérdése van, forduljon hozzánk bizalommal.</p>
 <p>Üdvözlettel,<br>
 {from_name}</p>
@@ -4183,35 +3960,29 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'])
     def manufacturing_items(self, request):
-        """Return all CustomerOrderItems with item_type='manufacturing'.
-        Includes both linked-ManufacturingProduct items AND direct items (manufacturing_product=None)."""
+        """Return all CustomerOrderItems with item_type='manufacturing', with order and product info."""
         from .models import CustomerOrderItem
-        base_qs = CustomerOrderItem.objects.select_related(
+        qs = CustomerOrderItem.objects.select_related(
             'customer_order',
             'customer_order__quote_request',
             'customer_order__quote_request__company',
             'customer_order__quote_request__customer',
             'quote_item',
             'quote_item__manufacturing_product',
-        ).prefetch_related(
-            'customer_order__quote_request__contacts',
-            'customer_order__quote_request__contacts__company',
         ).filter(
             quote_item__item_type='manufacturing',
+            quote_item__manufacturing_product__isnull=False,
         ).annotate(_att_count=Count('quote_item__attachments')).order_by('-customer_order__order_date')
 
-        qs_linked = base_qs.filter(quote_item__manufacturing_product__isnull=False)
-        qs_direct = base_qs.filter(quote_item__manufacturing_product__isnull=True)
-
+        # Optional status filter
         statuses = request.query_params.get('status')
         if statuses:
-            qs_linked = qs_linked.filter(status__in=statuses.split(','))
-            qs_direct = qs_direct.filter(status__in=statuses.split(','))
+            qs = qs.filter(status__in=statuses.split(','))
 
+        # Optional manufacturing_product_id filter
         mp_id = request.query_params.get('manufacturing_product_id')
         if mp_id:
-            qs_linked = qs_linked.filter(quote_item__manufacturing_product_id=mp_id)
-            qs_direct = qs_direct.none()
+            qs = qs.filter(quote_item__manufacturing_product_id=mp_id)
 
         import re
         from html import unescape
@@ -4247,25 +4018,12 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
                 pass
             return ''
 
-        def build_item_row(item):
-            mp = item.quote_item.manufacturing_product  # may be None for direct items
+        data = []
+        for item in qs:
+            mp = item.quote_item.manufacturing_product
             order = item.customer_order
             qr = order.quote_request
-            qi = item.quote_item
-            if mp:
-                name = qi.item_name or mp.name
-                code = mp.code or ''
-                desc = strip_html(item.description or mp.description or '')
-                internal = strip_html(mp.internal_description or '')
-                mp_id = mp.id
-            else:
-                # Direct manufacturing item (no ManufacturingProduct)
-                name = qi.item_name or ''
-                code = ''
-                desc = strip_html(item.description or qi.description or '')
-                internal = strip_html(qi.internal_description or '')
-                mp_id = None
-            return {
+            data.append({
                 'id': item.id,
                 'quote_item_id': item.quote_item_id,
                 'order_id': order.id,
@@ -4274,29 +4032,17 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
                 'order_status': order.status,
                 'status': item.status,
                 'customer_name': resolve_customer_name(qr),
-                'company_name': (qr.company.name if qr and qr.company else None) or None,
-                'contact_names': ', '.join(filter(None, [getattr(c, 'name', '') for c in (qr.contacts.all() if qr else [])])) or None,
-                'is_private': bool(qr and not qr.company_id and not qr.customer_id and qr.contacts.filter(company__isnull=True).exists()),
-                'manufacturing_product_id': mp_id,
-                'is_direct': mp is None,
-                'rfq_id': qr.id if qr else None,
-                'rfq_item_id': qi.id if qi else None,
-                'name': name,
-                'code': code,
-                'description': desc,
-                'internal_description': internal,
+                'manufacturing_product_id': mp.id,
+                'name': item.quote_item.item_name or mp.name,
+                'code': mp.code or '',
+                'description': strip_html(item.description or mp.description or ''),
+                'internal_description': strip_html(mp.internal_description or ''),
                 'remark': item.remark or '',
                 'quantity': float(item.quantity),
                 'unit': item.unit,
                 'net_unit_price': float(item.net_unit_price),
                 'attachment_count': getattr(item, '_att_count', 0),
-                'cost_items_data': qi.cost_items_data if mp is None else [],
-            }
-
-        data = [build_item_row(item) for item in qs_linked]
-        data += [build_item_row(item) for item in qs_direct]
-        # Sort by order_date descending
-        data.sort(key=lambda x: x.get('order_date') or '', reverse=True)
+            })
         return Response(data)
 
     @action(detail=True, methods=['post'])
@@ -4305,12 +4051,9 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
         template_key = request.data.get('template_key', 'order_confirmation')
         signature_key = request.data.get('signature_key')
         extra_context = request.data.get('context', {})
-        additional_order_ids = request.data.get('additional_order_ids', [])
+        additional_order_ids = request.data.get('additional_order_ids') or []
         
-        content = self._prepare_confirmation_email_content(
-            order, template_key, signature_key, extra_context,
-            additional_order_ids=additional_order_ids
-        )
+        content = self._prepare_confirmation_email_content(order, template_key, signature_key, extra_context, additional_order_ids)
         if not content:
             return Response({'error': 'Nincs email beállítás vagy címzett'}, status=400)
         
@@ -5322,19 +5065,16 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
     def destroy(self, request, *args, **kwargs):
         order = self.get_object()
         qr = order.quote_request
-        # Reset item_status on all QuoteRequestItems belonging to this order before deletion
-        try:
-            for coi in order.items.select_related('quote_item').all():
-                qi = coi.quote_item
-                if qi and qi.item_status == 'ordered':
-                    still_ordered = qi.customerorderitem_set.exclude(
-                        customer_order=order
-                    ).exclude(customer_order__status='cancelled').exclude(status='cancelled').exists()
-                    if not still_ordered:
-                        qi.item_status = 'quoted'
-                        qi.save(update_fields=['item_status'])
-        except Exception:
-            pass
+        # Reset item_status on all QuoteRequestItems belonging to this order
+        for coi in order.items.select_related('quote_item').all():
+            qi = coi.quote_item
+            if qi and qi.item_status == 'ordered':
+                still_ordered = qi.customerorderitem_set.exclude(
+                    customer_order=order
+                ).exclude(customer_order__status='cancelled').exclude(status='cancelled').exists()
+                if not still_ordered:
+                    qi.item_status = 'quoted'
+                    qi.save(update_fields=['item_status'])
         response = super().destroy(request, *args, **kwargs)
         # Ha törlés után nincs aktív megrendelés, az RFQ visszaáll 'quoted' státuszra
         try:
@@ -5431,22 +5171,9 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
         # Update CustomerOrderItem statuses
         if invoice_number:
             order.items.exclude(status='cancelled').update(status='invoiced')
-            # Propagate invoiced to cost_items_data sub-items for direct manufacturing items
-            for item in order.items.exclude(status='cancelled').select_related('quote_item'):
-                qi = getattr(item, 'quote_item', None)
-                if qi and qi.manufacturing_product_id is None and isinstance(qi.cost_items_data, list) and qi.cost_items_data:
-                    updated = [{**ci, 'status': 'invoiced'} if ci.get('status') != 'cancelled' else ci for ci in qi.cost_items_data]
-                    if updated != qi.cost_items_data:
-                        type(qi).objects.filter(id=qi.id).update(cost_items_data=updated)
         else:
             # Storno: revert invoiced items back to in_delivery
             order.items.filter(status='invoiced').update(status='in_delivery')
-            for item in order.items.filter(status='in_delivery').select_related('quote_item'):
-                qi = getattr(item, 'quote_item', None)
-                if qi and qi.manufacturing_product_id is None and isinstance(qi.cost_items_data, list) and qi.cost_items_data:
-                    updated = [{**ci, 'status': 'in_delivery'} if ci.get('status') == 'invoiced' else ci for ci in qi.cost_items_data]
-                    if updated != qi.cost_items_data:
-                        type(qi).objects.filter(id=qi.id).update(cost_items_data=updated)
 
         # Update linked RFQ status: ordered when invoice set, accepted when cleared
         qr = getattr(order, 'quote_request', None)
@@ -5487,10 +5214,56 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
     def handover(self, request):
         """Hand over (átadás) of one or more invoiced orders.
         Body: { order_ids: [...], serial: str, cash_register: int, note?: str }
-        - All selected orders MUST already be invoiced (have invoice_number).
-        - Appends ` | Átadás: <serial>` to each order.invoice_number.
+        # Bypass OwnDataFilterMixin - invitee may not be the creator.
+        identifier = str(pk or '').strip()
+        qr_qs = QuoteRequest.objects.filter(is_deleted=False)
+        qr = None
+        if identifier.isdigit():
+            qr = qr_qs.filter(pk=int(identifier)).first()
+        if not qr:
+            qr = qr_qs.filter(number=identifier).first() or qr_qs.filter(request_number=identifier).first()
+        if not qr:
+            return Response({'error': 'Nem talalhato'}, status=404)
+        qr_qs = QuoteRequest.objects.filter(is_deleted=False)
+        qr = None
+            existing = QuoteRequestInvitation.objects.filter(quote_request=qr, invitee=request.user).first()
+            if existing and existing.status == 'declined':
+                return Response({'status': 'declined'})
+        if identifier.isdigit():
+            qr = qr_qs.filter(pk=int(identifier)).first()
+        if not qr:
+            qr = qr_qs.filter(number=identifier).first() or qr_qs.filter(request_number=identifier).first()
+        if not qr:
+            return Response({'error': 'Nem talalhato'}, status=404)
+        qr_qs = QuoteRequest.objects.filter(is_deleted=False)
+        qr = None
+            existing = QuoteRequestInvitation.objects.filter(quote_request=qr, invitee=request.user).first()
+            if existing and existing.status == 'declined':
+                return Response({'status': 'declined'})
+        if identifier.isdigit():
+            qr = qr_qs.filter(pk=int(identifier)).first()
+        if not qr:
+            qr = qr_qs.filter(number=identifier).first() or qr_qs.filter(request_number=identifier).first()
+        if not qr:
+            return Response({'error': 'Nem található'}, status=404)
+
+        qr_qs = QuoteRequest.objects.filter(is_deleted=False)
+        qr = None
+            existing = QuoteRequestInvitation.objects.filter(quote_request=qr, invitee=request.user).first()
+            if existing and existing.status == 'declined':
+                return Response({'status': 'declined'})
+        if identifier.isdigit():
+            qr = qr_qs.filter(pk=int(identifier)).first()
+        if not qr:
+            qr = qr_qs.filter(number=identifier).first() or qr_qs.filter(request_number=identifier).first()
+        if not qr:
+            return Response({'error': 'Nem található'}, status=404)
+
         - Creates a single CashRegisterTransaction (deposit) for the sum of
           the selected orders' net totals, with the serial recorded in note.
+            existing = QuoteRequestInvitation.objects.filter(quote_request=qr, invitee=request.user).first()
+            if existing and existing.status == 'declined':
+                return Response({'status': 'declined'})
         """
         from decimal import Decimal
         from django.db import transaction as db_tx
@@ -5587,104 +5360,20 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
     
     @action(detail=True, methods=['get'])
     def activity_logs(self, request, pk=None):
-        """Comprehensive activity timeline for a CustomerOrder, including RFQ logs."""
+        """Get activity logs for this customer order"""
+        from apps.core.models import ActivityLog
+        from apps.core.serializers import ActivityLogSerializer
+        from django.contrib.contenttypes.models import ContentType
+        
         order = self.get_object()
-        qr = order.quote_request
-        events = []
-
-        def _user_info(u):
-            if not u:
-                return {'name': '', 'role': ''}
-            name = u.get_full_name() or u.username
-            role = ''
-            try:
-                depts = list(u.employee_profile.departments.values_list('name', flat=True))
-                role = ', '.join(depts)
-            except Exception:
-                pass
-            if not role:
-                role = ', '.join(u.groups.values_list('name', flat=True))
-            return {'name': name, 'role': role}
-
-        def _fmt(dt):
-            return dt.isoformat() if dt and hasattr(dt, 'isoformat') else str(dt) if dt else None
-
-        # ── RFQ creation ──
-        if qr:
-            u = _user_info(qr.created_by)
-            events.append({'timestamp': _fmt(qr.created_at), 'who_role': u['role'], 'who_name': u['name'],
-                           'what': f'Árajánlat létrehozva: {qr.number or qr.request_number}', 'category': 'rfq'})
-
-            # ── QuoteLog entries (includes public customer actions) ──
-            for log in qr.logs.select_related('user').order_by('created_at'):
-                u = _user_info(log.user)
-                who_name = u['name'] or (f'IP: {log.ip_address}' if log.ip_address else '')
-                events.append({'timestamp': _fmt(log.created_at), 'who_role': u['role'], 'who_name': who_name,
-                               'what': log.action, 'category': 'log'})
-
-            # ── Email logs ──
-            from .models import QuoteRequestEmailLog as _EL
-            for el in _EL.objects.filter(quote_request=qr).select_related('sent_by').order_by('sent_at'):
-                u = _user_info(el.sent_by)
-                events.append({'timestamp': _fmt(el.sent_at), 'who_role': u['role'], 'who_name': u['name'],
-                               'what': f'E-mail kiküldve: {el.subject} → {(el.to or "")[:80]}', 'category': 'email'})
-
-        # ── CustomerOrder lifecycle ──
-        u = _user_info(order.created_by)
-        events.append({'timestamp': _fmt(order.order_date or order.created_at), 'who_role': u['role'], 'who_name': u['name'],
-                       'what': f'Megrendelés létrehozva: {order.order_number}', 'category': 'order'})
-        if order.production_started_at:
-            events.append({'timestamp': _fmt(order.production_started_at), 'who_role': '', 'who_name': '',
-                           'what': f'Gyártásba küldve: {order.order_number}', 'category': 'production'})
-        if order.ready_at:
-            events.append({'timestamp': _fmt(order.ready_at), 'who_role': '', 'who_name': '',
-                           'what': f'Készre jelölve: {order.order_number}', 'category': 'ready'})
-        if order.delivery_started_at:
-            events.append({'timestamp': _fmt(order.delivery_started_at), 'who_role': '', 'who_name': '',
-                           'what': f'Szállítás megkezdve: {order.order_number}', 'category': 'delivery'})
-        if order.delivered_at:
-            events.append({'timestamp': _fmt(order.delivered_at), 'who_role': '', 'who_name': '',
-                           'what': f'Leszállítva: {order.order_number}', 'category': 'delivered'})
-        if order.invoice_number:
-            events.append({'timestamp': _fmt(order.updated_at), 'who_role': '', 'who_name': '',
-                           'what': f'Számlázva: {order.invoice_number}', 'category': 'invoice'})
-
-        # ── Delivery notes ──
-        from .models import DeliveryNote as _DN
-        dns = (
-            _DN.objects.filter(items__customer_order_item__customer_order=order)
-            .distinct().select_related('created_by', 'confirmed_by_user').order_by('created_at')
-        )
-        for dn in dns:
-            u = _user_info(dn.created_by)
-            events.append({'timestamp': _fmt(dn.created_at), 'who_role': u['role'], 'who_name': u['name'],
-                           'what': f'Szállítólevél: {dn.delivery_note_number}', 'category': 'delivery_note'})
-            if dn.is_confirmed and dn.confirmed_at:
-                confirmed_by = dn.confirmed_by_info or (dn.confirmed_by_user.get_full_name() if dn.confirmed_by_user else '')
-                u2 = _user_info(dn.confirmed_by_user)
-                events.append({'timestamp': _fmt(dn.confirmed_at), 'who_role': u2['role'],
-                               'who_name': confirmed_by or u2['name'],
-                               'what': f'Szállítólevél visszaigazolva: {dn.delivery_note_number}', 'category': 'delivery_confirmed'})
-
-        # ── Manufacturing cost items ──
-        if qr:
-            from apps.manufacturing.models import ManufacturingCostItem as _MCI
-            mci_map = dict(_MCI.STATUS_CHOICES)
-            for qi in qr.items.select_related('manufacturing_product').filter(manufacturing_product__isnull=False):
-                mp = qi.manufacturing_product
-                for ci in mp.cost_items.select_related('department', 'supplier').order_by('sort_order', 'id'):
-                    if ci.is_internal:
-                        dept = ci.department.name if ci.department else ''
-                        role, who = (f'Belső: {dept}' if dept else 'Belső'), dept
-                    else:
-                        role, who = 'Külső', (ci.supplier.name if ci.supplier else '')
-                    status_disp = mci_map.get(ci.status, ci.status)
-                    notes_part = f' – {ci.notes.strip()}' if ci.notes and ci.notes.strip() else ''
-                    events.append({'timestamp': _fmt(mp.created_at), 'who_role': role, 'who_name': who,
-                                   'what': f'{ci.name} ({status_disp}){notes_part}', 'category': 'cost_item'})
-
-        events.sort(key=lambda e: (e['timestamp'] or ''))
-        return Response(events)
+        content_type = ContentType.objects.get_for_model(CustomerOrder)
+        logs = ActivityLog.objects.filter(
+            content_type=content_type,
+            object_id=order.id
+        ).select_related('user').order_by('-timestamp')
+        
+        serializer = ActivityLogSerializer(logs, many=True)
+        return Response(serializer.data)
     
     @action(detail=False, methods=['post'])
     def create_invoices(self, request):
@@ -5699,8 +5388,33 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
         logger = logging.getLogger(__name__)
         
         order_ids = request.data.get('order_ids', [])
+        rfq_ids = request.data.get('rfq_ids', [])
+
+        # RFQ-first adapter: allow invoicing by RFQ identifiers
+        if not order_ids and rfq_ids:
+            resolved_order_ids = []
+            for raw_ref in rfq_ids:
+                ref = str(raw_ref or '').strip()
+                if not ref:
+                    continue
+                qr = None
+                if ref.isdigit():
+                    qr = QuoteRequest.objects.filter(pk=int(ref)).first()
+                if not qr:
+                    qr = QuoteRequest.objects.filter(number=ref).first() or QuoteRequest.objects.filter(request_number=ref).first()
+                if not qr:
+                    continue
+                resolved_order_ids.extend(
+                    list(
+                        CustomerOrder.objects.filter(quote_request=qr)
+                        .exclude(status='cancelled')
+                        .values_list('id', flat=True)
+                    )
+                )
+            order_ids = list(dict.fromkeys(resolved_order_ids))
+
         if not order_ids:
-            return Response({'error': 'Nem lett megrendelés kiválasztva'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'error': 'Nem lett megrendelés kiválasztva (order_ids vagy rfq_ids)'}, status=status.HTTP_400_BAD_REQUEST)
         
         orders = self.queryset.filter(id__in=order_ids)
         if not orders.exists():
@@ -5855,6 +5569,13 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
                     for order in company_orders:
                         order.invoice_number = invoice_number
                         order.save()
+
+                    try:
+                        for order in company_orders:
+                            if order.quote_request_id:
+                                _sync_rfq_primary_snapshot(order.quote_request)
+                    except Exception:
+                        pass
                     
                     invoices_created += 1
                 else:
@@ -5920,10 +5641,11 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
         ids = request.data.get('ids', [])
         if not ids:
             return Response({'error': 'Nincs megadva törlendő azonosító.'}, status=status.HTTP_400_BAD_REQUEST)
-        orders = list(CustomerOrder.objects.filter(id__in=ids))
+        orders = CustomerOrder.objects.filter(id__in=ids).prefetch_related('items__quote_item')
         deleted_count = 0
         for order in orders:
             qr = order.quote_request
+            # Reset item_status for all items in this order
             for coi in order.items.select_related('quote_item').all():
                 qi = coi.quote_item
                 if qi and qi.item_status == 'ordered':
@@ -5937,6 +5659,7 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
             order._log_request = request
             order.delete()
             deleted_count += 1
+            # Reset QR status if no orders remain
             try:
                 if qr and qr.status == 'ordered':
                     if not qr.customer_orders.exclude(status='cancelled').exists():
@@ -5992,33 +5715,25 @@ class CustomerOrderItemViewSet(viewsets.ModelViewSet):
         return Response({'remark': item.remark})
 
     def destroy(self, request, *args, **kwargs):
-        """Delete COI; reset QuoteRequestItem status and delete parent order if it becomes empty."""
+        """Delete a CustomerOrderItem and reset QuoteRequestItem.item_status if no other active orders remain."""
         item = self.get_object()
         quote_item = item.quote_item
-        parent_order = item.customer_order
         response = super().destroy(request, *args, **kwargs)
-        # Reset QuoteRequestItem.item_status if no other active orders remain
-        try:
-            if quote_item:
-                still_ordered = quote_item.customerorderitem_set.exclude(
-                    customer_order__status='cancelled'
-                ).exclude(status='cancelled').exists()
-                if not still_ordered and quote_item.item_status == 'ordered':
-                    quote_item.item_status = 'quoted'
-                    quote_item.save(update_fields=['item_status'])
-                qr = quote_item.quote_request
-                if qr and qr.status == 'ordered':
-                    if not qr.items.filter(item_status='ordered').exists():
-                        qr.status = 'quoted'
-                        qr.save(update_fields=['status'])
-        except Exception:
-            pass
-        # Delete parent CustomerOrder if it has no items left
-        try:
-            if parent_order and parent_order.pk and not parent_order.items.exists():
-                parent_order.delete()
-        except Exception:
-            pass
+        # Reset item_status on the related QuoteRequestItem if no active orders remain
+        if quote_item:
+            still_ordered = quote_item.customerorderitem_set.exclude(
+                customer_order__status='cancelled'
+            ).exclude(status='cancelled').exists()
+            if not still_ordered and quote_item.item_status == 'ordered':
+                quote_item.item_status = 'quoted'
+                quote_item.save(update_fields=['item_status'])
+            # Also reset the parent QuoteRequest status if all items are no longer ordered
+            qr = quote_item.quote_request
+            if qr and qr.status == 'ordered':
+                all_items_ordered = qr.items.filter(item_status='ordered').exists()
+                if not all_items_ordered:
+                    qr.status = 'quoted'
+                    qr.save(update_fields=['status'])
         return response
 
     @action(detail=True, methods=['get', 'post'], url_path='attachments')
@@ -6093,27 +5808,13 @@ class CustomerOrderItemViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['patch'], url_path=r'attachments/(?P<att_id>\d+)/rename')
     def update_attachment_rename(self, request, pk=None, att_id=None):
-        import os
-        from django.core.files.storage import default_storage
         from .models import QuoteRequestItemAttachment
         item = self.get_object()
         qi = item.quote_item
         att = get_object_or_404(QuoteRequestItemAttachment, id=att_id, quote_item=qi)
-        new_name = request.data.get('original_filename', '').strip()
-        if new_name:
-            if att.file and att.file.name and default_storage.exists(att.file.name):
-                directory = os.path.dirname(att.file.name)
-                new_path = (directory + '/' + new_name) if directory else new_name
-                if att.file.name != new_path:
-                    try:
-                        old_abs = default_storage.path(att.file.name)
-                        new_abs = default_storage.path(new_path)
-                        if not os.path.exists(new_abs):
-                            os.rename(old_abs, new_abs)
-                            att.file.name = new_path
-                    except Exception:
-                        pass
-            att.original_filename = new_name
+        final_name, _ = _rename_filefield_on_storage(att.file, request.data.get('original_filename', ''))
+        if final_name:
+            att.original_filename = final_name
             att.save(update_fields=['original_filename', 'file'])
         file_url = request.build_absolute_uri(att.file.url) if att.file else None
         return Response({'original_filename': att.original_filename, 'file': att.file.name if att.file else None, 'file_url': file_url})
@@ -6620,12 +6321,20 @@ class WorkLogViewSet(viewsets.ModelViewSet):
         search = self.request.query_params.get('search')
         start_date = self.request.query_params.get('start_date')
         end_date = self.request.query_params.get('end_date')
+
         rfq_id = self.request.query_params.get('rfq_id')
 
-        if rfq_id:
-            qs = qs.filter(customer_order__quote_request_id=rfq_id)
         if order_id:
             qs = qs.filter(customer_order_id=order_id)
+        if rfq_id:
+            # Accept both integer PK and number/request_number slug
+            if str(rfq_id).isdigit():
+                qs = qs.filter(customer_order__quote_request_id=rfq_id)
+            else:
+                qs = qs.filter(
+                    Q(customer_order__quote_request__number=rfq_id) |
+                    Q(customer_order__quote_request__request_number=rfq_id)
+                )
         if item_id:
             qs = qs.filter(item_id=item_id)
         if user_id:
@@ -6845,19 +6554,6 @@ class ChatThreadViewSet(viewsets.ModelViewSet):
             return Response({'status': 'ok', 'id': created.id})
         return Response({'error': 'Invalid target'}, status=400)
 
-class PickupLocationViewSet(viewsets.ModelViewSet):
-    queryset = PickupLocation.objects.all().order_by('name')
-    serializer_class = PickupLocationSerializer
-    permission_classes = [permissions.IsAuthenticated]
-
-    def get_queryset(self):
-        qs = super().get_queryset()
-        active_only = self.request.query_params.get('active_only')
-        if active_only in ('1', 'true', 'True'):
-            qs = qs.filter(is_active=True)
-        return qs
-
-
 class DeliveryNoteViewSet(viewsets.ModelViewSet):
     queryset = DeliveryNote.objects.all().order_by('-created_at')
     serializer_class = DeliveryNoteSerializer
@@ -6897,12 +6593,32 @@ class DeliveryNoteViewSet(viewsets.ModelViewSet):
         from datetime import timedelta
         reference_time = dn.created_at
         limit = reference_time + timedelta(hours=48)
-        if not dn.is_confirmed and timezone.now() > limit:
-             dn.is_confirmed = True
-             dn.confirmed_at = timezone.now()
-             dn.confirmed_by_info = "Automata (48h lejárt)"
-             dn.save()
-             
+        if not dn.is_confirmed and not dn.rejection_reason and timezone.now() > limit:
+            dn.is_confirmed = True
+            dn.confirmed_at = timezone.now()
+            dn.confirmed_by_info = "Automatikusan elfogadva (48 óra eltelt)"
+            dn.save(update_fields=["is_confirmed", "confirmed_at", "confirmed_by_info"])
+            # Update CustomerOrderItem statuses
+            for dn_item in dn.items.all():
+                coi = dn_item.customer_order_item
+                if coi.status == "cancelled":
+                    continue
+                delivered_total = (
+                    DeliveryNoteItem.objects.filter(
+                        customer_order_item=coi,
+                        delivery_note__is_confirmed=True,
+                    ).aggregate(total=models.Sum("quantity"))["total"]
+                    or 0
+                )
+                if delivered_total >= coi.quantity:
+                    if coi.status != "delivered":
+                        coi.status = "delivered"
+                        coi.save()
+                else:
+                    if coi.status not in ("in_delivery", "delivered"):
+                        coi.status = "in_delivery"
+                        coi.save()
+
         return Response(DeliveryNoteSerializer(dn).data)
 
     @action(detail=True, methods=['get'], url_path='available-docs')
@@ -7049,33 +6765,10 @@ class DeliveryNoteViewSet(viewsets.ModelViewSet):
                     coi.status = 'in_delivery'
                     coi.save()
 
-        # QuoteLog az érintett RFQ-khoz + email értesítő
-        try:
-            _dn_ip = ip  # already extracted above
-            _logged_qrs = set()
-            for _dn_item in dn.items.all():
-                _qr = _dn_item.customer_order_item.customer_order.quote_request
-                if _qr and _qr.id not in _logged_qrs:
-                    QuoteLog.objects.create(
-                        quote=_qr, user=None,
-                        action=f'Szállítólevél visszaigazolva (publikus felület): {dn.delivery_note_number}',
-                        ip_address=_dn_ip or None,
-                    )
-                    _notify_internal_team(
-                        _qr,
-                        subject=f'Szállítólevél visszaigazolva – {dn.delivery_note_number}',
-                        body=(
-                            f'Az ügyfél visszaigazolta a szállítólevelet a publikus felületen keresztül.\n\n'
-                            f'Szállítólevél: {dn.delivery_note_number}\n'
-                            f'Árajánlat: {_qr.title}\n'
-                            f'Szám: {_qr.number or _qr.request_number}\n'
-                            f'IP: {_dn_ip}\n'
-                            + (f'Megjegyzés: {notes}\n' if notes else '')
-                        ),
-                    )
-                    _logged_qrs.add(_qr.id)
-        except Exception:
-            pass
+        # Safety net: explicitly resync parent order statuses
+        order_ids = set(dn.items.values_list('customer_order_item__customer_order_id', flat=True))
+        for oid in order_ids:
+            CustomerOrder.sync_status_from_items(oid)
 
         return Response({'status': 'ok'})
 
@@ -7153,35 +6846,14 @@ class DeliveryNoteViewSet(viewsets.ModelViewSet):
         y -= 0.5*cm
         p.setFont(font_name, 11)
         if dn.customer:
-            p.drawString(2*cm, y, dn.customer.name)
-            y -= 0.5*cm
-            p.setFont(font_name, 9)
-            # Full address first; if empty, try to build from components
-            addr = dn.customer.full_address or ""
-            if not addr:
-                parts = []
-                if dn.customer.postal_code or dn.customer.city:
-                    parts.append(f"{dn.customer.postal_code} {dn.customer.city}".strip())
-                if dn.customer.street_name:
-                    st = f"{dn.customer.street_name} {dn.customer.street_type or ''} {dn.customer.house_number or ''}".strip()
-                    parts.append(st)
-                if not parts and dn.customer.address:
-                    parts.append(dn.customer.address)
-                addr = ", ".join(x for x in parts if x)
-            if addr:
-                p.drawString(2*cm, y, addr)
-                y -= 0.45*cm
-            elif dn.customer.country:
-                p.drawString(2*cm, y, dn.customer.country)
-                y -= 0.45*cm
-            tax = (dn.customer.tax_number or dn.customer.group_tax_number or dn.customer.eu_tax_number or "")
-            if tax:
-                p.drawString(2*cm, y, f"Adószám: {tax}")
-                y -= 0.45*cm
+             p.drawString(2*cm, y, dn.customer.name)
+             y -= 0.5*cm
+             p.setFont(font_name, 9)
+             p.drawString(2*cm, y, dn.customer.full_address)
+             y -= 0.5*cm
         if dn.contact:
-            p.setFont(font_name, 9)
-            p.drawString(2*cm, y, f"Kapcsolattartó: {dn.contact.name}")
-            y -= 0.45*cm
+             p.drawString(2*cm, y, f"Kapcsolattartó: {dn.contact.name}")
+             y -= 0.5*cm
              
         y = height - 10*cm
         
@@ -7203,130 +6875,53 @@ class DeliveryNoteViewSet(viewsets.ModelViewSet):
         y -= 0.8*cm
         
         total_net = 0
-
-        import re as _re
-        from reportlab.pdfbase.pdfmetrics import stringWidth as _sw
-
-        def _strip_html(s):
-            s = _re.sub(r'<[^>]+>', ' ', s or '')
-            s = s.replace('&nbsp;', ' ').replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>').replace('&#39;', "'")
-            return ' '.join(s.split()).strip()
-
-        def _wrap(text, max_w_pt, fn, fs):
-            words = text.split()
-            lines, cur = [], ''
-            for w in words:
-                test = (cur + ' ' + w).strip()
-                if _sw(test, fn, fs) <= max_w_pt:
-                    cur = test
-                else:
-                    if cur:
-                        lines.append(cur)
-                    cur = w
-            if cur:
-                lines.append(cur)
-            return lines or [text[:80]]
-
-        NAME_COL_PT = 8.2 * cm  # available width for name column
-
+        
         for item in dn.items.all():
-            # --- item code ---
+            p.setFont(font_name, 9)
+            # Find item code
             item_code = ""
             try:
+                # Same logic as serializer
                 coi = item.customer_order_item
                 qi = coi.quote_item
                 if qi.material: item_code = qi.material.code
-                if qi.service:  item_code = qi.service.code
+                if qi.service: item_code = qi.service.code
             except:
-                qi = None
-
-            # --- product name (primary identifier, HTML-free) ---
-            product_name = ''
-            description_text = ''
-            try:
-                qi = item.customer_order_item.quote_item
-                product_name = (qi.item_name or '').strip()
-                if not product_name:
-                    product_name = (
-                        qi.product.name if qi.product else (
-                            qi.material.name if qi.material else (
-                                qi.manufacturing_product.name if qi.manufacturing_product else (
-                                    qi.service.name if qi.service else ''
-                                )
-                            )
-                        )
-                    )
-                # description as secondary line (stripped HTML)
-                raw_desc = _strip_html(qi.description or '')
-                if raw_desc and raw_desc[:40].lower() != product_name[:40].lower():
-                    description_text = raw_desc
-            except Exception:
                 pass
-
-            if not product_name:
-                product_name = _strip_html(item.item_name)
-
-            main_label = f"[{item_code}] {product_name}" if item_code else product_name
-
-            # --- order number ---
-            order_num = ""
-            try:
-                if item.customer_order_item and item.customer_order_item.customer_order:
-                    order_num = item.customer_order_item.customer_order.order_number or ""
-            except Exception:
-                pass
-
-            # --- wrap lines ---
-            name_lines = _wrap(main_label, NAME_COL_PT, font_name, 9)[:3]
-            desc_lines = _wrap(description_text, NAME_COL_PT, font_name, 7.5)[:4] if description_text else []
-
-            row_h = len(name_lines) * 0.48*cm + len(desc_lines) * 0.37*cm + (0.3*cm if order_num else 0) + 0.25*cm
-            if y - row_h < 4*cm:
-                p.showPage()
-                y = height - 2*cm
-                p.setFont(font_name, 9)
-
-            row_top = y
-
-            # draw name lines
-            cur_y = y
-            for line in name_lines:
-                p.setFont(font_name, 9)
-                p.drawString(2*cm, cur_y, line)
-                cur_y -= 0.48*cm
-
-            # draw description lines
-            for line in desc_lines:
-                p.setFont(font_name, 7.5)
-                p.drawString(2*cm, cur_y, line)
-                cur_y -= 0.37*cm
-
-            # draw order number
+                
+            # Item name
+            item_text = item.item_name[:40]
+            if item_code:
+                item_text = f"[{item_code}] {item_text}"
+                
+            # Order number
+            order_num = item.customer_order_item.customer_order.order_number if item.customer_order_item and item.customer_order_item.customer_order else ""
             if order_num:
-                p.setFont(font_name, 7)
-                p.drawString(2*cm, cur_y, f"Megr.: {order_num}")
-                cur_y -= 0.3*cm
-
-            # quantity / unit / price aligned to first line
-            p.setFont(font_name, 9)
-            p.drawRightString(11*cm, row_top, f"{item.quantity}")
-            p.drawString(11.5*cm, row_top, item.unit)
-
+                item_text += f" - {order_num}"
+                
+            p.drawString(2*cm, y, item_text)
+            p.drawRightString(11*cm, y, f"{item.quantity}")
+            p.drawString(11.5*cm, y, item.unit)
+            
             if show_prices:
-                p.drawRightString(15*cm, row_top, f"{item.net_unit_price:,.2f}")
+                p.drawRightString(15*cm, y, f"{item.net_unit_price:,.2f}")
                 net_line = item.quantity * item.net_unit_price
                 total_net += net_line
-                p.drawRightString(18*cm, row_top, f"{net_line:,.2f}")
-
-            y = cur_y - 0.2*cm
-
+                p.drawRightString(18*cm, y, f"{net_line:,.2f}")
+                
+            y -= 0.6*cm
+            if y < 4*cm:
+                p.showPage()
+                y = height - 2*cm
+                p.setFont(font_name, 10)
+        
         if show_prices:
              y -= 0.5*cm
              p.line(12*cm, y+0.4*cm, 18*cm, y+0.4*cm)
              p.setFont(font_name, 10)
              p.drawRightString(18*cm, y, f"Összesen (Nettó): {total_net:,.2f}")
              
-        # Contacts Footer — only contacts from the RFQs linked to this delivery note
+        # Contacts Footer — only contacts from the RFQs linked to this delivery note's items
         y = 3*cm
         p.line(2*cm, y, width-2*cm, y)
         y -= 0.5*cm
@@ -7353,7 +6948,8 @@ class DeliveryNoteViewSet(viewsets.ModelViewSet):
             c_text = c.name
             if c.phone: c_text += f" ({c.phone})"
             c_list.append(c_text)
-        p.drawString(2*cm, y, ", ".join(c_list))
+        contacts_str = ", ".join(c_list)
+        p.drawString(2*cm, y, contacts_str)
         
         p.save()
         pdf = buffer.getvalue()
@@ -7459,28 +7055,20 @@ class DeliveryNoteViewSet(viewsets.ModelViewSet):
                 # If remaining > 0 (or some small epsilon), include it
                 if remaining > 0:
                     # Get item name/desc
-                    # Priority: quote_item.item_name > product/material/service name > stripped description
-                    import re as _re
-                    def _strip_html(s):
-                        return _re.sub(r'<[^>]+>', '', s or '').replace('&nbsp;', ' ').strip()
-
+                    # CustomerOrderItem description or QuoteItem product name
                     quote_item = item.quote_item
-                    item_name = ''
-                    if quote_item and quote_item.item_name:
-                        item_name = quote_item.item_name
-                    elif quote_item:
-                        ref = (
+                    item_name = item.description
+                    if not item_name and quote_item:
+                         ref = (
                             quote_item.product.name if quote_item.product else (
                                 quote_item.material.name if quote_item.material else (
                                     quote_item.manufacturing_product.name if quote_item.manufacturing_product else (
-                                        quote_item.service.name if quote_item.service else ''
+                                        quote_item.service.name if quote_item.service else '-'
                                     )
                                 )
                             )
                         )
-                        item_name = ref
-                    if not item_name:
-                        item_name = _strip_html(item.description)
+                         item_name = ref
                         
                     result.append({
                         'order_id': order.id,
@@ -7525,6 +7113,7 @@ class DeliveryNoteViewSet(viewsets.ModelViewSet):
     def create_from_rfq_items(self, request):
         """Create a delivery note from selected QuoteRequestItem IDs (bulk action from RFQs page)."""
         rfq_item_ids = request.data.get('rfq_item_ids', [])
+        rfq_ids = request.data.get('rfq_ids', [])
         delivery_type = request.data.get('delivery_type', 'home')
         pickup_location_id = request.data.get('pickup_location_id')
         customer_id = request.data.get('customer_id')
@@ -7532,75 +7121,79 @@ class DeliveryNoteViewSet(viewsets.ModelViewSet):
         delivery_date = request.data.get('delivery_date', timezone.now().strftime('%Y-%m-%d'))
         notes = request.data.get('notes', '')
 
+        # RFQ-first adapter: allow rfq_ids payload and resolve all items from those RFQs.
+        if (not rfq_item_ids) and rfq_ids:
+            resolved_item_ids = []
+            for raw_ref in rfq_ids:
+                ref = str(raw_ref or '').strip()
+                if not ref:
+                    continue
+                qr = None
+                if ref.isdigit():
+                    qr = QuoteRequest.objects.filter(pk=int(ref)).first()
+                if not qr:
+                    qr = QuoteRequest.objects.filter(number=ref).first() or QuoteRequest.objects.filter(request_number=ref).first()
+                if not qr:
+                    continue
+                resolved_item_ids.extend(list(qr.items.values_list('id', flat=True)))
+            rfq_item_ids = list(dict.fromkeys(resolved_item_ids))
+
         if not rfq_item_ids:
-            return Response({'error': 'rfq_item_ids kötelező'}, status=400)
+            return Response({'error': 'rfq_item_ids vagy rfq_ids kötelező'}, status=400)
 
         DELIVERABLE_RFQ_STATUSES = ('ordered', 'confirmed', 'in_production', 'ready', 'in_delivery')
 
         items_data = []
-        # Track auto-created orders per RFQ to reuse within the same request
-        auto_created_orders: dict = {}
-
         for rfq_item_id in rfq_item_ids:
             try:
-                quote_item = QuoteRequestItem.objects.select_related(
-                    'quote_request', 'product', 'material', 'manufacturing_product', 'service'
-                ).get(id=rfq_item_id)
+                quote_item = QuoteRequestItem.objects.get(id=rfq_item_id)
             except QuoteRequestItem.DoesNotExist:
                 continue
 
-            cois = list(CustomerOrderItem.objects.filter(
+            cois = CustomerOrderItem.objects.filter(
                 quote_item=quote_item
-            ).exclude(customer_order__status='cancelled').exclude(status='cancelled'))
+            ).exclude(customer_order__status='cancelled').exclude(status='cancelled')
 
-            # If no CustomerOrderItem exists, auto-create one when RFQ is in a deliverable status
-            if not cois:
+            # Ha nincs CustomerOrderItem de az RFQ szállítható státuszban van,
+            # automatikusan létrehozunk egy CustomerOrder + CustomerOrderItem-et
+            if not cois.exists():
                 qr = quote_item.quote_request
                 if qr.status not in DELIVERABLE_RFQ_STATUSES:
                     continue
-                # Reuse or create CustomerOrder for this RFQ
-                if qr.id in auto_created_orders:
-                    order = auto_created_orders[qr.id]
+                today = timezone.now().date()
+                date_str = today.strftime('%Y%m%d')
+                last_order = CustomerOrder.objects.filter(
+                    order_number__startswith=f'O{date_str}'
+                ).order_by('-order_number').first()
+                if last_order:
+                    last_seq = int(last_order.order_number[len(f'O{date_str}'):])
+                    new_seq = last_seq + 1
                 else:
-                    existing = CustomerOrder.objects.filter(
-                        quote_request=qr
-                    ).exclude(status='cancelled').first()
-                    if existing:
-                        order = existing
-                    else:
-                        rfq_num = qr.number or qr.request_number or f"QR{qr.id}"
-                        existing_count = CustomerOrder.objects.filter(quote_request=qr).count()
-                        order_number = rfq_num if existing_count == 0 else f"{rfq_num}-{existing_count + 1}"
-                        while CustomerOrder.objects.filter(order_number=order_number).exists():
-                            existing_count += 1
-                            order_number = f"{rfq_num}-{existing_count}"
-                        order = CustomerOrder.objects.create(
-                            quote_request=qr,
-                            order_number=order_number,
-                            status='new',
-                            created_by=request.user if request.user.is_authenticated else None,
-                        )
-                        try:
-                            QuoteLog.objects.create(
-                                quote=qr,
-                                user=request.user if request.user.is_authenticated else None,
-                                action=f'Szállításból auto-létrehozott megrendelés: {order.order_number}',
-                            )
-                        except Exception:
-                            pass
-                    auto_created_orders[qr.id] = order
-                # Create the COI
-                coi = CustomerOrderItem.objects.create(
-                    customer_order=order,
-                    quote_item=quote_item,
-                    quantity=quote_item.quantity or 1,
-                    unit=quote_item.unit or 'db',
-                    net_unit_price=quote_item.net_unit_price or 0,
-                    vat_rate=quote_item.vat_rate or 27,
-                    discount_percent=quote_item.discount_percent or 0,
-                    description=quote_item.description or '',
+                    new_seq = 1
+                order_number_auto = f'O{date_str}{new_seq:02d}'
+                auto_order = CustomerOrder.objects.create(
+                    quote_request=qr,
+                    order_number=order_number_auto,
+                    status='ready',
+                    created_by=request.user,
                 )
-                cois = [coi]
+                auto_coi = CustomerOrderItem.objects.create(
+                    customer_order=auto_order,
+                    quote_item=quote_item,
+                    quantity=quote_item.quantity,
+                    unit=quote_item.unit,
+                    net_unit_price=quote_item.net_unit_price,
+                    vat_rate=quote_item.vat_rate,
+                    discount_percent=quote_item.discount_percent,
+                    description=quote_item.description or quote_item.item_name or '',
+                    status='ready',
+                )
+                QuoteLog.objects.create(
+                    quote=qr,
+                    user=request.user,
+                    action=f'Automatikus megrendelés létrehozva szállításhoz: {order_number_auto}',
+                )
+                cois = CustomerOrderItem.objects.filter(pk=auto_coi.pk)
 
             for coi in cois:
                 delivered = DeliveryNoteItem.objects.filter(
@@ -7627,7 +7220,7 @@ class DeliveryNoteViewSet(viewsets.ModelViewSet):
                     'customer_order_item': coi.id,
                     'quantity': remaining,
                     'net_unit_price': float(coi.net_unit_price),
-                    'item_name': item_name,
+                    'item_name': item_name[:255] if item_name else '',
                     'unit': coi.unit,
                 })
 
@@ -7652,6 +7245,19 @@ class DeliveryNoteViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(data=payload)
         serializer.is_valid(raise_exception=True)
         self.perform_create(serializer)
+
+        try:
+            created_note = serializer.instance
+            qr_ids = set(
+                created_note.items.values_list('customer_order_item__customer_order__quote_request_id', flat=True)
+            )
+            for qr_id in qr_ids:
+                qr_obj = QuoteRequest.objects.filter(id=qr_id).first()
+                if qr_obj:
+                    _sync_rfq_primary_snapshot(qr_obj)
+        except Exception:
+            pass
+
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=['post'])
@@ -7683,6 +7289,22 @@ class DeliveryNoteViewSet(viewsets.ModelViewSet):
                 if coi.status not in ('in_delivery', 'delivered'):
                     coi.status = 'in_delivery'
                     coi.save()
+
+        # Safety net: explicitly resync parent order statuses
+        order_ids = set(note.items.values_list('customer_order_item__customer_order_id', flat=True))
+        for oid in order_ids:
+            CustomerOrder.sync_status_from_items(oid)
+
+        try:
+            qr_ids = set(
+                note.items.values_list('customer_order_item__customer_order__quote_request_id', flat=True)
+            )
+            for qr_id in qr_ids:
+                qr_obj = QuoteRequest.objects.filter(id=qr_id).first()
+                if qr_obj:
+                    _sync_rfq_primary_snapshot(qr_obj)
+        except Exception:
+            pass
 
         return Response({'status': 'ok'})
 
@@ -7776,16 +7398,6 @@ class DeliveryNoteViewSet(viewsets.ModelViewSet):
             },
             **extra_context,
         }
-
-        # Add pickup location context
-        if dn.delivery_type == 'pickup' and dn.pickup_location:
-            ctx['pickup_location_name'] = dn.pickup_location.name
-            ctx['pickup_location_address'] = dn.pickup_location.address
-            ctx['pickup_location_hours'] = dn.pickup_location.hours_display()
-        else:
-            ctx['pickup_location_name'] = ''
-            ctx['pickup_location_address'] = ''
-            ctx['pickup_location_hours'] = ''
         
         def render_tpl(content, context):
             if not content: return ""
@@ -8080,16 +7692,6 @@ class DeliveryNoteViewSet(viewsets.ModelViewSet):
             },
             **extra_context,
         }
-
-        # Add pickup location context
-        if dn.delivery_type == 'pickup' and dn.pickup_location:
-            ctx['pickup_location_name'] = dn.pickup_location.name
-            ctx['pickup_location_address'] = dn.pickup_location.address
-            ctx['pickup_location_hours'] = dn.pickup_location.hours_display()
-        else:
-            ctx['pickup_location_name'] = ''
-            ctx['pickup_location_address'] = ''
-            ctx['pickup_location_hours'] = ''
         
         def render_tpl(content, context):
             if not content: return ""
@@ -8162,6 +7764,12 @@ class DeliveryNoteItemViewSet(viewsets.ModelViewSet):
             )
 
         return qs
+
+
+class PickupLocationViewSet(viewsets.ModelViewSet):
+    queryset = PickupLocation.objects.all().order_by('-is_default', 'name')
+    serializer_class = PickupLocationSerializer
+    permission_classes = [permissions.IsAuthenticated]
 
 class ApprovalRequestViewSet(viewsets.ModelViewSet):
     from .models import ApprovalRequest

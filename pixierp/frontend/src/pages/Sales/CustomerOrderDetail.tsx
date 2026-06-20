@@ -1060,7 +1060,7 @@ const CustomerOrderDetail: React.FC = () => {
 
       </Card>
       <Modal
-        title={`Munkanapló - Összesen: ${(workLogs.reduce((acc, log) => acc + (log.duration_seconds || 0), 0) / 60).toFixed(1)} perc`}
+        title={(() => { const totalSec = workLogs.reduce((acc, log) => acc + (log.duration_seconds || 0), 0); const h = Math.floor(totalSec / 3600); const m = Math.floor((totalSec % 3600) / 60); return `Munkanapló - Összesen: ${h}:${String(m).padStart(2,'0')} (${(totalSec/3600).toFixed(2)} h)`; })()}
         open={logModalOpen}
         onCancel={() => setLogModalOpen(false)}
         footer={[<Button key="close" onClick={() => setLogModalOpen(false)}>Bezárás</Button>]}
@@ -1077,7 +1077,7 @@ const CustomerOrderDetail: React.FC = () => {
             { title: 'Folyamat', dataIndex: 'workflow_name' },
             { title: 'Kezdet', dataIndex: 'started_at', render: (val) => new Date(val).toLocaleString('hu-HU') },
             { title: 'Vége', dataIndex: 'ended_at', render: (val) => val ? new Date(val).toLocaleString('hu-HU') : 'Folyamatban' },
-            { title: 'Időtartam (perc)', dataIndex: 'duration_seconds', align: 'right', render: (val) => (val/60).toFixed(1) },
+            { title: 'Időtartam', dataIndex: 'duration_seconds', align: 'right', render: (val) => { const s = val || 0; const h = Math.floor(s / 3600); const m = Math.floor((s % 3600) / 60); return `${h}:${String(m).padStart(2,'0')} (${(s/3600).toFixed(2)} h)`; } },
           ]}
         />
       </Modal>

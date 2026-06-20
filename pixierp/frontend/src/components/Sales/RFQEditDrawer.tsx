@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Modal, Form, Row, Col, Input, Button, Select, DatePicker, Space, Tag, Spin, message, Checkbox, Tooltip,
 } from 'antd';
@@ -48,6 +48,34 @@ const RFQEditDrawer: React.FC<Props> = ({ open, rfqId, itemId, onClose, onDataCh
     const base = p.full_name || nameParts || p.name || p.email || String(p.id);
     return base;
   };
+
+  const editItemModalInitialSelection = useMemo(() => {
+    if (!editContext?.item) return null;
+    return {
+      item_type: editContext.item.item_type,
+      ref_id: (editContext.item.product || editContext.item.manufacturing_product || editContext.item.service) as number,
+      name: editContext.item.product_name || editContext.item.manufacturing_product_name || editContext.item.service_name || editContext.item.item_name,
+      code: editContext.item.product_code || editContext.item.manufacturing_product_code || editContext.item.service_code || undefined,
+    };
+  }, [editContext?.item]);
+
+  const editItemModalInitialValues = useMemo(() => {
+    if (!editContext?.item) return undefined;
+    return {
+      quantity: Number(editContext.item.quantity),
+      unit: editContext.item.unit,
+      net_unit_price: Number(editContext.item.net_unit_price),
+      vat_rate: Number(editContext.item.vat_rate),
+      description: editContext.item.description,
+      internal_description: editContext.item.internal_description || '',
+      discount_percent: Number(editContext.item.discount_percent || 0),
+      discount_amount: Number(editContext.item.discount_amount || 0),
+      is_rate_locked: !!editContext.item.is_rate_locked,
+      locked_exchange_rate: editContext.item.locked_exchange_rate != null ? Number(editContext.item.locked_exchange_rate) : null,
+      quote_number: editContext.item.quote_number || null,
+      cost_items_data: editContext.item.cost_items_data || [],
+    };
+  }, [editContext?.item]);
 
   const load = useCallback(async () => {
     if (!rfqId) return;
@@ -152,9 +180,13 @@ const RFQEditDrawer: React.FC<Props> = ({ open, rfqId, itemId, onClose, onDataCh
         quantity: payload.quantity, unit: payload.unit,
         net_unit_price: payload.net_unit_price, vat_rate: payload.vat_rate,
         description: payload.description,
+        internal_description: (payload as any).internal_description ?? undefined,
         discount_percent: (payload as any).discount_percent,
         discount_amount: (payload as any).discount_amount,
         formulas: (payload as any).formulas || {},
+        is_rate_locked: !!(payload as any).is_rate_locked,
+        locked_exchange_rate: (payload as any).is_rate_locked ? ((payload as any).locked_exchange_rate ?? null) : null,
+        cost_items_data: (payload as any).cost_items_data ?? undefined,
       };
       if (payload.item_type === 'product') { patch.item_type = 'product'; patch.product = payload.ref_id; patch.manufacturing_product = null; patch.service = null; }
       else if (payload.item_type === 'manufacturing') { patch.item_type = 'manufacturing'; patch.manufacturing_product = payload.ref_id; patch.product = null; patch.service = null; }
@@ -371,20 +403,8 @@ const RFQEditDrawer: React.FC<Props> = ({ open, rfqId, itemId, onClose, onDataCh
                   onAdd={async (p) => onEditSelected(p)}
                   rfqId={rfqId ?? undefined}
                   rfqCurrency={activeCurrency}
-                  initialSelection={{
-                    item_type: editContext.item.item_type,
-                    ref_id: (editContext.item.product || editContext.item.manufacturing_product || editContext.item.service) as number,
-                    name: editContext.item.product_name || editContext.item.manufacturing_product_name || editContext.item.service_name,
-                  }}
-                  initialValues={{
-                    quantity: Number(editContext.item.quantity),
-                    unit: editContext.item.unit,
-                    net_unit_price: Number(editContext.item.net_unit_price),
-                    vat_rate: Number(editContext.item.vat_rate),
-                    description: editContext.item.description,
-                    discount_percent: Number(editContext.item.discount_percent || 0),
-                    discount_amount: Number(editContext.item.discount_amount || 0),
-                  }}
+                  initialSelection={editItemModalInitialSelection || undefined}
+                  initialValues={editItemModalInitialValues}
                   initialFormulas={editContext.item.formulas || {}}
                   quoteItemId={editContext.item.id}
                 />

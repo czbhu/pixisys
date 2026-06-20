@@ -1,19 +1,19 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { Card, Tag, Table, Row, Col, Form, Select, Input, InputNumber, Button, message, Modal, Spin, Space, List, DatePicker, Checkbox, Alert, Popover, Divider, Statistic, AutoComplete, Tooltip } from 'antd';
+import { Card, Tag, Table, Row, Col, Form, Select, Input, InputNumber, Button, message, Modal, Spin, Space, List, DatePicker, Checkbox, Alert, Popover, Divider, Statistic, AutoComplete, Tooltip, Steps, Collapse, Switch } from 'antd';
 // @ts-ignore
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
 import { salesService } from '../../services/salesService';
 import api from '../../services/api';
 import { manufacturingService } from '../../services/manufacturingService';
+import { useClipboardImagePaste } from '../../hooks/useClipboardImagePaste';
 import { ItemSelectorModal, SelectedItemPayload } from '../../components/Sales/ItemSelectorModal';
 import { ItemsTable } from '../../components/Sales/ItemsTable';
 import { Upload, Popconfirm } from 'antd';
-import type { UploadFile } from 'antd/es/upload/interface';
 import { crmService } from '../../services/crmService';
 import dayjs from 'dayjs';
-import { LeftOutlined, DeleteOutlined, UserAddOutlined, UserSwitchOutlined, LogoutOutlined, TeamOutlined, PlusOutlined, MessageOutlined, ClockCircleOutlined } from '@ant-design/icons';
+import { LeftOutlined, DeleteOutlined, UserAddOutlined, UserSwitchOutlined, LogoutOutlined, TeamOutlined, PlusOutlined, MessageOutlined, ClockCircleOutlined, FileDoneOutlined, CheckCircleOutlined, RocketOutlined, CheckOutlined, CarOutlined, SmileOutlined, FileTextOutlined, HistoryOutlined, DownOutlined, EditOutlined, PaperClipOutlined } from '@ant-design/icons';
 import { useAuth } from '../../contexts/AuthContext';
 import { postalCodeService } from '../../services/postalCodeService';
 import { getCountries } from '../../services/countryService';
@@ -44,6 +44,7 @@ const RFQDetail: React.FC = () => {
   const isDirectItemEditMode = Boolean(searchParams.get('editItemId'));
   const editItemIdHandledRef = useRef(false);
   const autoFirstItemRef = useRef(false);
+  const rfqNumericIdRef = useRef<number | null>(null); // resolved after first load
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [rfq, setRfq] = useState<any>();
@@ -69,8 +70,13 @@ const RFQDetail: React.FC = () => {
   const [selectorType, setSelectorType] = useState<'product' | 'manufacturing' | 'service'>('product');
   const [editContext, setEditContext] = useState<null | { item: any }>(null);
   const itemSaveRef = useRef<{ save: (keepOpen: boolean) => Promise<void> } | null>(null);
-  const [rfqFiles, setRfqFiles] = useState<UploadFile<any>[]>([]);
+  const [manufacturingFiles, setManufacturingFiles] = useState<any[]>([]);
   const [rfqPendingRemark, setRfqPendingRemark] = useState<string>('');
+  const [manufacturingRenameId, setManufacturingRenameId] = useState<number | null>(null);
+  const [manufacturingRenameVal, setManufacturingRenameVal] = useState('');
+  const [manufacturingExistingRemarks, setManufacturingExistingRemarks] = useState<Record<number, string>>({});
+  const [manufacturingUploading, setManufacturingUploading] = useState(0);
+  const [manufacturingPanelHovered, setManufacturingPanelHovered] = useState(false);
   const [sendOpen, setSendOpen] = useState(false);
   const [sendForm] = Form.useForm();
   const [preview, setPreview] = useState<{ subject: string; body: string; is_html: boolean } | null>(null);
@@ -99,6 +105,39 @@ const RFQDetail: React.FC = () => {
   
   const [emailTemplates, setEmailTemplates] = useState<any[]>([]);
   const [signatureTemplates, setSignatureTemplates] = useState<any[]>([]);
+  const manufacturingRemarkRef = useRef('');
+
+  const editItemModalInitialSelection = useMemo(() => {
+    if (!editContext?.item) return null;
+    return {
+      item_type: editContext.item.item_type,
+      ref_id: (editContext.item.product || editContext.item.manufacturing_product || editContext.item.service) as number,
+      name: editContext.item.product_name || editContext.item.manufacturing_product_name || editContext.item.service_name || editContext.item.item_name,
+      code: editContext.item.product_code || editContext.item.manufacturing_product_code || editContext.item.service_code || undefined,
+    };
+  }, [editContext?.item]);
+
+  const editItemModalInitialValues = useMemo(() => {
+    if (!editContext?.item) return undefined;
+    return {
+      quantity: Number(editContext.item.quantity),
+      unit: editContext.item.unit,
+      net_unit_price: Number(editContext.item.net_unit_price),
+      vat_rate: Number(editContext.item.vat_rate),
+      description: editContext.item.description,
+      internal_description: editContext.item.internal_description || '',
+      discount_percent: Number(editContext.item.discount_percent || 0),
+      discount_amount: Number(editContext.item.discount_amount || 0),
+      is_rate_locked: !!editContext.item.is_rate_locked,
+      locked_exchange_rate: editContext.item.locked_exchange_rate != null ? Number(editContext.item.locked_exchange_rate) : null,
+      quote_number: editContext.item.quote_number || null,
+      cost_items_data: editContext.item.cost_items_data || [],
+    };
+  }, [editContext?.item]);
+
+  useEffect(() => {
+    manufacturingRemarkRef.current = rfqPendingRemark;
+  }, [rfqPendingRemark]);
 
   const notifyRfqListUpdated = useCallback(() => {
     try {
@@ -132,8 +171,9 @@ const RFQDetail: React.FC = () => {
    *  Used after item add/edit/delete/reorder so the cost table updates in place. */
   const refreshItems = useCallback(async () => {
     if (!id) return;
+    const nid = rfqNumericIdRef.current || id;
     try {
-      const rfqRes = await salesService.getQuoteRequest(Number(id));
+      const rfqRes = await salesService.getQuoteRequest(nid as any);
       setRfq((prev: any) => prev ? { ...prev, items: rfqRes.items } : rfqRes);
     } catch {}
   }, [id]);
@@ -142,12 +182,26 @@ const RFQDetail: React.FC = () => {
     if (!id) return;
     setLoading(true);
     try {
-      const [rfqRes, projRes, currRes] = await Promise.all([
-        salesService.getQuoteRequest(Number(id)),
-        manufacturingService.getProjects(),
-        manufacturingService.getCurrencies(),
-      ]);
+      // Always resolve RFQ first; invited users may not have permission for
+      // auxiliary endpoints (projects/currencies), but must still see the RFQ.
+      const rfqRes = await salesService.getQuoteRequest(id as any);
       setRfq(rfqRes);
+      if (rfqRes?.id) rfqNumericIdRef.current = rfqRes.id;
+
+      // Non-critical lookups: keep page functional even if these fail.
+      let projRes: any[] = [];
+      let currRes: any[] = [];
+      try {
+        const [projMaybe, currMaybe] = await Promise.all([
+          manufacturingService.getProjects(),
+          manufacturingService.getCurrencies(),
+        ]);
+        projRes = Array.isArray(projMaybe) ? projMaybe : [];
+        currRes = Array.isArray(currMaybe) ? currMaybe : [];
+      } catch {
+        projRes = [];
+        currRes = [];
+      }
       // Do not block initial render with full companies list.
       // Keep current company (if any) so selected label can render immediately.
       if (rfqRes?.company?.id) {
@@ -214,20 +268,79 @@ const RFQDetail: React.FC = () => {
           internal_description: toQuillHtml(rfqRes.internal_description),
           currency_code: rfqRes.currency_code || 'HUF',
           partial_order_allowed: rfqRes.partial_order_allowed ?? true,
+          is_manufacturable: !!rfqRes.is_manufacturable,
         });
       } catch {}
       try {
-        const atts = await salesService.getQuoteRequestAttachments(Number(id));
-        // map to UploadFile minimal
-        setRfqFiles((atts || []).map((a: any) => ({ uid: String(a.id), name: a.file?.split('/').pop() || `#${a.id}`, status: 'done', url: a.file_url || a.file, response: a })));
+        const atts = await salesService.getQuoteRequestManufacturingAttachments((rfqRes?.id || id) as any);
+        setManufacturingFiles(Array.isArray(atts) ? atts : (atts?.results || []));
       } catch {}
-  setProjects(projRes);
+      // Load work logs and activity logs inline
+      try {
+        const wlData = await salesService.getWorkLogsByRfq((rfqRes?.id || id) as any);
+        setWorkLogs(Array.isArray(wlData) ? wlData : (wlData?.results || []));
+      } catch {}
+      try {
+        const logData = await salesService.getQuoteRequestLogs(id as any);
+        setLogs(logData.results ?? logData);
+      } catch {}
+      setProjects(projRes);
     } catch (e) {
-      // noop; errors surfaced via UI interactions
+      setRfq(null);
     } finally {
       setLoading(false);
     }
   }, [id]);
+
+  const refreshManufacturingFiles = useCallback(async () => {
+    if (!id) return;
+    try {
+      const atts = await salesService.getQuoteRequestManufacturingAttachments((rfqNumericIdRef.current || id) as any);
+      setManufacturingFiles(Array.isArray(atts) ? atts : (atts?.results || []));
+    } catch {}
+  }, [id]);
+
+  const manufacturingNameWithExt = useCallback((att: any): string => {
+    const name = att.original_filename || '';
+    if (!name) return att.file?.split('/').pop() || '';
+    if (name.includes('.')) return name;
+    const filePath = att.file_url || att.file || '';
+    const base = filePath.split('/').pop()?.split('?')[0] || '';
+    const dotIdx = base.lastIndexOf('.');
+    return dotIdx !== -1 ? name + base.slice(dotIdx) : name;
+  }, []);
+
+  const uploadManufacturingFile = useCallback(async (file: File) => {
+    const targetId = (rfq?.id || rfqNumericIdRef.current || id) as any;
+    if (!targetId) return;
+    setManufacturingUploading((prev) => prev + 1);
+    try {
+      await salesService.uploadQuoteRequestManufacturingAttachment(targetId, file, manufacturingRemarkRef.current || undefined);
+      message.success(`Feltöltve: ${file.name}`);
+      setRfqPendingRemark('');
+      await refreshManufacturingFiles();
+    } catch {
+      message.error(`Nem sikerült feltölteni: ${file.name}`);
+      throw new Error('Feltöltési hiba');
+    } finally {
+      setManufacturingUploading((prev) => Math.max(0, prev - 1));
+    }
+  }, [id, rfq?.id, refreshManufacturingFiles]);
+
+  useClipboardImagePaste((file: File) => { void uploadManufacturingFile(file); }, manufacturingPanelHovered);
+
+  const openManufacturingAttachmentPreview = useCallback((att: any) => {
+    const url = att.file_url || att.file || null;
+    if (!url) return;
+    const title = att.original_filename || att.file?.split('/').pop() || `#${att.id}`;
+    if (isPdf(url)) {
+      openPdfPreview(url);
+      return;
+    }
+    setFilePreviewTitle(title);
+    setFilePreviewUrl(url);
+    setFilePreviewOpen(true);
+  }, []);
 
   useEffect(() => {
     load();
@@ -343,20 +456,20 @@ const RFQDetail: React.FC = () => {
 
   const statusTag = (status: string) => {
     const color: Record<string, any> = {
-      new: 'blue',
-      in_progress: 'orange',
+      new: 'blue', in_progress: 'orange',
       quoted: isDemand(rfq) ? 'default' : 'cyan',
-      accepted: 'green',
-      rejected: 'red',
-      expired: 'default',
+      accepted: 'green', rejected: 'red', expired: 'default',
+      ordered: 'purple', confirmed: 'geekblue', in_production: 'volcano',
+      in_design: 'magenta', pending_customer_approval: 'gold', pending_internal_approval: 'volcano',
+      ready: 'lime', in_delivery: 'gold', delivered: 'cyan', invoiced: 'green',
     };
     const text: Record<string, string> = {
-      new: 'Új',
-      in_progress: 'Folyamatban',
+      new: 'Új', in_progress: 'Folyamatban',
       quoted: isDemand(rfq) ? 'Zárt' : 'Árazva',
-      accepted: 'Elfogadva',
-      rejected: 'Elutasítva',
-      expired: 'Lejárt',
+      accepted: 'Elfogadva', rejected: 'Elutasítva', expired: 'Lejárt',
+      ordered: 'Megrendelve', confirmed: 'Megerősítve', in_production: 'Gyártásban',
+      in_design: 'Tervezés alatt', pending_customer_approval: 'Ügyfél jóváhagyásra vár', pending_internal_approval: 'Belső jóváhagyásra vár',
+      ready: 'Kész', in_delivery: 'Szállítás alatt', delivered: 'Kiszállítva', invoiced: 'Kiszámlázva',
     };
     return <Tag color={color[status] || 'default'}>{text[status] || status}</Tag>;
   };
@@ -365,7 +478,7 @@ const RFQDetail: React.FC = () => {
 
   const onAddSelected = async (payload: SelectedItemPayload) => {
     if (!id) return;
-    const qid = Number(id);
+    const qid = id as any;
     let createdItem: any = null;
     if (payload.item_type === 'product') {
       // Send material_id instead of product_id for warehouse materials
@@ -444,7 +557,7 @@ const RFQDetail: React.FC = () => {
       updateData.company_id = companyId;
     }
 
-    await salesService.updateQuoteRequestBasic(Number(id), updateData);
+    await salesService.updateQuoteRequestBasic(id as any, updateData);
     setLastSavedAt(dayjs());
   };
 
@@ -488,7 +601,7 @@ const RFQDetail: React.FC = () => {
       const newCurrCode: string | undefined = (payload as any)._sellCurrencyCode;
       if (newCurrCode) {
         formBasic.setFieldsValue({ currency_code: newCurrCode });
-        await salesService.updateQuoteRequestBasic(Number(id), { currency_code: newCurrCode });
+        await salesService.updateQuoteRequestBasic(id as any, { currency_code: newCurrCode });
       }
 
       if (isDirectItemEditMode) {
@@ -548,7 +661,7 @@ const RFQDetail: React.FC = () => {
 
   const openLogs = async () => {
     if (!id) return;
-    const data = await salesService.getQuoteRequestLogs(Number(id));
+    const data = await salesService.getQuoteRequestLogs(id as any);
     setLogs(data.results ?? data);
     setLogsOpen(true);
   };
@@ -568,565 +681,739 @@ const RFQDetail: React.FC = () => {
   const isDemandOpen = isDemand(rfq) && (rfq.status === 'new' || rfq.status === 'in_progress');
   const isDemandClosed = isDemand(rfq) && rfq.status === 'quoted';
 
+  // Lifecycle step index
+  const statusStepMap: Record<string, number> = {
+    new: 0, in_progress: 0, quoted: 1, accepted: 2, ordered: 3, confirmed: 4,
+    in_design: 5, pending_customer_approval: 6, pending_internal_approval: 7,
+    in_production: 8, ready: 9, in_delivery: 10, delivered: 11, invoiced: 12,
+  };
+  const currentStep = statusStepMap[rfq.status] ?? 0;
+
+  // Clickable steps: map step index → target status
+  const stepIndexToStatus: Record<number, string> = {
+    0: 'new', 1: 'quoted', 2: 'accepted', 3: 'ordered', 4: 'confirmed',
+    5: 'in_design', 6: 'pending_customer_approval', 7: 'pending_internal_approval',
+    8: 'in_production', 9: 'ready', 10: 'in_delivery', 11: 'delivered', 12: 'invoiced',
+  };
+  const stepStatusLabel: Record<string, string> = {
+    new: 'Ajánlat', quoted: 'Kiküldve', accepted: 'Elfogadva', ordered: 'Megrendelve',
+    confirmed: 'Megerősítve', in_design: 'Tervezés alatt', pending_customer_approval: 'Ügyfél jóváhagyásra vár', pending_internal_approval: 'Belső jóváhagyásra vár',
+    in_production: 'Gyártásban', ready: 'Kész',
+    in_delivery: 'Szállítás alatt', delivered: 'Kiszállítva', invoiced: 'Kiszámlázva',
+  };
+  const handleStepClick = (stepIdx: number) => {
+    const targetStatus = stepIndexToStatus[stepIdx];
+    if (!targetStatus || targetStatus === rfq.status) return;
+    const label = stepStatusLabel[targetStatus] || targetStatus;
+    Modal.confirm({
+      title: 'Státusz módosítás',
+      content: `Biztosan módosítod a státuszt: "${label}"?`,
+      okText: 'Igen',
+      cancelText: 'Mégse',
+      onOk: async () => {
+        try {
+          await salesService.setQuoteRequestStatus(id as any, targetStatus);
+          message.success(`Státusz: ${label}`);
+          load();
+        } catch { message.error('Nem sikerült a státuszváltás'); }
+      },
+    });
+  };
+
+  const manufacturableMarkedBy = (rfq?.manufacturable_marked_by_name || '').trim();
+  const manufacturableMarkedAtLabel = rfq?.manufacturable_marked_at
+    ? new Date(rfq.manufacturable_marked_at).toLocaleString('hu-HU', { dateStyle: 'short', timeStyle: 'short' })
+    : '';
+  const manufacturableMarkedInfo = [manufacturableMarkedBy, manufacturableMarkedAtLabel].filter(Boolean).join(' • ');
+
+  const renderLogAction = (action: string, row: any) => {
+    const changes: Record<string, { old: any; new: any }> = row?.meta?.changes || {};
+    const entries = Object.entries(changes);
+    if (entries.length === 0) return action;
+
+    const summary = entries
+      .slice(0, 3)
+      .map(([field, value]) => `${field}: ${String(value?.old) || '–'} → ${String(value?.new) || '–'}`)
+      .join('; ');
+    const tooltipContent = (
+      <div>
+        {entries.map(([field, value]) => (
+          <div key={field}>
+            <b>{field}:</b> {String(value?.old) || '–'} → {String(value?.new) || '–'}
+          </div>
+        ))}
+      </div>
+    );
+
+    return (
+      <Tooltip title={tooltipContent}>
+        <span style={{ borderBottom: '1px dashed #aaa', cursor: 'help' }}>
+          {action}: {summary}
+        </span>
+      </Tooltip>
+    );
+  };
+
   return (
     <div>
-      <Card title={<Space>
-        <Button icon={<LeftOutlined />} onClick={() => navigate('/sales/rfqs')}>Vissza</Button>
-        <span>{isDemand(rfq) ? 'Ajánlat' : 'Árajánlat'} {rfq.number || rfq.request_number}</span>
-      </Space>} extra={<Space>
-        <Button icon={<MessageOutlined />} onClick={() => setChatOpen(true)}>Chat</Button>
-  <Button onClick={() => setActivityLogOpen(true)}>Napló</Button>
-  <Tooltip title="Munkaórák (összes)">
-    <Button
-      icon={<ClockCircleOutlined />}
-      onClick={async () => {
-        setWorkHoursItemId(null);
-        setWorkHoursItemName('');
-        setCheckedWorkLogKeys([]);
-        setWorkLogs([]);
-        setWorkHoursOpen(true);
-        setWorkHoursLoading(true);
-        try {
-          const data = await salesService.getWorkLogsByRfq(Number(id));
-          const results = Array.isArray(data) ? data : (data?.results || []);
-          setWorkLogs(results);
-          const wfs = await salesService.getFrequentWorkflows();
-          setFrequentWorkflows(Array.isArray(wfs) ? wfs : []);
-        } catch { message.error('Nem sikerült betölteni a munkaórákat'); }
-        finally { setWorkHoursLoading(false); }
-      }}
-    >
-      {(() => {
-        const totalSec = workLogs.reduce((s: number, l: any) => s + (l.duration_seconds || 0), 0);
-        const h = Math.floor(totalSec / 3600);
-        const m = Math.floor((totalSec % 3600) / 60);
-        return totalSec > 0 ? ` ${h}h ${m}m` : '';
-      })()}
-    </Button>
-  </Tooltip>
-        {isDemandOpen && (
-          <Button onClick={async () => { await salesService.setQuoteRequestStatus(Number(id), 'quoted'); message.success('Lezárva'); load(); }}>Lezár</Button>
-        )}
-        {isDemandClosed && (
-          <Button onClick={async () => { await salesService.setQuoteRequestStatus(Number(id), 'in_progress'); message.success('Újranyitva'); load(); }}>Újra nyit</Button>
-        )}
-        {!isDemand(rfq) && (
-          <>
-            <Button onClick={async () => { await salesService.setQuoteRequestStatus(Number(id), 'accepted'); message.success('Elfogadva'); load(); }}>Elfogad</Button>
-            <Button onClick={async () => { await salesService.setQuoteRequestStatus(Number(id), 'rejected'); message.success('Elutasítva'); load(); }}>Elutasít</Button>
-            <Button onClick={async () => { await salesService.setQuoteRequestStatus(Number(id), 'expired'); message.success('Lejárt'); load(); }}>Lejártat</Button>
-          </>
-        )}
-      </Space>}>
-        <div style={{ marginBottom: 8 }}>
-          <Space>
-            <Button icon={<DeleteOutlined />} danger onClick={async () => {
-              try { await salesService.softDeleteQuoteRequest(Number(id)); message.success('Megjelölve töröltként'); navigate('/sales/rfqs'); }
-              catch { message.error('Nem sikerült törölni'); }
-            }}>Törlés</Button>
-            {rfq?.assignee_names ? (<span style={{ color: '#888' }}><TeamOutlined /> {rfq.assignee_names}</span>) : null}
+      <Card
+        bodyStyle={{ padding: '12px 16px' }}
+        title={
+          <Space size={8}>
+            <Button size="small" icon={<LeftOutlined />} onClick={() => navigate('/sales/rfqs')}>Vissza</Button>
+            <span style={{ fontWeight: 600 }}>Gyártható: {rfq?.is_manufacturable ? 'IGEN' : 'NEM'}</span>
+            <Switch
+              size="small"
+              checked={!!rfq?.is_manufacturable}
+              checkedChildren="IGEN"
+              unCheckedChildren="NEM"
+              onChange={async (checked) => {
+                // Optimistic update — frissítés azonnal, mielőtt az API hívás befejezne
+                setRfq((prev: any) => prev ? { ...prev, is_manufacturable: checked } : prev);
+                formBasic.setFieldValue('is_manufacturable', checked);
+                try {
+                  const updated = await salesService.updateQuoteRequestBasic((rfq?.id || id) as any, { is_manufacturable: checked });
+                  // Szerver válaszból frissítjük a marked_by / marked_at mezőket
+                  setRfq((prev: any) => prev ? { ...prev, ...(updated || {}) } : (updated || prev));
+                } catch {
+                  // Rollback
+                  setRfq((prev: any) => prev ? { ...prev, is_manufacturable: !checked } : prev);
+                  formBasic.setFieldValue('is_manufacturable', !checked);
+                  message.error('Nem sikerült menteni a gyártható állapotot');
+                }
+              }}
+            />
+            <Tag color={rfq?.is_manufacturable ? 'green' : 'red'}>{rfq?.is_manufacturable ? 'IGEN' : 'NEM'}</Tag>
+            {rfq?.is_manufacturable && manufacturableMarkedInfo && <span style={{ color: '#666', fontSize: 12 }}>Beállította: {manufacturableMarkedInfo}</span>}
+            <span style={{ color: '#666' }}>{rfq.number || rfq.request_number}</span>
+            {statusTag(rfq.status)}
           </Space>
+        }
+        extra={
+          <Space size={6} wrap>
+            <Button size="small" icon={<MessageOutlined />} onClick={() => setChatOpen(true)}>Chat</Button>
+            <Button size="small" icon={<HistoryOutlined />} onClick={() => setActivityLogOpen(true)}>Napló</Button>
+            <Tooltip title="Munkaórák (összes)">
+              <Button size="small" icon={<ClockCircleOutlined />} onClick={async () => {
+                setWorkHoursItemId(null); setWorkHoursItemName(''); setCheckedWorkLogKeys([]); setWorkLogs([]);
+                setWorkHoursOpen(true); setWorkHoursLoading(true);
+                try {
+                  const data = await salesService.getWorkLogsByRfq((rfq?.id || id) as any);
+                  const results = Array.isArray(data) ? data : (data?.results || []);
+                  setWorkLogs(results);
+                  const wfs = await salesService.getFrequentWorkflows();
+                  setFrequentWorkflows(Array.isArray(wfs) ? wfs : []);
+                } catch { message.error('Nem sikerült betölteni a munkaórákat'); }
+                finally { setWorkHoursLoading(false); }
+              }}>
+                {(() => { const s = workLogs.reduce((a: number, l: any) => a + (l.duration_seconds || 0), 0); const h = Math.floor(s/3600); const m = Math.floor((s%3600)/60); return s > 0 ? `Munkanapló ${h}:${String(m).padStart(2,'0')}` : 'Munkanapló'; })()}
+              </Button>
+            </Tooltip>
+            {isDemandOpen && <Button size="small" onClick={async () => { await salesService.setQuoteRequestStatus(id as any, 'quoted'); message.success('Lezárva'); load(); }}>Lezár</Button>}
+            {isDemandClosed && <Button size="small" onClick={async () => { await salesService.setQuoteRequestStatus(id as any, 'in_progress'); message.success('Újranyitva'); load(); }}>Újra nyit</Button>}
+            {!isDemand(rfq) && <>
+              <Button size="small" onClick={async () => { await salesService.setQuoteRequestStatus(id as any, 'accepted'); message.success('Elfogadva'); load(); }}>Elfogad</Button>
+              <Button size="small" onClick={async () => { await salesService.setQuoteRequestStatus(id as any, 'rejected'); message.success('Elutasítva'); load(); }}>Elutasít</Button>
+              <Button size="small" onClick={async () => { await salesService.setQuoteRequestStatus(id as any, 'expired'); message.success('Lejárt'); load(); }}>Lejártat</Button>
+            </>}
+            <Button size="small" loading={saving && !closeAfterSaveRef.current}
+              onClick={async () => {
+                closeAfterSaveRef.current = false;
+                if (editContext && itemSaveRef.current) {
+                  try {
+                    await itemSaveRef.current.save(true);
+                  } catch (e) {
+                    message.error('A tétel mentése sikertelen. Ellenőrizd a kötelező mezőket.');
+                    return;
+                  }
+                }
+                formBasic.submit();
+              }}
+            >Mentés</Button>
+            <Button size="small" type="primary" loading={saving && closeAfterSaveRef.current}
+              onClick={async () => {
+                closeAfterSaveRef.current = true;
+                if (editContext && itemSaveRef.current) {
+                  try {
+                    await itemSaveRef.current.save(true);
+                  } catch (e) {
+                    message.error('A tétel mentése sikertelen. Ellenőrizd a kötelező mezőket.');
+                    return;
+                  }
+                }
+                formBasic.submit();
+              }}
+            >Mentés &amp; bezárás</Button>
+          </Space>
+        }
+      >
+        {/* ── Életút ─────────────────────────────────────────────────── */}
+        <div style={{ marginBottom: 10 }}>
+          <Steps size="small" current={currentStep} onChange={handleStepClick} style={{ cursor: 'pointer' }} items={[
+            { title: 'Ajánlat', icon: <FileTextOutlined /> },
+            { title: 'Kiküldve', icon: <FileDoneOutlined /> },
+            { title: 'Elfogadva', icon: <CheckCircleOutlined /> },
+            { title: 'Megrendelés', icon: <FileDoneOutlined /> },
+            { title: 'Megerősítve', icon: <CheckCircleOutlined /> },
+            { title: 'Tervezés', icon: <EditOutlined /> },
+            { title: 'Ügyfél jóváhagyás', icon: <CheckCircleOutlined /> },
+            { title: 'Belső jóváhagyás', icon: <CheckCircleOutlined /> },
+            { title: 'Gyártás', icon: <RocketOutlined /> },
+            { title: 'Kész', icon: <CheckOutlined /> },
+            { title: 'Szállítás', icon: <CarOutlined /> },
+            { title: 'Kiszállítva', icon: <SmileOutlined /> },
+            { title: 'Kiszámlázva', icon: <FileTextOutlined /> },
+          ]} />
+          {lastSavedAt && <div style={{ textAlign: 'right', fontSize: 11, color: '#888', marginTop: 4 }}>Utoljára mentve: {lastSavedAt.format('HH:mm:ss')}</div>}
         </div>
+
         <Form layout="vertical" form={formBasic} size="small" onFinish={async (v) => {
           const closeAfter = closeAfterSaveRef.current;
           closeAfterSaveRef.current = false;
-          console.log('[RFQDetail] Form submitted with values:', v);
           setSaving(true);
           try {
-            // Company or 'private' required for new quote and demand on save
             const companyId = v.company_id ?? rfq.company?.id;
-            if (!companyId && companyId !== 'private') {
-              message.error('A Cég mező kötelező.');
-              return;
-            }
-            
-            // Határidő ellenőrzés eltávolítva: nem kötelező határidőt megadni
-            
+            if (!companyId && companyId !== 'private') { message.error('A Cég mező kötelező.'); return; }
             const autoTitle = (!v.title || !String(v.title).trim())
               ? (isDemand(rfq) ? `Ajánlat ${rfq.number || rfq.request_number}` : (rfq.number || rfq.request_number))
               : String(v.title).trim();
-            console.log('[RFQDetail] Sending update_basic with project_id:', v.project_id);
-            
             const updateData: any = {
-              title: autoTitle,
-              description: v.description,
-              internal_description: v.internal_description,
+              title: autoTitle, description: v.description, internal_description: v.internal_description,
               issue_date: v.issue_date ? v.issue_date.format('YYYY-MM-DD') : undefined,
               deadline: v.deadline ? v.deadline.format('YYYY-MM-DD') : null,
               valid_until: v.valid_until ? v.valid_until.format('YYYY-MM-DD') : null,
               validity_days: v.validity_days ?? 30,
-              contact_ids: v.contact_ids || [],
-              project_id: v.project_id ?? null,
-              currency_code: v.currency_code,
-              partial_order_allowed: v.partial_order_allowed,
+              contact_ids: v.contact_ids || [], project_id: v.project_id ?? null,
+              currency_code: v.currency_code, partial_order_allowed: v.partial_order_allowed,
+              is_manufacturable: rfq?.is_manufacturable ?? false,
             };
-            
-            // Set company_id: null for private, or the actual ID
-            if (companyId === 'private') {
-              updateData.company_id = null;
-            } else if (companyId) {
-              updateData.company_id = companyId;
-            }
-            
-            await salesService.updateQuoteRequestBasic(Number(id), updateData);
-            message.success('Mentve');
-            setLastSavedAt(dayjs());
-            if (closeAfter) {
-              // Always navigate back to the RFQ list
-              // Also attempt to close the tab (works if opened via window.open)
-              try { window.close(); } catch {}
-              navigate('/sales/rfqs');
-              return;
-            }
+            if (companyId === 'private') updateData.company_id = null;
+            else if (companyId) updateData.company_id = companyId;
+            await salesService.updateQuoteRequestBasic((rfq?.id || id) as any, updateData);
+            message.success('Mentve'); setLastSavedAt(dayjs());
+            if (closeAfter) { try { window.close(); } catch {} navigate('/sales/rfqs'); return; }
             load();
-          } catch (err) {
-            console.error('[RFQDetail] Save failed:', err);
-            message.error('Mentés sikertelen');
-          } finally {
-            setSaving(false);
-          }
+          } catch { message.error('Mentés sikertelen'); } finally { setSaving(false); }
         }}>
-          <Row gutter={12}>
-            <Col span={24} style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
-               <Space direction="vertical" align="end" size={2}>
-                 <Space>
-                   <div style={{ marginRight: 16 }}>{statusTag(rfq.status)}</div>
-                   <Button
-                     loading={saving && !closeAfterSaveRef.current}
-                     onClick={async () => {
-                       closeAfterSaveRef.current = false;
-                       // Save item editor if open (keepOpen=true)
-                       if (editContext && itemSaveRef.current) {
-                         try { await itemSaveRef.current.save(true); } catch {}
-                       }
-                       // Always save basic form (company, contacts, project, dates, etc.)
-                       formBasic.submit();
-                     }}
-                   >
-                     Mentés
-                   </Button>
-                   <Button
-                     type="primary"
-                     loading={saving && closeAfterSaveRef.current}
-                     onClick={async () => {
-                       closeAfterSaveRef.current = true;
-                       // Save item editor if open (keepOpen=true)
-                       if (editContext && itemSaveRef.current) {
-                         try { await itemSaveRef.current.save(true); } catch {}
-                       }
-                       // Always save basic form, then close
-                       formBasic.submit();
-                     }}
-                   >
-                     Mentés &amp; bezárás
-                   </Button>
-                 </Space>
-                 {lastSavedAt && (
-                   <span style={{ fontSize: 11, color: '#888' }}>
-                     Utoljára mentve: {lastSavedAt.format('YYYY. MM. DD. HH:mm:ss')}
-                   </span>
-                 )}
-               </Space>
-            </Col>
-          </Row>
-          {/* ── Alap adatok ─────────────────────────────────────────────── */}
-          <div style={{ background: '#f0f5ff', border: '1px solid #d6e4ff', borderRadius: 8, padding: '8px 14px 4px', marginBottom: 10 }}>
-            <div style={{ fontSize: 11, fontWeight: 600, color: '#2f54eb', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Alap adatok</div>
-            <Row gutter={[8, 4]}>
-              <Col xs={24} md={5}>
-                <Form.Item label="Rögzítette" name="created_by_name" style={{ marginBottom: 6 }}>
-                  <Input readOnly />
-                </Form.Item>
-              </Col>
-              <Col xs={24} md={4}>
-                <Form.Item label="Keltezés" name="issue_date" style={{ marginBottom: 6 }}>
-                  <DatePicker style={{ width: '100%' }} disabled />
-                </Form.Item>
-              </Col>
-              <Col xs={24} md={4}>
-                <Form.Item label="Határidő" name="deadline" style={{ marginBottom: 6 }}>
-                  <DatePicker style={{ width: '100%' }} />
-                </Form.Item>
-              </Col>
-              <Col xs={24} md={4}>
-                <Form.Item label="Lejár" name="valid_until" style={{ marginBottom: 6 }}>
-                  <DatePicker
-                    style={{ width: '100%' }}
-                    onChange={(val) => {
-                      if (val) {
-                        const issueDate = formBasic.getFieldValue('issue_date') || dayjs();
-                        const diff = val.diff(dayjs(issueDate), 'day');
-                        if (diff > 0) {
-                          formBasic.setFieldValue('validity_days', diff);
-                        }
-                      }
-                    }}
-                  />
-                </Form.Item>
-              </Col>
-              <Col xs={24} md={2}>
-                <Form.Item label="Nap" name="validity_days" style={{ marginBottom: 6 }}>
-                  <InputNumber
-                    min={1}
-                    style={{ width: '100%' }}
-                    onChange={(v) => {
-                      if (v) {
-                        const issueDate = formBasic.getFieldValue('issue_date') || dayjs();
-                        formBasic.setFieldValue('valid_until', dayjs(issueDate).add(v, 'day'));
-                      }
-                    }}
-                  />
-                </Form.Item>
-              </Col>
-              <Col xs={24} md={2} style={{ display: 'flex', alignItems: 'flex-end', paddingBottom: 6 }}>
-                <Button
-                  size="small"
-                  block
-                  onClick={() => {
-                    const newDate = dayjs().add(30, 'day');
-                    formBasic.setFieldsValue({ valid_until: newDate, validity_days: 30 });
-                  }}
-                  title="Frissíti az érvényességet +30 nappal a maitól"
-                >
-                  +30 nap
-                </Button>
-              </Col>
-            </Row>
-          </div>
-          {/* ── Ügyfél ──────────────────────────────────────────────────── */}
-          <div style={{ background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 8, padding: '8px 14px 4px', marginBottom: 10 }}>
-            <div style={{ fontSize: 11, fontWeight: 600, color: '#389e0d', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Ügyfél</div>
-            <Row gutter={[8, 4]}>
-              <Col xs={24} md={8}>
-                <Form.Item label="Cég" style={{ marginBottom: 6 }}>
-                  <Space.Compact style={{ width: '100%' }}>
-                    <Form.Item name="company_id" noStyle>
-                      <Select
-                        showSearch
-                        filterOption={filterOptionAccents}
-                        placeholder="Válassz céget"
-                        style={{ width: 'calc(100% - 32px)' }}
-                        onFocus={async () => {
-                          const list = await crmService.getCompanies({ is_customer: true, compact: true });
-                          const loaded = ((list as any).results ?? list) || [];
-                          const merged = Array.isArray(loaded) ? [...loaded] : [];
-                          if (rfq?.company?.id && !merged.find((c: any) => c.id === rfq.company.id)) {
-                            merged.unshift({
-                              id: rfq.company.id,
-                              name: rfq.company.name,
-                              is_customer: true,
-                              is_supplier: !!rfq.company.is_supplier,
-                            });
-                          }
-                          setCompanies(merged);
-                        }}
-                        onChange={async (val) => {
-                          try {
-                            if (val === 'private') {
-                              const list = await crmService.getPrivateContacts();
-                              setContacts((list as any).results ?? list);
-                              formBasic.setFieldValue('contact_ids', []);
-                            } else {
-                              const list = await crmService.getContactsByCompany(val);
-                              setContacts((list as any).results ?? list);
-                              formBasic.setFieldValue('contact_ids', []);
+
+          <Row gutter={10} style={{ marginBottom: 8 }}>
+            <Col xs={24} md={14}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {/* ── Alap adatok ──────────────────────────────────────────── */}
+                <div style={{ background: '#f0f5ff', border: '1px solid #d6e4ff', borderRadius: 8, padding: '6px 12px 4px' }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: '#2f54eb', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Alap adatok</div>
+                  <Row gutter={[8, 0]} align="bottom">
+                    <Col xs={12} md={8}>
+                      <Form.Item label="Rögzítette" name="created_by_name" style={{ marginBottom: 4 }}>
+                        <Select size="small" showSearch optionFilterProp="label" allowClear placeholder="Rögzítette" style={{ width: '100%' }}>
+                          {allUsers.map((u: any) => <Select.Option key={u.id} value={u.name ?? u.full_name ?? u.username ?? String(u.id)} label={u.name ?? u.full_name ?? u.username}>{u.name ?? u.full_name ?? u.username}</Select.Option>)}
+                        </Select>
+                      </Form.Item>
+                    </Col>
+                    <Col xs={12} md={4}>
+                      <Form.Item label="Keltezés" name="issue_date" style={{ marginBottom: 4 }}>
+                        <DatePicker style={{ width: '100%' }} disabled size="small" />
+                      </Form.Item>
+                    </Col>
+                    <Col xs={12} md={4}>
+                      <Form.Item label="Határidő" name="deadline" style={{ marginBottom: 4 }}>
+                        <DatePicker style={{ width: '100%' }} size="small" />
+                      </Form.Item>
+                    </Col>
+                    <Col xs={12} md={4}>
+                      <Form.Item label="Érvényes" name="valid_until" style={{ marginBottom: 4 }}>
+                        <DatePicker style={{ width: '100%' }} size="small"
+                          onChange={(val) => {
+                            if (val) {
+                              const diff = val.diff(formBasic.getFieldValue('issue_date') || dayjs(), 'day');
+                              if (diff > 0) formBasic.setFieldValue('validity_days', diff);
                             }
-                          } catch {}
+                          }}
+                        />
+                      </Form.Item>
+                    </Col>
+                    <Col xs={12} md={2}>
+                      <Form.Item label="Nap" name="validity_days" style={{ marginBottom: 4 }}>
+                        <InputNumber min={1} size="small" style={{ width: '100%' }}
+                          onChange={(v) => { if (v) formBasic.setFieldValue('valid_until', dayjs(formBasic.getFieldValue('issue_date') || dayjs()).add(v, 'day')); }}
+                        />
+                      </Form.Item>
+                    </Col>
+                    <Col xs={12} md={2} style={{ paddingBottom: 4 }}>
+                      <Button size="small" style={{ width: '100%' }} onClick={() => formBasic.setFieldsValue({ valid_until: dayjs().add(30, 'day'), validity_days: 30 })} title="+30 nap">+30n</Button>
+                    </Col>
+                    <Col xs={18} md={4}>
+                      <Form.Item label="Deviza" name="currency_code" style={{ marginBottom: 4 }}>
+                        <Select showSearch optionFilterProp="label" size="small" style={{ width: '100%' }}>
+                          {(currencyList || []).map((c: any) => (
+                            <Select.Option key={c.id} value={c.code} label={`${c.code} – ${c.name}`}>{c.code} – {c.name}</Select.Option>
+                          ))}
+                        </Select>
+                      </Form.Item>
+                    </Col>
+                    <Col xs={6} md={2} style={{ paddingBottom: 4 }}>
+                      <Button size="small" danger icon={<DeleteOutlined />} onClick={async () => {
+                        try { await salesService.softDeleteQuoteRequest(id as any); message.success('Törölve'); navigate('/sales/rfqs'); }
+                        catch { message.error('Nem sikerült törölni'); }
+                      }} />
+                    </Col>
+                  </Row>
+                </div>
+
+                {/* ── Management (összecsukható) ─────────────────────────── */}
+                <Collapse size="small" style={{ background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 8 }} ghost
+                  items={[{
+                    key: 'mgmt',
+                    label: <span style={{ fontSize: 11, fontWeight: 600, color: '#389e0d', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Management{rfq?.owner_name ? ` — ${rfq.owner_name}` : ''}{rfq?.assignee_details?.length ? ` + ${rfq.assignee_details.length} résztvevő` : ''}</span>,
+                    children: (
+                      <div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+                          <div style={{ color: '#555' }}>
+                            {rfq?.owner_name && <span><strong>Felelős:</strong> {rfq.owner_name} </span>}
+                            <span style={{ marginLeft: 8 }}><strong>Résztvevők: </strong>
+                              {rfq?.assignee_details?.length > 0 ? rfq.assignee_details.map((part: any) => (
+                                <Tag key={part.id} closable onClose={async (e) => { e.preventDefault(); try { await salesService.removeAssignee(id as any, part.id); message.success('Eltávolítva'); load(); } catch { message.error('Hiba'); } }}>{part.name}</Tag>
+                              )) : <span>-</span>}
+                            </span>
+                            {rfq?.invitations_pending?.length > 0 && <span style={{ marginLeft: 8, color: '#888' }}>
+                              <strong>Meghívottak: </strong>
+                              {rfq.invitations_pending.map((i: any) => (
+                                <Tag key={i.id} closable color="warning" onClose={async (e) => { e.preventDefault(); try { await salesService.cancelInvitation(id as any, i.id); message.success('Visszavonva'); load(); } catch { message.error('Hiba'); } }}>{i.invitee_name}</Tag>
+                              ))}
+                            </span>}
+                          </div>
+                          <Space wrap>
+                            <Button size="small" icon={<UserAddOutlined />} onClick={async () => { try { await salesService.takeQuoteRequest(id as any); message.success('Hozzárendelve'); load(); } catch { message.error('Nem sikerült'); } }}>Ide vele</Button>
+                            {(() => {
+                              const isMeAssigned = user?.id ? ((rfq?.assignees || []) as number[]).includes(user.id) : false;
+                              return <Button size="small" onClick={async () => { try { if (isMeAssigned) { await salesService.leaveQuoteRequest(id as any); message.success('Kiszálltál'); } else { await salesService.joinQuoteRequest(id as any); message.success('Beszálltál'); } load(); } catch { message.error('Nem sikerült'); } }}>{isMeAssigned ? 'Kiszállok' : 'Beszállok'}</Button>;
+                            })()}
+                            <Button size="small" icon={<UserSwitchOutlined />} onClick={() => setTakeoverConfirmOpen(true)}>Átveszem</Button>
+                            <Select size="small" showSearch allowClear placeholder="Munkatárs meghívása" optionFilterProp="label" style={{ minWidth: 180 }} value={inviteUserId as any} onChange={(val) => setInviteUserId(val || null)}>
+                              {allUsers.map((u) => <Select.Option key={u.id} value={u.id} label={u.name}>{u.name}</Select.Option>)}
+                            </Select>
+                            <Button size="small" disabled={!inviteUserId} onClick={async () => { if (!inviteUserId) return; try { await salesService.inviteUserToRfq(id as any, inviteUserId); message.success('Meghívó elküldve'); setInviteUserId(null); load(); } catch { message.error('Nem sikerült meghívni'); } }}>Meghívás</Button>
+                          </Space>
+                        </div>
+                      </div>
+                    )
+                  }]}
+                />
+              </div>
+            </Col>
+
+            <Col xs={24} md={10}>
+              {/* ── Gyártási file-ok ─────────────────────────────────────── */}
+              <div style={{
+                background: rfq?.is_manufacturable ? '#d9f7be' : '#ffd6d6',
+                border: `1px solid ${rfq?.is_manufacturable ? '#73d13d' : '#ff4d4f'}`,
+                borderRadius: 8,
+                padding: '6px 10px 6px',
+                height: '100%',
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <span style={{ fontSize: 11, fontWeight: 600, color: rfq?.is_manufacturable ? '#389e0d' : '#cf1322', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    Gyártható: {rfq?.is_manufacturable ? 'IGEN' : 'NEM'}
+                  </span>
+                  <Switch
+                    size="small"
+                    checked={!!rfq?.is_manufacturable}
+                    checkedChildren="IGEN"
+                    unCheckedChildren="NEM"
+                    onChange={async (checked) => {
+                      // Optimistic update — frissítés azonnal
+                      setRfq((prev: any) => prev ? { ...prev, is_manufacturable: checked } : prev);
+                      formBasic.setFieldValue('is_manufacturable', checked);
+                      try {
+                        const updated = await salesService.updateQuoteRequestBasic((rfq?.id || id) as any, { is_manufacturable: checked });
+                        setRfq((prev: any) => prev ? { ...prev, ...(updated || {}) } : (updated || prev));
+                      } catch {
+                        setRfq((prev: any) => prev ? { ...prev, is_manufacturable: !checked } : prev);
+                        formBasic.setFieldValue('is_manufacturable', !checked);
+                        message.error('Nem sikerült menteni a gyártható állapotot');
+                      }
+                    }}
+                  />
+                </div>
+                {rfq?.is_manufacturable && manufacturableMarkedInfo && (
+                  <div style={{ marginBottom: 6, fontSize: 11, color: '#237804' }}>
+                    Gyárthatóvá tette: {manufacturableMarkedInfo}
+                  </div>
+                )}
+
+                <div
+                  style={{ marginBottom: 8, width: '100%', display: 'flex', alignItems: 'flex-start', gap: 10, flexWrap: 'wrap' }}
+                  onMouseEnter={() => setManufacturingPanelHovered(true)}
+                  onMouseLeave={() => setManufacturingPanelHovered(false)}
+                >
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+                    <div
+                      style={{
+                        width: 100,
+                        height: 100,
+                        borderRadius: 14,
+                        background: manufacturingPanelHovered
+                          ? 'linear-gradient(180deg, #ffffff 0%, #e6f4ff 100%)'
+                          : 'linear-gradient(180deg, #ffffff 0%, #f5f5f5 100%)',
+                        boxShadow: manufacturingPanelHovered
+                          ? '0 10px 24px rgba(9, 88, 217, 0.16), inset 0 0 0 1px rgba(145, 202, 255, 0.3)'
+                          : '0 6px 16px rgba(0, 0, 0, 0.08)',
+                        transition: 'all 0.2s ease',
+                      }}
+                    >
+                      <Upload.Dragger
+                        multiple
+                        showUploadList={false}
+                        customRequest={async (options: any) => {
+                          try {
+                            await uploadManufacturingFile(options.file as File);
+                            options.onSuccess?.({}, options.file);
+                          } catch (error) {
+                            options.onError?.(error as Error);
+                          }
+                        }}
+                        style={{
+                          width: 100,
+                          height: 100,
+                          padding: 0,
+                          borderRadius: 14,
+                          border: manufacturingPanelHovered ? '2px dashed #1677ff' : '2px dashed #8c8c8c',
+                          background: 'transparent',
                         }}
                       >
-                        <Select.Option key="private" value="private" label="Magánszemély">Magánszemély</Select.Option>
-                        {(companies || []).map((c: any) => (
-                          <Select.Option key={c.id} value={c.id} label={c.name}>{c.name}</Select.Option>
-                        ))}
-                      </Select>
-                    </Form.Item>
-                    <Button
-                      icon={<PlusOutlined />}
-                      title="Új cég"
-                      onClick={() => {
-                        setSelectedCountry('Magyarország');
-                        companyForm.resetFields();
-                        companyForm.setFieldsValue({ country: 'Magyarország', is_customer: true, is_supplier: false });
-                        setIsCompanyModalVisible(true);
-                      }}
-                    />
-                  </Space.Compact>
-                </Form.Item>
-              </Col>
-              <Col xs={24} md={16}>
-                <Form.Item label="Kapcsolattartók" style={{ marginBottom: 6 }}>
-                  <Space.Compact style={{ width: '100%' }}>
-                    <Form.Item name="contact_ids" noStyle>
-                      <Select
-                        mode="multiple"
-                        allowClear
-                        showSearch
-                        filterOption={filterOptionAccents}
-                        optionLabelProp="label"
-                        placeholder="Válassz kapcsolattartókat"
-                        style={{ width: 'calc(100% - 127px)' }}
-                        options={(contacts || []).map((p: any, idx: number) => {
-                          const companyId = formBasic.getFieldValue('company_id');
-                          const lbl = contactOptionLabel(p, !companyId);
-                          return { value: String(p.id ?? idx), label: lbl };
-                        })}
-                        onFocus={async () => {
-                          const companyId = formBasic.getFieldValue('company_id');
-                          if (companyId === 'private') {
-                            const list = await crmService.getPrivateContacts();
-                            setContacts((list as any).results ?? list);
-                          } else if (companyId) {
-                            const list = await crmService.getContactsByCompany(companyId);
-                            setContacts((list as any).results ?? list);
-                          } else {
-                            // Nincs cég választva → összes kapcsolattartó
-                            const list = await crmService.getContacts();
-                            setContacts(((list as any).results ?? list) || []);
+                        <div style={{ width: 100, height: 100, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: 8, boxSizing: 'border-box', gap: 4, overflow: 'hidden' }}>
+                          {manufacturingUploading > 0
+                            ? <><Spin size="small" /><span style={{ fontSize: 10, color: '#595959', marginTop: 4 }}>Feltöltés…</span></>
+                            : <><PaperClipOutlined style={{ fontSize: 18, color: manufacturingPanelHovered ? '#1677ff' : '#595959' }} /><div style={{ fontSize: 10, color: '#595959', lineHeight: 1.15, fontWeight: 500 }}>Húzd ide<br/>vagy Ctrl+V</div></>
                           }
-                        }}
-                        onChange={async (val: any) => {
-                          formBasic.setFieldsValue({ contact_ids: val });
-                          const companyId = formBasic.getFieldValue('company_id');
-                          if (!companyId && Array.isArray(val) && val.length > 0) {
-                            const lastId = val[val.length - 1];
-                            const chosen = contacts.find((c: any) => String(c.id) === String(lastId));
-                            const chosenCompanyId = chosen?.customer || chosen?.customer_id || chosen?.company || chosen?.company_id;
-                            if (chosenCompanyId) {
-                              formBasic.setFieldsValue({ company_id: chosenCompanyId });
-                              const cl = await crmService.getContactsByCompany(chosenCompanyId);
-                              const loaded: any[] = ((cl as any).results ?? cl) || [];
-                              // Merge already selected contacts
-                              const merged = [...loaded];
-                              (val as any[]).forEach((selId: any) => {
-                                if (!merged.find((c: any) => String(c.id) === String(selId))) {
-                                  const ex = contacts.find((c: any) => String(c.id) === String(selId));
-                                  if (ex) merged.push(ex);
-                                }
-                              });
-                              setContacts(merged);
-                              const chosenCompanyName = chosen?.customer_name || chosen?.company_name;
-                              if (chosenCompanyName) {
-                                setCompanies((prev: any[]) => {
-                                  if (prev.find((c: any) => String(c.id) === String(chosenCompanyId))) return prev;
-                                  return [{ id: chosenCompanyId, name: chosenCompanyName }, ...prev];
-                                });
+                        </div>
+                      </Upload.Dragger>
+                    </div>
+                  </div>
+                  <Input
+                    size="small"
+                    placeholder="Megjegyzés a feltöltéshez"
+                    value={rfqPendingRemark}
+                    onChange={(e) => setRfqPendingRemark(e.target.value)}
+                    style={{ flex: 1, minWidth: 180 }}
+                  />
+                </div>
+
+                <Table
+                  size="small"
+                  pagination={false}
+                  tableLayout="fixed"
+                  rowKey={(r: any) => String(r.id)}
+                  dataSource={manufacturingFiles}
+                  locale={{ emptyText: 'Nincs gyártási file.' }}
+                  style={{ fontSize: 12 }}
+                  columns={[
+                    {
+                      title: 'File neve',
+                      dataIndex: 'original_filename',
+                      width: '46%',
+                      render: (_: any, r: any) => (
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 2, minWidth: 0, marginBottom: 4 }}>
+                            {manufacturingRenameId === r.id ? (
+                              <>
+                                <Input
+                                  size="small"
+                                  autoFocus
+                                  style={{ width: 120 }}
+                                  value={manufacturingRenameVal}
+                                  onChange={(e) => setManufacturingRenameVal(e.target.value)}
+                                  onPressEnter={async (e) => {
+                                    const val = (e.currentTarget.value || '').trim();
+                                    if (!val) { setManufacturingRenameId(null); return; }
+                                    try {
+                                      const baseName = manufacturingNameWithExt(r);
+                                      const dotIdx = baseName.lastIndexOf('.');
+                                      const ext = dotIdx > 0 ? baseName.slice(dotIdx) : '';
+                                      const finalName = val + ext;
+                                      const res = await salesService.renameQuoteRequestAttachment((rfq?.id || id) as any, r.id, finalName);
+                                      setManufacturingFiles((prev: any[]) => prev.map((att) => att.id === r.id ? { ...att, original_filename: res.original_filename, file: res.file ?? att.file, file_url: res.file_url ?? att.file_url } : att));
+                                      setManufacturingRenameId(null);
+                                    } catch {
+                                      message.error('Átnevezés sikertelen');
+                                    }
+                                  }}
+                                  onBlur={async (e) => {
+                                    const val = (e.target.value || '').trim();
+                                    if (!val) { setManufacturingRenameId(null); return; }
+                                    try {
+                                      const baseName = manufacturingNameWithExt(r);
+                                      const dotIdx = baseName.lastIndexOf('.');
+                                      const ext = dotIdx > 0 ? baseName.slice(dotIdx) : '';
+                                      const finalName = val + ext;
+                                      const res = await salesService.renameQuoteRequestAttachment((rfq?.id || id) as any, r.id, finalName);
+                                      setManufacturingFiles((prev: any[]) => prev.map((att) => att.id === r.id ? { ...att, original_filename: res.original_filename, file: res.file ?? att.file, file_url: res.file_url ?? att.file_url } : att));
+                                    } catch {
+                                      message.error('Átnevezés sikertelen');
+                                    } finally {
+                                      setManufacturingRenameId(null);
+                                    }
+                                  }}
+                                />
+                                {(() => {
+                                  const baseName = manufacturingNameWithExt(r);
+                                  const dotIdx = baseName.lastIndexOf('.');
+                                  const ext = dotIdx > 0 ? baseName.slice(dotIdx) : '';
+                                  return ext ? <span style={{ fontSize: 12, color: '#888', flexShrink: 0 }}>{ext}</span> : null;
+                                })()}
+                              </>
+                            ) : (() => {
+                              const fn = r.original_filename || r.file?.split('/').pop() || `#${r.id}`;
+                              const fileUrl = r.file_url || r.file;
+                              const isImage = !!fileUrl && (((r.content_type || '').toLowerCase().startsWith('image/')) || /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(fn));
+                              const isPdfFile = !!fileUrl && (/\.pdf(\?|$)/i.test(fileUrl) || /\.pdf$/i.test(fn));
+                              const tooltipContent = isPdfFile ? (
+                                <div style={{ width: 260 }}>
+                                  <iframe title={fn} src={fileUrl} style={{ width: 240, height: 180, border: 0, display: 'block', marginBottom: 6, borderRadius: 4 }} />
+                                  <div style={{ fontSize: 11, color: '#bbb', wordBreak: 'break-all' }}>{fn}</div>
+                                </div>
+                              ) : isImage ? (
+                                <div style={{ maxWidth: 260 }}>
+                                  <img src={fileUrl} alt={fn} style={{ maxWidth: 240, maxHeight: 180, display: 'block', marginBottom: 6, borderRadius: 4 }} />
+                                  <div style={{ fontSize: 11, color: '#bbb', wordBreak: 'break-all' }}>{fn}</div>
+                                </div>
+                              ) : (
+                                <div style={{ maxWidth: 260, wordBreak: 'break-all' }}>{fn}</div>
+                              );
+                              return (
+                                <Tooltip placement="top" title={tooltipContent}>
+                                  <a
+                                    href={fileUrl}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12 }}
+                                    onClick={(e) => {
+                                      e.preventDefault();
+                                      openManufacturingAttachmentPreview(r);
+                                    }}
+                                  >
+                                    {fn}
+                                  </a>
+                                </Tooltip>
+                              );
+                            })()}
+                            <Button
+                              type="text"
+                              size="small"
+                              icon={<EditOutlined style={{ fontSize: 11 }} />}
+                              title="Átnevezés"
+                              style={{ padding: '0 2px', flexShrink: 0 }}
+                              onClick={() => {
+                                setManufacturingRenameId(r.id);
+                                const full = manufacturingNameWithExt(r);
+                                const dotIdx = full.lastIndexOf('.');
+                                setManufacturingRenameVal(dotIdx > 0 ? full.slice(0, dotIdx) : full);
+                              }}
+                            />
+                          </div>
+                          <Input
+                            size="small"
+                            placeholder="Megjegyzés"
+                            value={manufacturingExistingRemarks[r.id] ?? r.remark ?? ''}
+                            onChange={(e) => setManufacturingExistingRemarks((prev) => ({ ...prev, [r.id]: e.target.value }))}
+                            onBlur={async (e) => {
+                              try {
+                                await salesService.updateQuoteRequestAttachmentRemark((rfq?.id || id) as any, r.id, e.target.value);
+                                setManufacturingFiles((prev: any[]) => prev.map((att) => att.id === r.id ? { ...att, remark: e.target.value } : att));
+                              } catch {
+                                message.error('Nem sikerült menteni a megjegyzést');
                               }
-                            }
-                          }
-                        }}
-                      />
-                    </Form.Item>
-                    <Button
-                      icon={<PlusOutlined />}
-                      title="Új kapcsolattartó"
-                      onClick={() => {
-                        const companyId = formBasic.getFieldValue('company_id');
-                        let url = '/crm/contacts?action=create';
-                        if (companyId && companyId !== 'private') {
-                          url += `&company=${companyId}`;
-                          const company = companies.find((c: any) => c.id === companyId);
-                          if (company?.name) url += `&company_name=${encodeURIComponent(company.name)}`;
-                        }
-                        window.open(url, '_blank');
-                      }}
-                    />
-                    <Button
-                      onClick={async () => {
-                        const companyId = formBasic.getFieldValue('company_id');
-                        if (companyId === 'private') {
-                          const list = await crmService.getPrivateContacts();
-                          setContacts((list as any).results ?? list);
-                          message.success('Kapcsolattartók frissítve');
-                        } else if (companyId) {
-                          const list = await crmService.getContactsByCompany(companyId);
-                          setContacts((list as any).results ?? list);
-                          message.success('Kapcsolattartók frissítve');
-                        } else {
-                          message.warning('Először válassz céget');
-                        }
-                      }}
-                    >
-                      Frissítés
-                    </Button>
-                  </Space.Compact>
-                </Form.Item>
-              </Col>
-            </Row>
-          </div>
-
-        {/* ── Management ─────────────────────────────────────────────── */}
-        <div style={{ background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 8, padding: '8px 14px 10px', marginBottom: 10, marginTop: 10 }}>
-          <div style={{ fontSize: 11, fontWeight: 600, color: '#389e0d', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Management</div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div style={{ color: '#555' }}>
-            {rfq?.owner_name ? (<span><strong>Felelős:</strong> {rfq.owner_name} </span>) : (<span><strong>Felelős:</strong> - </span>)}
-            
-            <div style={{ display: 'inline-block', marginLeft: 12 }}>
-                <strong>Résztvevők: </strong>
-                {rfq?.assignee_details && rfq.assignee_details.length > 0 ? (
-                    rfq.assignee_details.map((part: any) => (
-                        <Tag 
-                            key={part.id} 
-                            closable 
-                            onClose={async (e) => {
-                                e.preventDefault();
-                                try {
-                                    await salesService.removeAssignee(Number(id), part.id);
-                                    message.success('Résztvevő eltávolítva');
-                                    load();
-                                } catch {
-                                    message.error('Hiba törléskor');
-                                }
                             }}
-                        >
-                            {part.name}
-                        </Tag>
-                    ))
-                ) : (
-                    <span>-</span>
-                )}
-            </div>
-
-            {Array.isArray(rfq?.invitations_pending) && (rfq.invitations_pending.length > 0) ? (
-              <span style={{ marginLeft: 12, color: '#888' }}>
-                <strong>Meghívottak: </strong>
-                {rfq.invitations_pending.map((i: any) => (
-                    <Tag 
-                        key={i.id} 
-                        closable 
-                        color="warning"
-                        onClose={async (e) => {
-                                e.preventDefault();
+                          />
+                        </div>
+                      ),
+                    },
+                    {
+                      title: 'Feltöltötte',
+                      key: 'uploaded',
+                      width: 108,
+                      render: (_: any, r: any) => (
+                        <div style={{ fontSize: 11, lineHeight: 1.2, whiteSpace: 'nowrap' }}>
+                          <div style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.uploaded_by_name || '-'}</div>
+                          <div style={{ color: '#8c8c8c' }}>{r.created_at ? new Date(r.created_at).toLocaleString('hu-HU') : '-'}</div>
+                        </div>
+                      ),
+                    },
+                    {
+                      title: 'Jóváhagyta',
+                      key: 'approved',
+                      width: 108,
+                      render: (_: any, r: any) => (
+                        <div style={{ fontSize: 11, lineHeight: 1.2, whiteSpace: 'nowrap' }}>
+                          <div style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.approved_by_name || '-'}</div>
+                          <div style={{ color: '#8c8c8c' }}>{r.approved_at ? new Date(r.approved_at).toLocaleString('hu-HU') : '-'}</div>
+                        </div>
+                      ),
+                    },
+                    {
+                      title: 'Művelet',
+                      key: 'actions',
+                      width: 78,
+                      render: (_: any, r: any) => (
+                        <Space size={0}>
+                          <Tooltip title={r.approved_at ? 'Jóváhagyva' : 'Jóváhagyás'}>
+                            <Button
+                              size="small"
+                              type="text"
+                              icon={<CheckCircleOutlined style={{ color: r.approved_at ? '#52c41a' : '#1677ff' }} />}
+                              onClick={async () => {
                                 try {
-                                    await salesService.cancelInvitation(Number(id), i.id);
-                                    message.success('Meghívás visszavonva');
-                                    load();
+                                  await salesService.approveQuoteRequestAttachment((rfq?.id || id) as any, r.id);
+                                  message.success('Jóváhagyva');
+                                  await refreshManufacturingFiles();
                                 } catch {
-                                    message.error('Hiba');
+                                  message.error('Nem sikerült jóváhagyni');
                                 }
+                              }}
+                            />
+                          </Tooltip>
+                          <Popconfirm
+                            title="Biztosan törlöd ezt a fájlt?"
+                            okText="Igen"
+                            cancelText="Mégse"
+                            onConfirm={async () => {
+                              try {
+                                await salesService.deleteQuoteRequestAttachment((rfq?.id || id) as any, r.id);
+                                message.success('Törölve');
+                                await refreshManufacturingFiles();
+                              } catch {
+                                message.error('Nem sikerült törölni');
+                              }
                             }}
-                    >
-                        {i.invitee_name}
-                    </Tag>
-                ))}
-              </span>
-            ) : null}
-          </div>
-          <Space>
-            <Button icon={<UserAddOutlined />} onClick={async () => {
-              try { await salesService.takeQuoteRequest(Number(id)); message.success('Hozzárendelve (ide vele)'); load(); }
-              catch { message.error('Nem sikerült'); }
-            }}>Ide vele</Button>
-            {(() => {
-              const assignees: number[] = (rfq?.assignees || []) as number[];
-              const isMeAssigned = user?.id ? assignees.includes(user.id) : false;
-              const onToggle = async () => {
-                try {
-                  if (isMeAssigned) {
-                    await salesService.leaveQuoteRequest(Number(id));
-                    message.success('Kiszálltál');
-                  } else {
-                    await salesService.joinQuoteRequest(Number(id));
-                    message.success('Beszálltál');
-                  }
-                  load();
-                } catch {
-                  message.error('Nem sikerült');
-                }
-              };
-              return (
-                <Button onClick={onToggle}>{isMeAssigned ? 'Kiszállok' : 'Beszállok'}</Button>
-              );
-            })()}
-            <Button icon={<UserSwitchOutlined />} onClick={() => setTakeoverConfirmOpen(true)}>Átveszem</Button>
-            <Select
-              showSearch
-              allowClear
-              placeholder="Munkatárs meghívása"
-              optionFilterProp="label"
-              style={{ minWidth: 240 }}
-              value={inviteUserId as any}
-              onChange={(val) => setInviteUserId(val || null)}
-            >
-              {allUsers.map((u) => (
-                <Select.Option key={u.id} value={u.id} label={u.name}>{u.name}</Select.Option>
-              ))}
-            </Select>
-            <Button disabled={!inviteUserId} onClick={async () => {
-              if (!inviteUserId) return;
-              try { await salesService.inviteUserToRfq(Number(id), inviteUserId); message.success('Meghívó elküldve'); setInviteUserId(null); load(); }
-              catch { message.error('Nem sikerült meghívni'); }
-            }}>Meghívás</Button>
-          </Space>
-        </div>
-        </div>
-
-
-        {/* ── Tételek ──────────────────────────────────────────────────── */}
-        {/* Projekt választó – mindig látható, edit módban is */}
-        <div style={{ background: '#e6f4ff', border: '1px solid #91caff', borderRadius: 8, padding: '8px 14px 4px', marginBottom: editContext ? 10 : 0, borderBottomLeftRadius: editContext ? 8 : 0, borderBottomRightRadius: editContext ? 8 : 0, borderBottom: editContext ? undefined : 'none' }}>
-          <div style={{ fontSize: 11, fontWeight: 600, color: '#0958d9', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Tételek</div>
-          <Row gutter={[8, 4]} style={{ marginBottom: 6 }}>
-            <Col xs={24} md={24}>
-              <Form.Item label="Projekt" name="project_id" style={{ marginBottom: 0 }}>
-                <Select
-                  allowClear
-                  showSearch
-                  optionFilterProp="label"
-                  placeholder="Válassz projektet"
-                  onChange={(v: number | undefined) => {
-                    if (!v) return;
-                    const proj = (projects || []).find((p: any) => p.id === v);
-                    const rfqCompanyId = rfq?.company?.id ?? null;
-                    if (proj?.company && rfqCompanyId && proj.company !== rfqCompanyId) {
-                      message.warning(`Ez a projekt más ügyfélhez tartozik (${proj.company_name || proj.company}). Kérlek válassz az ajánlat ügyfeléhez tartozó projektet!`);
-                      formBasic.setFieldValue('project_id', undefined);
-                    }
-                  }}
-                >
-                  {(projects || []).filter((p: any) => {
-                    if (p.status !== 'open') return false;
-                    const rfqCompanyId = rfq?.company?.id ?? null;
-                    // Csak a saját cég projektjei és a cég nélküliek
-                    if (!p.company) return true;
-                    if (!rfqCompanyId) return true;
-                    return p.company === rfqCompanyId;
-                  }).map((p: any) => {
-                    const co = p.company_name || '';
-                    const coShort = co.length > 15 ? co.slice(0, 15) + '…' : co;
-                    const label = co ? `${co} – ${p.name}` : p.name;
-                    return (
-                      <Select.Option key={p.id} value={p.id} label={label}>
-                        {co ? <><Tooltip title={co}><span>{coShort}</span></Tooltip> <span style={{ color: '#888' }}>–</span> {p.name}</> : p.name}
-                      </Select.Option>
-                    );
-                  })}
-                </Select>
-              </Form.Item>
+                          >
+                            <Tooltip title="Törlés">
+                              <Button size="small" type="text" danger icon={<DeleteOutlined />} />
+                            </Tooltip>
+                          </Popconfirm>
+                        </Space>
+                      ),
+                    },
+                  ] as any}
+                />
+              </div>
             </Col>
           </Row>
-        </div>
-        {!editContext && (
-        <div style={{ background: '#e6f4ff', border: '1px solid #91caff', borderTopLeftRadius: 0, borderTopRightRadius: 0, borderRadius: 8, borderTop: 'none', padding: '8px 14px 4px', marginBottom: 10 }}>
-          <div style={{ marginTop: 6 }}>
+
+          {/* ── Ügyfél + Projekt ─────────────────────────────────────── */}
+          <Row gutter={10} style={{ marginBottom: 8 }}>
+            <Col xs={24} md={16}>
+              <div style={{ background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 8, padding: '6px 12px 4px' }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: '#389e0d', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Ügyfél</div>
+                <Row gutter={[8, 4]}>
+                  <Col xs={24} md={10}>
+                    <Form.Item label="Cég" style={{ marginBottom: 4 }}>
+                      <Space.Compact style={{ width: '100%' }}>
+                        <Form.Item name="company_id" noStyle>
+                          <Select size="small" showSearch filterOption={filterOptionAccents} placeholder="Válassz céget" style={{ width: 'calc(100% - 24px)' }}
+                            onFocus={async () => {
+                              const list = await crmService.getCompanies({ is_customer: true, compact: true });
+                              const loaded = ((list as any).results ?? list) || [];
+                              const merged = Array.isArray(loaded) ? [...loaded] : [];
+                              if (rfq?.company?.id && !merged.find((c: any) => c.id === rfq.company.id)) merged.unshift({ id: rfq.company.id, name: rfq.company.name });
+                              setCompanies(merged);
+                            }}
+                            onChange={async (val) => {
+                              try {
+                                if (val === 'private') { const list = await crmService.getPrivateContacts(); setContacts((list as any).results ?? list); formBasic.setFieldValue('contact_ids', []); }
+                                else { const list = await crmService.getContactsByCompany(val); setContacts((list as any).results ?? list); formBasic.setFieldValue('contact_ids', []); }
+                              } catch {}
+                            }}
+                          >
+                            <Select.Option key="private" value="private" label="Magánszemély">Magánszemély</Select.Option>
+                            {(companies || []).map((c: any) => <Select.Option key={c.id} value={c.id} label={c.name}>{c.name}</Select.Option>)}
+                          </Select>
+                        </Form.Item>
+                        <Button size="small" icon={<PlusOutlined />} title="Új cég" onClick={() => { setSelectedCountry('Magyarország'); companyForm.resetFields(); companyForm.setFieldsValue({ country: 'Magyarország', is_customer: true, is_supplier: false }); setIsCompanyModalVisible(true); }} />
+                      </Space.Compact>
+                    </Form.Item>
+                  </Col>
+                  <Col xs={24} md={14}>
+                    <Form.Item label="Kapcsolattartók" style={{ marginBottom: 4 }}>
+                      <Space.Compact style={{ width: '100%' }}>
+                        <Form.Item name="contact_ids" noStyle>
+                          <Select size="small" mode="multiple" allowClear showSearch filterOption={filterOptionAccents} optionLabelProp="label" placeholder="Kapcsolattartók" style={{ width: 'calc(100% - 72px)' }}
+                            options={(contacts || []).map((p: any, idx: number) => ({ value: String(p.id ?? idx), label: contactOptionLabel(p, !formBasic.getFieldValue('company_id')) }))}
+                            onFocus={async () => {
+                              const cid = formBasic.getFieldValue('company_id');
+                              if (cid === 'private') { const l = await crmService.getPrivateContacts(); setContacts((l as any).results ?? l); }
+                              else if (cid) { const l = await crmService.getContactsByCompany(cid); setContacts((l as any).results ?? l); }
+                              else { const l = await crmService.getContacts(); setContacts(((l as any).results ?? l) || []); }
+                            }}
+                            onChange={async (val: any) => {
+                              formBasic.setFieldsValue({ contact_ids: val });
+                              const cid = formBasic.getFieldValue('company_id');
+                              if (!cid && Array.isArray(val) && val.length > 0) {
+                                const lastId = val[val.length - 1];
+                                const chosen = contacts.find((c: any) => String(c.id) === String(lastId));
+                                const chosenCid = chosen?.customer || chosen?.customer_id || chosen?.company || chosen?.company_id;
+                                if (chosenCid) {
+                                  formBasic.setFieldsValue({ company_id: chosenCid });
+                                  const cl = await crmService.getContactsByCompany(chosenCid);
+                                  const loaded: any[] = ((cl as any).results ?? cl) || [];
+                                  const merged = [...loaded];
+                                  (val as any[]).forEach((selId: any) => { if (!merged.find((c: any) => String(c.id) === String(selId))) { const ex = contacts.find((c: any) => String(c.id) === String(selId)); if (ex) merged.push(ex); } });
+                                  setContacts(merged);
+                                  const cname = chosen?.customer_name || chosen?.company_name;
+                                  if (cname) setCompanies((prev: any[]) => prev.find((c: any) => String(c.id) === String(chosenCid)) ? prev : [{ id: chosenCid, name: cname }, ...prev]);
+                                }
+                              }
+                            }}
+                          />
+                        </Form.Item>
+                        <Button size="small" icon={<PlusOutlined />} title="Új kapcsolattartó" onClick={() => { const cid = formBasic.getFieldValue('company_id'); let url = '/crm/contacts?action=create'; if (cid && cid !== 'private') { url += `&company=${cid}`; const co = companies.find((c: any) => c.id === cid); if (co?.name) url += `&company_name=${encodeURIComponent(co.name)}`; } window.open(url, '_blank'); }} />
+                        <Button size="small" onClick={async () => { const cid = formBasic.getFieldValue('company_id'); if (cid === 'private') { const l = await crmService.getPrivateContacts(); setContacts((l as any).results ?? l); message.success('Frissítve'); } else if (cid) { const l = await crmService.getContactsByCompany(cid); setContacts((l as any).results ?? l); message.success('Frissítve'); } else { message.warning('Először válassz céget'); } }}>↺</Button>
+                      </Space.Compact>
+                    </Form.Item>
+                  </Col>
+                </Row>
+              </div>
+            </Col>
+            <Col xs={24} md={8}>
+              <div style={{ background: '#fff7e6', border: '1px solid #ffd591', borderRadius: 8, padding: '6px 12px 4px', height: '100%' }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: '#d46b08', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Projekt</div>
+                <Form.Item label="Projekt" name="project_id" style={{ marginBottom: 4 }}>
+                  <Select size="small" allowClear showSearch optionFilterProp="label" placeholder="Válassz projektet"
+                    onChange={(v: number | undefined) => {
+                      if (!v) return;
+                      const proj = (projects || []).find((p: any) => p.id === v);
+                      if (proj?.company && rfq?.company?.id && proj.company !== rfq.company.id) {
+                        message.warning(`Ez a projekt más ügyfélhez tartozik (${proj.company_name || proj.company}).`);
+                        formBasic.setFieldValue('project_id', undefined);
+                      }
+                    }}
+                  >
+                    {(projects || []).filter((p: any) => p.status === 'open' && (!p.company || !rfq?.company?.id || p.company === rfq.company.id)).map((p: any) => {
+                      const co = p.company_name || '';
+                      const label = co ? `${co} – ${p.name}` : p.name;
+                      return <Select.Option key={p.id} value={p.id} label={label}>{co ? <><Tooltip title={co}><span>{co.length > 15 ? co.slice(0,15)+'…' : co}</span></Tooltip> – {p.name}</> : p.name}</Select.Option>;
+                    })}
+                  </Select>
+                </Form.Item>
+              </div>
+            </Col>
+          </Row>
+
+          {/* ── Tételek ──────────────────────────────────────────────── */}
+          {!editContext && (
+          <div style={{ background: '#e6f4ff', border: '1px solid #91caff', borderRadius: 8, padding: '6px 12px 4px', marginBottom: 8 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: '#0958d9', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Tételek</div>
             <ItemsTable
               items={rfq.items || []}
               onRefresh={refreshItems}
-              quoteRequestId={Number(id)}
+              quoteRequestId={id as any}
               currency={activeCurrency}
-              onEditItem={(item) => {
-                setEditContext({ item });
-                setSelectorType(item.item_type);
-              }}
+              onEditItem={(item) => { setEditContext({ item }); setSelectorType(item.item_type); }}
               onWorkHours={async (item) => {
                 setWorkHoursItemId(item.id);
                 setWorkHoursItemName(item.product_name || item.manufacturing_product_name || item.service_name || `Tétel #${item.id}`);
-                setCheckedWorkLogKeys([]);
-                setWorkLogs([]);
-                setWorkHoursOpen(true);
-                setWorkHoursLoading(true);
+                setCheckedWorkLogKeys([]); setWorkLogs([]); setWorkHoursOpen(true); setWorkHoursLoading(true);
                 try {
-                  const data = await salesService.getWorkLogsByRfq(Number(id));
+                  const data = await salesService.getWorkLogsByRfq((rfq?.id || id) as any);
                   const results = Array.isArray(data) ? data : (data?.results || []);
                   setWorkLogs(results);
                   const wfs = await salesService.getFrequentWorkflows();
@@ -1139,50 +1426,26 @@ const RFQDetail: React.FC = () => {
                   <span style={{ fontWeight: 500, whiteSpace: 'nowrap', fontSize: 13 }}>Pénznem:</span>
                   <Form.Item name="currency_code" noStyle>
                     <Select showSearch optionFilterProp="label" placeholder="Válassz pénznemet" style={{ width: 200 }} size="small">
-                      {(currencyList || []).map((c: any) => (
-                        <Select.Option key={c.id} value={c.code} label={`${c.code} – ${c.name}`}>
-                          {c.code} – {c.name} {c.symbol ? `(${c.symbol})` : ''}
-                        </Select.Option>
-                      ))}
+                      {(currencyList || []).map((c: any) => <Select.Option key={c.id} value={c.code} label={`${c.code} – ${c.name}`}>{c.code} – {c.name} {c.symbol ? `(${c.symbol})` : ''}</Select.Option>)}
                     </Select>
                   </Form.Item>
                 </div>
               }
             />
           </div>
-        </div>
-        )}
+          )}
         </Form>
 
-        {/* ── Inline item editor — rendered OUTSIDE formBasic to avoid nested <form> ── */}
+        {/* ── Inline item editor ───────────────────────────────────── */}
         {editContext && (
-        <div style={{ background: '#e6f4ff', border: '1px solid #91caff', borderRadius: 8, padding: '8px 14px 4px', marginBottom: 10 }}>
+        <div style={{ background: '#e6f4ff', border: '1px solid #91caff', borderRadius: 8, padding: '8px 14px 4px', marginBottom: 8 }}>
           <ItemSelectorModal
-            renderInline
-            saveRef={itemSaveRef}
-            open={true}
-            mode="edit"
-            defaultType={selectorType}
-            onCancel={() => { /* editor stays open always */ }}
+            renderInline saveRef={itemSaveRef} open={true} mode="edit" defaultType={selectorType}
+            onCancel={() => {}}
             onAdd={async (p) => onEditSelected(p)}
-            rfqId={Number(id)}
-            rfqCurrency={activeCurrency}
-            hideCodeField
-            initialSelection={{ item_type: editContext.item.item_type, ref_id: (editContext.item.product || editContext.item.manufacturing_product || editContext.item.service) as number, name: (editContext.item.product_name || editContext.item.manufacturing_product_name || editContext.item.service_name || editContext.item.item_name) }}
-            initialValues={{
-              quantity: Number(editContext.item.quantity),
-              unit: editContext.item.unit,
-              net_unit_price: Number(editContext.item.net_unit_price),
-              vat_rate: Number(editContext.item.vat_rate),
-              description: editContext.item.description,
-              internal_description: editContext.item.internal_description || '',
-              discount_percent: Number(editContext.item.discount_percent || 0),
-              discount_amount: Number(editContext.item.discount_amount || 0),
-              is_rate_locked: !!editContext.item.is_rate_locked,
-              locked_exchange_rate: editContext.item.locked_exchange_rate != null ? Number(editContext.item.locked_exchange_rate) : null,
-              quote_number: editContext.item.quote_number || null,
-              cost_items_data: editContext.item.cost_items_data || [],
-            }}
+            rfqId={id as any} rfqCurrency={activeCurrency} hideCodeField
+            initialSelection={editItemModalInitialSelection || undefined}
+            initialValues={editItemModalInitialValues}
             initialFormulas={editContext.item.formulas || {}}
             quoteItemId={editContext.item.id}
           />
@@ -1190,22 +1453,98 @@ const RFQDetail: React.FC = () => {
         )}
 
         <AttachmentPreviewModal
-          open={filePreviewOpen}
-          title={filePreviewTitle}
-          url={filePreviewUrl}
+          open={filePreviewOpen} title={filePreviewTitle} url={filePreviewUrl}
           onClose={() => { setFilePreviewOpen(false); setFilePreviewUrl(null); setFilePreviewTitle(''); }}
+        />
+
+        {/* ── Munkanapló (inline) ──────────────────────────────────── */}
+        <div style={{ background: '#f9f0ff', border: '1px solid #d3adf7', borderRadius: 8, padding: '6px 12px 8px', marginTop: 8 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: '#531dab', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              Munkanapló
+              {workLogs.length > 0 && (() => {
+                const totalSec = workLogs.reduce((a: number, l: any) => a + (l.duration_seconds || 0), 0);
+                const h = Math.floor(totalSec / 3600);
+                const m = Math.floor((totalSec % 3600) / 60);
+                return <span style={{ marginLeft: 8, fontWeight: 400, fontSize: 12, color: '#531dab' }}>— Összesen: {h}:{String(m).padStart(2,'0')}</span>;
+              })()}
+            </div>
+            <Button size="small" icon={<ClockCircleOutlined />} onClick={() => setWorkHoursOpen(true)}>Részletek / Hozzáadás</Button>
+          </div>
+          {workLogs.length === 0 ? (
+            <div style={{ color: '#888', fontSize: 12 }}>Nincs rögzített munkaóra.</div>
+          ) : (() => {
+            const byUser: Record<string, { user_name: string; department: string; seconds: number }> = {};
+            workLogs.forEach((l: any) => {
+              const key = String(l.user);
+              if (!byUser[key]) {
+                byUser[key] = {
+                  user_name: l.user_name || `User ${l.user}`,
+                  department: (l.department_names && l.department_names.length > 0) ? l.department_names.join(', ') : '-',
+                  seconds: 0,
+                };
+              }
+              byUser[key].seconds += l.duration_seconds || 0;
+            });
+            const summaryRows = Object.values(byUser);
+            return (
+              <Table
+                size="small"
+                dataSource={summaryRows}
+                rowKey="user_name"
+                pagination={false}
+                style={{ fontSize: 12 }}
+                columns={[
+                  { title: 'HR osztály', dataIndex: 'department', key: 'department' },
+                  { title: 'Felhasználó', dataIndex: 'user_name', key: 'user_name' },
+                  { title: 'Idő', key: 'time', width: 120, render: (_: any, r: any) => { const h = Math.floor(r.seconds/3600); const m = Math.floor((r.seconds%3600)/60); return `${h}h ${m}p (${(r.seconds/3600).toFixed(2)}h)`; } },
+                ] as any}
+              />
+            );
+          })()}
+        </div>
+
+        {/* ── Napló (inline) ───────────────────────────────────────── */}
+        <Collapse size="small" style={{ marginTop: 8, background: '#f5f5f5', border: '1px solid #d9d9d9' }} ghost
+          items={[{
+            key: 'naplo',
+            label: <span style={{ fontSize: 11, fontWeight: 600, color: '#595959', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Napló {logs.length > 0 ? `(${logs.length})` : ''}</span>,
+            extra: <Button size="small" icon={<HistoryOutlined />} onClick={(e) => { e.stopPropagation(); setActivityLogOpen(true); }}>Aktivitás napló</Button>,
+            children: logs.length === 0 ? (
+              <div style={{ color: '#888', fontSize: 12, padding: '2px 0' }}>Nincs naplóbejegyzés.</div>
+            ) : (
+              <>
+                <Table
+                  size="small"
+                  dataSource={logs.slice(0, 10)}
+                  rowKey={(r: any) => String(r.id)}
+                  pagination={false}
+                  style={{ fontSize: 12 }}
+                  columns={[
+                    { title: 'Dátum', dataIndex: 'created_at', width: 130, render: (d: string) => <span style={{ whiteSpace: 'nowrap' }}>{new Date(d).toLocaleString('hu-HU', { dateStyle: 'short', timeStyle: 'short' })}</span> },
+                    { title: 'Felhasználó', dataIndex: 'user_name', width: 130 },
+                    {
+                      title: 'Művelet', dataIndex: 'action',
+                      render: (action: string, row: any) => renderLogAction(action, row),
+                    },
+                  ] as any}
+                />
+                {logs.length > 10 && <div style={{ fontSize: 12, color: '#888', marginTop: 2 }}>+{logs.length - 10} további bejegyzés</div>}
+              </>
+            ),
+          }]}
         />
 
       </Card>
       <Modal title="Átveszem" open={takeoverConfirmOpen} onCancel={() => setTakeoverConfirmOpen(false)} onOk={async () => {
-        try { await salesService.takeoverQuoteRequest(Number(id)); message.success('Átvetted'); setTakeoverConfirmOpen(false); load(); } catch { message.error('Nem sikerült átvenni'); }
+        try { await salesService.takeoverQuoteRequest(id as any); message.success('Átvetted'); setTakeoverConfirmOpen(false); load(); } catch { message.error('Nem sikerült átvenni'); }
       }}>
         Biztosan átveszed? Mindenki más lekerül a feladatról és csak te maradsz.
       </Modal>
       <Modal title="Ajánlat kiküldése e-mailen" open={sendOpen} onOk={async () => {
         const v = await sendForm.validateFields();
         try {
-          await salesService.sendQuoteRequestEmail(Number(id), v);
+          await salesService.sendQuoteRequestEmail(id as any, v);
           message.success('E-mail elküldve');
           setSendOpen(false);
         } catch {
@@ -1219,7 +1558,7 @@ const RFQDetail: React.FC = () => {
             onValuesChange={async (changedValues, allValues) => {
                 // Debounce or just call it. For now direct.
                 try { 
-                    const p = await salesService.renderQuoteRequestEmail(Number(id), { 
+                    const p = await salesService.renderQuoteRequestEmail(id as any, { 
                         template_key: allValues.template_key, 
                         signature_key: allValues.signature_key, 
                         context: allValues.context, 
@@ -1269,7 +1608,7 @@ const RFQDetail: React.FC = () => {
           <Button onClick={async () => {
             const v = await sendForm.validateFields();
             try {
-              const p = await salesService.renderQuoteRequestEmail(Number(id), { template_key: v.template_key, signature_key: v.signature_key, context: v.context, ...(v.subject ? { subject: v.subject } : {}), ...(v.body ? { body: v.body } : {}) });
+              const p = await salesService.renderQuoteRequestEmail(id as any, { template_key: v.template_key, signature_key: v.signature_key, context: v.context, ...(v.subject ? { subject: v.subject } : {}), ...(v.body ? { body: v.body } : {}) });
               setPreview(p);
             } catch {
               message.error('Előnézet nem elérhető');
@@ -1301,7 +1640,7 @@ const RFQDetail: React.FC = () => {
         onCancel={() => { setSelectorOpen(false); }}
         onAdd={onAddSelected}
         mode="add"
-        rfqId={Number(id)}
+        rfqId={id as any}
         rfqCurrency={activeCurrency}
       />
 
@@ -1316,24 +1655,7 @@ const RFQDetail: React.FC = () => {
             {
               title: 'Művelet',
               dataIndex: 'action',
-              render: (action: string, row: any) => {
-                const changes: Record<string, { old: any; new: any }> = row.meta?.changes;
-                if (!changes || Object.keys(changes).length === 0) return action;
-                const tooltipContent = (
-                  <div>
-                    {Object.entries(changes).map(([field, { old: oldVal, new: newVal }]) => (
-                      <div key={field}>
-                        <b>{field}:</b> {String(oldVal) || '–'} → {String(newVal) || '–'}
-                      </div>
-                    ))}
-                  </div>
-                );
-                return (
-                  <Tooltip title={tooltipContent}>
-                    <span style={{ borderBottom: '1px dashed #aaa', cursor: 'help' }}>{action}</span>
-                  </Tooltip>
-                );
-              },
+              render: (action: string, row: any) => renderLogAction(action, row),
             },
           ] as any}
           dataSource={logs}
@@ -1773,7 +2095,7 @@ const RFQDetail: React.FC = () => {
       <ChatDrawer 
         open={chatOpen} 
         onClose={() => setChatOpen(false)} 
-        rfqId={Number(id)} 
+        rfqId={id as any} 
         title={`Chat - ${rfq.number || rfq.request_number}`}
       />
 
@@ -1781,7 +2103,7 @@ const RFQDetail: React.FC = () => {
         visible={activityLogOpen}
         onClose={() => setActivityLogOpen(false)}
         objectType="quoterequest"
-        objectId={Number(id)}
+        objectId={id as any}
         objectTitle={rfq.number || rfq.request_number || ''}
       />
 
@@ -1958,7 +2280,7 @@ const RFQDetail: React.FC = () => {
               message.success('Munkaóra rögzítve');
               setAddWorkLogOpen(false);
               // reload work logs
-              const data = await salesService.getWorkLogsByRfq(Number(id));
+              const data = await salesService.getWorkLogsByRfq((rfq?.id || id) as any);
               setWorkLogs(Array.isArray(data) ? data : (data?.results || []));
             } catch (e: any) {
               message.error(e?.response?.data?.detail || 'Nem sikerült rögzíteni');

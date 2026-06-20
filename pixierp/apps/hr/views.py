@@ -1864,23 +1864,50 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             check_in_time__range=(report_start, report_end)
         ).select_related('employee__user').order_by('employee_id', 'check_in_time')
 
-        def _item_name(item):
-            """CustomerOrderItem → tétel neve (quote_item alapján)"""
-            if not item:
+        def _clean_text(text):
+            if not text:
                 return ''
-            try:
-                qi = item.quote_item
+            return re.sub(r'<[^>]*>', '', str(text)).strip()
+
+        def _item_name(item, order=None):
+            """CustomerOrderItem → tétel név (quote_item.item_name preferált), HTML nélkül.
+            Ha item nincs, fallback: megrendelés első tétele.
+            """
+            def _from_qi(qi):
+                if not qi:
+                    return ''
+                if qi.item_name:
+                    return _clean_text(qi.item_name)
                 if qi.product_id and qi.product:
-                    return qi.product.name
+                    return _clean_text(qi.product.name)
                 if qi.material_id and qi.material:
-                    return qi.material.name
+                    return _clean_text(qi.material.name)
                 if qi.manufacturing_product_id and qi.manufacturing_product:
-                    return qi.manufacturing_product.name
+                    return _clean_text(qi.manufacturing_product.name)
                 if qi.service_id and qi.service:
-                    return qi.service.name
-            except Exception:
-                pass
-            return item.description or ''
+                    return _clean_text(qi.service.name)
+                return _clean_text(qi.description)
+
+            if item:
+                try:
+                    return _from_qi(item.quote_item) or _clean_text(item.description)
+                except Exception:
+                    return _clean_text(getattr(item, 'description', ''))
+
+            if order:
+                try:
+                    first_item = order.items.select_related(
+                        'quote_item__product',
+                        'quote_item__material',
+                        'quote_item__manufacturing_product',
+                        'quote_item__service',
+                    ).first()
+                    if first_item:
+                        return _item_name(first_item, None)
+                except Exception:
+                    pass
+
+            return ''
 
         def _customer_name(order):
             """Return company name or 'Magánszemély – <contact>' for private customers."""
@@ -1981,9 +2008,10 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                 active_work = {
                     'order_number': awl.customer_order.order_number,
                     'order_id': awl.customer_order.id,
+                    'rfq_number': (awl.customer_order.quote_request.number or awl.customer_order.quote_request.request_number) if awl.customer_order.quote_request else '',
                     'customer_name': customer_name,
                     'quote_title': quote_title,
-                    'item_name': _item_name(awl.item),
+                    'item_name': _item_name(awl.item, awl.customer_order),
                     'sub_item_name': awl.sub_item.name if awl.sub_item else '',
                     'workflow_name': awl.workflow_name or '',
                     'started_at': awl.started_at.isoformat(),
@@ -2007,13 +2035,16 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                     'id': wl.id,
                     'order_number': wl.customer_order.order_number if wl.customer_order_id else '',
                     'order_id': wl.customer_order.id if wl.customer_order_id else None,
+                    'rfq_number': (wl.customer_order.quote_request.number or wl.customer_order.quote_request.request_number) if wl.customer_order_id and wl.customer_order.quote_request else '',
                     'customer_name': c_name,
                     'quote_title': q_title,
-                    'item_name': _item_name(wl.item),
+                    'item_name': _item_name(wl.item, wl.customer_order if wl.customer_order_id else None),
                     'sub_item_name': wl.sub_item.name if wl.sub_item else '',
                     'workflow_name': wl.workflow_name or '',
                     'duration_seconds': wl_dur,
                     'is_running': wl.ended_at is None,
+                    'started_at': wl.started_at.isoformat() if wl.started_at else None,
+                    'ended_at': wl.ended_at.isoformat() if wl.ended_at else None,
                 })
 
             # Find earliest check_in and latest check_out for display

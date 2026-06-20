@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { Modal, Tabs, Input, Table, Button, Form, InputNumber, Select, Space, message, Divider, Alert, Upload, Tooltip, Collapse, Drawer, Tag, Checkbox, Row, Col, Switch, AutoComplete, Typography, Popconfirm, Grid } from 'antd';
 import NumInput from '../NumInput';
 import { UploadOutlined, SyncOutlined, EditOutlined, SearchOutlined, PlusOutlined, DeleteOutlined, CopyOutlined, ExclamationCircleOutlined, UpOutlined, DownOutlined, LeftOutlined, RightOutlined, AppstoreOutlined, FolderOpenOutlined } from '@ant-design/icons';
@@ -8,6 +8,7 @@ import { CostDragHandle, CostDraggableRow, applyCostDnd, buildCostTreeMeta, Cost
 import { useNavigate } from 'react-router-dom';
 import api from '../../services/api';
 import { salesService } from '../../services/salesService';
+import { useClipboardImagePaste } from '../../hooks/useClipboardImagePaste';
 import { manufacturingService, Currency as ManuCurrency } from '../../services/manufacturingService';
 import { hrService } from '../../services/hrService';
 import ProductEditorModal from '../Editors/ProductEditorModal';
@@ -51,6 +52,7 @@ export interface SelectedItemPayload {
   files?: File[];
   fileRemarks?: Record<string, string>; // key: file.uid or file.name
   manuCostItems?: Array<{ code?: string; name: string; quantity: number; unit: string; net_unit_price: number; net_total: number; supplier?: number | null; supplier_name?: string; is_stock?: boolean }>;
+  cost_items_data?: any[];
   keepOpen?: boolean;
   /** Képletek tárolása (pl. { quantity: '100*1.5', net_unit_price: '200+50' }) */
   formulas?: Record<string, string | null>;
@@ -225,6 +227,20 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
   const [manuPendingFiles, setManuPendingFiles] = useState<File[]>([]);
   const [manuPendingFileRemarks, setManuPendingFileRemarks] = useState<Record<string, string>>({});
   const [existingAttachments, setExistingAttachments] = useState<any[]>([]);
+  const [existingRemarks, setExistingRemarks] = useState<Record<number, string>>({});
+  const [existingNames, setExistingNames] = useState<Record<number, string>>({});
+  const [renamingAttachmentId, setRenamingAttachmentId] = useState<number | null>(null);
+
+  // Ctrl+V paste: add image to pending files
+  const handlePaste = useCallback((file: File) => {
+    if (activeKey === 'manufacturing') {
+      setManuPendingFiles(prev => [...prev, file]);
+    } else {
+      setPendingFiles(prev => [...prev, file]);
+    }
+    message.info('Kép beillesztve csatolmányként');
+  }, [activeKey]);
+  useClipboardImagePaste(handlePaste, !!open);
   // Currency state for the inline manu form
   const [manuCurrencies, setManuCurrencies] = useState<ManuCurrency[]>([]);
   const [manuSellCurrencyCode, setManuSellCurrencyCode] = useState<string>('HUF');
@@ -428,9 +444,24 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
     setManuPendingFiles([]);
     setManuPendingFileRemarks({});
     setExistingAttachments([]);
+    setExistingRemarks({});
+    setExistingNames({});
+    setRenamingAttachmentId(null);
     if (mode === 'edit' && quoteItemId) {
       salesService.getQuoteRequestItemAttachments(quoteItemId)
-        .then((atts: any[]) => setExistingAttachments(atts || []))
+        .then((atts: any[]) => {
+          setExistingAttachments(atts || []);
+          const rm: Record<number, string> = {};
+          const nm: Record<number, string> = {};
+          (atts || []).forEach((a: any) => {
+            rm[a.id] = a.remark || '';
+            const fn = a.original_filename || a.file?.split('/').pop() || '';
+            const dotIdx = fn.lastIndexOf('.');
+            nm[a.id] = dotIdx > 0 ? fn.slice(0, dotIdx) : fn;
+          });
+          setExistingRemarks(rm);
+          setExistingNames(nm);
+        })
         .catch(() => {});
     }
     setManuDefaultMarkup(30);
@@ -530,10 +561,11 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
     if (!initialSelection || initialSelection.item_type !== 'manufacturing') return;
     // New-style direct item: no ManufacturingProduct, populate manuForm from initialValues
     if (!initialSelection.ref_id) {
-      if (mode === 'add') {
-        // Copy flow: preload form from initialValues
+      if (mode === 'add' || (mode === 'edit' && !quoteItemId)) {
+        // Copy flow / history item edit: preload form from initialValues
         setManuFormInitialValues({
           name: initialSelection.name || '',
+          code: initialValues?.quote_number || '',
           description: initialValues?.description || '',
           internal_description: initialValues?.internal_description || '',
           manu_quantity: Number(initialValues?.quantity) || 1,
@@ -1055,64 +1087,128 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         <Form.Item label="Megjegyzés" name="description" style={{ marginBottom: 8 }}> 
           <Input.TextArea autoSize={{ minRows: 1, maxRows: 4 }} />
         </Form.Item>
-        {existingAttachments.length > 0 && activeKey !== 'service' && (
-          <div style={{ marginBottom: 8 }}>
-            <div style={{ fontWeight: 500, marginBottom: 4, fontSize: 13 }}>Meglévő csatolmányok:</div>
-            {existingAttachments.map((att: any) => (
-              <div key={att.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                <Button type="link" size="small" style={{ padding: 0 }} href={att.file_url || att.file} target="_blank" rel="noopener noreferrer">{att.file?.split('/').pop() || `#${att.id}`}</Button>
-                {att.remark && <span style={{ color: '#888', fontSize: 12 }}>{att.remark}</span>}
-                <Button
-                  type="text"
-                  danger
-                  size="small"
-                  icon={<DeleteOutlined />}
-                  onClick={async () => {
-                    if (!quoteItemId) return;
-                    try {
-                      await salesService.deleteQuoteRequestItemAttachment(quoteItemId, att.id);
-                      setExistingAttachments(prev => prev.filter((a: any) => a.id !== att.id));
-                    } catch { message.error('Nem sikerült törölni'); }
-                  }}
-                />
-              </div>
-            ))}
-          </div>
-        )}
         {activeKey !== 'service' && (
-        <Upload.Dragger
-          name="files"
-          multiple
-          showUploadList
-          beforeUpload={(file) => { setPendingFiles((prev) => [...prev, file]); return false; }}
-          fileList={pendingFiles as any}
-          onRemove={(f) => {
-            const uid = (f as any)?.uid;
-              const key = uid || (f as any)?.name;
-              setPendingFiles((prev) => prev.filter((x: any) => (x as any).uid ? (x as any).uid !== uid : (x as any).name !== (f as any).name));
-              setPendingFileRemarks((prev) => {
-                const { [key]: _, ...rest } = prev;
-                return rest;
-              });
-          }}
-          style={{ padding: 8 }}
-        >
-          <p className="ant-upload-drag-icon"><UploadOutlined /></p>
-          <p className="ant-upload-text">Húzd ide a fájlokat vagy kattints a tallózáshoz</p>
-        </Upload.Dragger>
-        )}
-        {pendingFiles.length > 0 && activeKey !== 'service' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {pendingFiles.map((f: any) => {
-              const key = (f as any)?.uid || (f as any)?.name;
-              return (
-                <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{ minWidth: 220, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{(f as any)?.name}</span>
-                  <Input placeholder="Megjegyzés ehhez a fájlhoz" value={pendingFileRemarks[key] || ''} onChange={(e) => setPendingFileRemarks((prev) => ({ ...prev, [key]: e.target.value }))} />
-                </div>
-              );
-            })}
+        <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+          <Upload.Dragger
+            name="files"
+            multiple
+            showUploadList={false}
+            beforeUpload={(file) => { setPendingFiles((prev) => [...prev, file]); return false; }}
+            fileList={pendingFiles as any}
+            style={{ width: 100, minWidth: 100, height: 100, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
+          >
+            <div style={{ textAlign: 'center', padding: '8px 4px' }}>
+              <UploadOutlined style={{ fontSize: 20, color: '#1677ff' }} />
+              <div style={{ fontSize: 10, color: '#888', marginTop: 4, lineHeight: 1.3 }}>Húzd ide<br/>vagy Ctrl+V</div>
+            </div>
+          </Upload.Dragger>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            {pendingFiles.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: existingAttachments.length > 0 ? 6 : 0 }}>
+                {pendingFiles.map((f: any) => {
+                  const key = (f as any)?.uid || (f as any)?.name;
+                  return (
+                    <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <Button type="text" danger size="small" icon={<DeleteOutlined />} onClick={() => { setPendingFiles(prev => prev.filter((x: any) => ((x as any).uid || (x as any).name) !== key)); }} />
+                      <span style={{ fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 160 }}>{(f as any)?.name}</span>
+                      <Input size="small" placeholder="Megjegyzés" style={{ flex: 1 }} value={pendingFileRemarks[key] || ''} onChange={(e) => setPendingFileRemarks((prev) => ({ ...prev, [key]: e.target.value }))} />
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {existingAttachments.length > 0 && (
+              <div>
+                {existingAttachments.map((att: any) => (
+                  <div key={att.id} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+                    <Button type="text" danger size="small" icon={<DeleteOutlined />}
+                      onClick={async () => {
+                        if (!quoteItemId) return;
+                        try { await salesService.deleteQuoteRequestItemAttachment(quoteItemId, att.id); setExistingAttachments(prev => prev.filter((a: any) => a.id !== att.id)); }
+                        catch { message.error('Nem sikerült törölni'); }
+                      }}
+                    />
+                    {(() => {
+                      const fn = att.original_filename || att.file?.split('/').pop() || `#${att.id}`;
+                      const dotIdx = fn.lastIndexOf('.');
+                      const ext = dotIdx > 0 ? fn.slice(dotIdx) : '';
+                      const fileUrl = att.file_url || att.file;
+                      const isImage = !!fileUrl && (((att.content_type || '').toLowerCase().startsWith('image/')) || /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(fn));
+                      return (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0, flexShrink: 0 }}>
+                          {renamingAttachmentId === att.id ? (
+                            <>
+                              <Input
+                                size="small"
+                                autoFocus
+                                style={{ width: 120 }}
+                                value={existingNames[att.id] ?? (dotIdx > 0 ? fn.slice(0, dotIdx) : fn)}
+                                onChange={(e) => setExistingNames(prev => ({ ...prev, [att.id]: e.target.value }))}
+                                onPressEnter={async (e) => {
+                                  const val = (e.currentTarget.value || '').trim();
+                                  if (!quoteItemId || !val) { setRenamingAttachmentId(null); return; }
+                                  try { await salesService.renameQuoteRequestItemAttachment(quoteItemId, att.id, val + ext); }
+                                  catch {}
+                                  setRenamingAttachmentId(null);
+                                }}
+                                onBlur={async (e) => {
+                                  const val = (e.target.value || '').trim();
+                                  if (!quoteItemId || !val) { setRenamingAttachmentId(null); return; }
+                                  try { await salesService.renameQuoteRequestItemAttachment(quoteItemId, att.id, val + ext); }
+                                  catch {}
+                                  setRenamingAttachmentId(null);
+                                }}
+                              />
+                              {ext && <span style={{ fontSize: 12, color: '#888', flexShrink: 0 }}>{ext}</span>}
+                            </>
+                          ) : (
+                            <Tooltip
+                              placement="top"
+                              title={isImage ? (
+                                <div style={{ maxWidth: 260 }}>
+                                  <img src={fileUrl} alt={fn} style={{ maxWidth: 240, maxHeight: 180, display: 'block', marginBottom: 6, borderRadius: 4 }} />
+                                  <div style={{ fontSize: 11, color: '#bbb', wordBreak: 'break-all' }}>{fn}</div>
+                                </div>
+                              ) : (
+                                <div style={{ maxWidth: 260, wordBreak: 'break-all' }}>{fn}</div>
+                              )}
+                            >
+                              <a
+                                href={fileUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style={{ fontSize: 12, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                              >
+                                {fn}
+                              </a>
+                            </Tooltip>
+                          )}
+                          <Button
+                            type="text"
+                            size="small"
+                            icon={<EditOutlined style={{ fontSize: 11 }} />}
+                            onClick={() => setRenamingAttachmentId(att.id)}
+                            title="Átnevezés"
+                            style={{ padding: '0 4px' }}
+                          />
+                        </div>
+                      );
+                    })()}
+                    <Input size="small" placeholder="Megjegyzés" style={{ flex: 1 }}
+                      value={existingRemarks[att.id] ?? att.remark ?? ''}
+                      onChange={(e) => setExistingRemarks(prev => ({ ...prev, [att.id]: e.target.value }))}
+                      onBlur={async (e) => {
+                        if (!quoteItemId) return;
+                        try { await salesService.updateQuoteRequestItemAttachmentRemark(quoteItemId, att.id, e.target.value); }
+                        catch {}
+                      }}
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
+        </div>
         )}
         {activeKey !== 'service' && (
         <Space style={{ gap: 12, flexWrap: 'wrap' }}>
@@ -1520,6 +1616,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           formulas: calcFormulas,
           is_rate_locked: isRateLocked,
           locked_exchange_rate: isRateLocked ? lockedExchangeRate : null,
+          cost_items_data: manuCostItems.map(ci => ({ ...ci, syncQty: syncQtyRows.has(ci.id) })),
         };
         await onAdd({ ...rfqUpdatePayload, _sellCurrencyCode: manuSellCurrencyCode, files: manuPendingFiles, fileRemarks: manuPendingFileRemarks, keepOpen } as any);
         setLastSavedAt(dayjs());
@@ -2251,9 +2348,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         {activeKey === 'manufacturing' && (mode === 'add' || (mode === 'edit' && initialSelection?.item_type === 'manufacturing')) && (
           <div>
             <div style={{ border: '1px solid #d9d9d9', borderRadius: 6, padding: 16, background: '#fafafa' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                  <strong>{manuCreatedId ? 'Tétel szerkesztése' : 'Új tétel'}</strong>
-                </div>                <Form layout="vertical" form={manuForm} onValuesChange={handleManuFormValuesChange}>
+                <Form layout="vertical" form={manuForm} onValuesChange={handleManuFormValuesChange}>
                   <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
                     <div style={{ flex: '1 1 100%', marginBottom: 0 }}>
                       {linkedItem && (
@@ -2273,13 +2368,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
                         </div>
                       </div>
                     </div>
-                    {hideCodeField ? (
-                      mode === 'edit' ? (
-                        <Form.Item label="Ajánlatszám" name="code" style={{ flex: '1 1 auto', marginBottom: 8, minWidth: 120 }}>
-                          <Input readOnly style={{ background: '#fafafa', color: '#595959' }} />
-                        </Form.Item>
-                      ) : null
-                    ) : (
+                    {hideCodeField ? null : (
                       <>
                         <Form.Item label="Cikkszám" name="code" style={{ flex: '1 1 auto', marginBottom: 8, minWidth: 120 }}>
                           <Input placeholder="Auto-generál, ha üres" />
@@ -2747,60 +2836,127 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
 
                   <Divider style={{ margin: '12px 0' }} />
 
-                  {existingAttachments.length > 0 && (
-                    <div style={{ marginBottom: 8 }}>
-                      <div style={{ fontWeight: 500, marginBottom: 4, fontSize: 13 }}>Meglévő csatolmányok:</div>
-                      {existingAttachments.map((att: any) => (
-                        <div key={att.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                          <Button type="link" size="small" style={{ padding: 0 }} href={att.file_url || att.file} target="_blank" rel="noopener noreferrer">{att.file?.split('/').pop() || `#${att.id}`}</Button>
-                          {att.remark && <span style={{ color: '#888', fontSize: 12 }}>{att.remark}</span>}
-                          <Button
-                            type="text"
-                            danger
-                            size="small"
-                            icon={<DeleteOutlined />}
-                            onClick={async () => {
-                              if (!quoteItemId) return;
-                              try {
-                                await salesService.deleteQuoteRequestItemAttachment(quoteItemId, att.id);
-                                setExistingAttachments(prev => prev.filter((a: any) => a.id !== att.id));
-                              } catch { message.error('Nem sikerült törölni'); }
-                            }}
-                          />
+                  <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+                    <Upload.Dragger
+                      name="manuFiles"
+                      multiple
+                      showUploadList={false}
+                      beforeUpload={(file) => { setManuPendingFiles(prev => [...prev, file]); return false; }}
+                      fileList={manuPendingFiles as any}
+                      style={{ width: 100, minWidth: 100, height: 100, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
+                    >
+                      <div style={{ textAlign: 'center', padding: '8px 4px' }}>
+                        <UploadOutlined style={{ fontSize: 20, color: '#1677ff' }} />
+                        <div style={{ fontSize: 10, color: '#888', marginTop: 4, lineHeight: 1.3 }}>Húzd ide<br/>vagy Ctrl+V</div>
+                      </div>
+                    </Upload.Dragger>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      {manuPendingFiles.length > 0 && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: existingAttachments.length > 0 ? 6 : 0 }}>
+                          {manuPendingFiles.map((f: any) => {
+                            const key = (f as any)?.uid || (f as any)?.name;
+                            return (
+                              <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <Button type="text" danger size="small" icon={<DeleteOutlined />} onClick={() => { setManuPendingFiles(prev => prev.filter((x: any) => ((x as any).uid || (x as any).name) !== key)); }} />
+                                <span style={{ fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 160 }}>{(f as any)?.name}</span>
+                                <Input size="small" placeholder="Megjegyzés" style={{ flex: 1 }} value={manuPendingFileRemarks[key] || ''} onChange={e => setManuPendingFileRemarks(prev => ({ ...prev, [key]: e.target.value }))} />
+                              </div>
+                            );
+                          })}
                         </div>
-                      ))}
+                      )}
+                      {existingAttachments.length > 0 && (
+                        <div>
+                          {existingAttachments.map((att: any) => (
+                            <div key={att.id} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+                              <Button type="text" danger size="small" icon={<DeleteOutlined />}
+                                onClick={async () => {
+                                  if (!quoteItemId) return;
+                                  try { await salesService.deleteQuoteRequestItemAttachment(quoteItemId, att.id); setExistingAttachments(prev => prev.filter((a: any) => a.id !== att.id)); }
+                                  catch { message.error('Nem sikerült törölni'); }
+                                }}
+                              />
+                              {(() => {
+                                const fn = att.original_filename || att.file?.split('/').pop() || `#${att.id}`;
+                                const dotIdx = fn.lastIndexOf('.');
+                                const ext = dotIdx > 0 ? fn.slice(dotIdx) : '';
+                                const fileUrl = att.file_url || att.file;
+                                const isImage = !!fileUrl && (((att.content_type || '').toLowerCase().startsWith('image/')) || /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(fn));
+                                return (
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0, flexShrink: 0 }}>
+                                    {renamingAttachmentId === att.id ? (
+                                      <>
+                                        <Input
+                                          size="small"
+                                          autoFocus
+                                          style={{ width: 120 }}
+                                          value={existingNames[att.id] ?? (dotIdx > 0 ? fn.slice(0, dotIdx) : fn)}
+                                          onChange={(e) => setExistingNames(prev => ({ ...prev, [att.id]: e.target.value }))}
+                                          onPressEnter={async (e) => {
+                                            const val = (e.currentTarget.value || '').trim();
+                                            if (!quoteItemId || !val) { setRenamingAttachmentId(null); return; }
+                                            try { await salesService.renameQuoteRequestItemAttachment(quoteItemId, att.id, val + ext); }
+                                            catch {}
+                                            setRenamingAttachmentId(null);
+                                          }}
+                                          onBlur={async (e) => {
+                                            const val = (e.target.value || '').trim();
+                                            if (!quoteItemId || !val) { setRenamingAttachmentId(null); return; }
+                                            try { await salesService.renameQuoteRequestItemAttachment(quoteItemId, att.id, val + ext); }
+                                            catch {}
+                                            setRenamingAttachmentId(null);
+                                          }}
+                                        />
+                                        {ext && <span style={{ fontSize: 12, color: '#888', flexShrink: 0 }}>{ext}</span>}
+                                      </>
+                                    ) : (
+                                      <Tooltip
+                                        placement="top"
+                                        title={isImage ? (
+                                          <div style={{ maxWidth: 260 }}>
+                                            <img src={fileUrl} alt={fn} style={{ maxWidth: 240, maxHeight: 180, display: 'block', marginBottom: 6, borderRadius: 4 }} />
+                                            <div style={{ fontSize: 11, color: '#bbb', wordBreak: 'break-all' }}>{fn}</div>
+                                          </div>
+                                        ) : (
+                                          <div style={{ maxWidth: 260, wordBreak: 'break-all' }}>{fn}</div>
+                                        )}
+                                      >
+                                        <a
+                                          href={fileUrl}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          style={{ fontSize: 12, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                                        >
+                                          {fn}
+                                        </a>
+                                      </Tooltip>
+                                    )}
+                                    <Button
+                                      type="text"
+                                      size="small"
+                                      icon={<EditOutlined style={{ fontSize: 11 }} />}
+                                      onClick={() => setRenamingAttachmentId(att.id)}
+                                      title="Átnevezés"
+                                      style={{ padding: '0 4px' }}
+                                    />
+                                  </div>
+                                );
+                              })()}
+                              <Input size="small" placeholder="Megjegyzés" style={{ flex: 1 }}
+                                value={existingRemarks[att.id] ?? att.remark ?? ''}
+                                onChange={(e) => setExistingRemarks(prev => ({ ...prev, [att.id]: e.target.value }))}
+                                onBlur={async (e) => {
+                                  if (!quoteItemId) return;
+                                  try { await salesService.updateQuoteRequestItemAttachmentRemark(quoteItemId, att.id, e.target.value); }
+                                  catch {}
+                                }}
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                  )}
-                  <Upload.Dragger
-                    name="manuFiles"
-                    multiple
-                    showUploadList
-                    beforeUpload={(file) => { setManuPendingFiles(prev => [...prev, file]); return false; }}
-                    fileList={manuPendingFiles as any}
-                    onRemove={(f) => {
-                      const uid = (f as any)?.uid;
-                      const key = uid || (f as any)?.name;
-                      setManuPendingFiles(prev => prev.filter((x: any) => (x as any).uid ? (x as any).uid !== uid : (x as any).name !== (f as any).name));
-                      setManuPendingFileRemarks(prev => { const { [key]: _, ...rest } = prev; return rest; });
-                    }}
-                    style={{ padding: 8, marginBottom: 8 }}
-                  >
-                    <p className="ant-upload-drag-icon"><UploadOutlined /></p>
-                    <p className="ant-upload-text">Húzd ide a fájlokat vagy kattints a tallózáshoz</p>
-                  </Upload.Dragger>
-                  {manuPendingFiles.length > 0 && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
-                      {manuPendingFiles.map((f: any) => {
-                        const key = (f as any)?.uid || (f as any)?.name;
-                        return (
-                          <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <span style={{ minWidth: 180, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{(f as any)?.name}</span>
-                            <Input size="small" placeholder="Megjegyzés ehhez a fájlhoz" value={manuPendingFileRemarks[key] || ''} onChange={e => setManuPendingFileRemarks(prev => ({ ...prev, [key]: e.target.value }))} />
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
+                  </div>
                 </Form>
               </div>
 

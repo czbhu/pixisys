@@ -76,13 +76,16 @@ const collectDeepSearchValues = (value: unknown, collected: string[]): void => {
 };
 
 export const deepSearchMatch = (searchText: string, value: unknown): boolean => {
-    if (!searchText || !searchText.trim()) return true;
+    const trimmed = (searchText || '').trim();
+    if (!trimmed) return true;
 
     const searchableValues: string[] = [];
     collectDeepSearchValues(value, searchableValues);
 
     // Split query into tokens — all tokens must match somewhere in the record (AND logic)
-    const tokens = normalizeTextForSearch(searchText).split(/\s+/).filter(Boolean);
+    // Trim first so trailing/leading spaces don't create phantom empty tokens
+    const tokens = normalizeTextForSearch(trimmed).split(/\s+/).filter(Boolean);
+    if (tokens.length === 0) return true;
     const combined = searchableValues.map(v => normalizeTextForSearch(v)).join(' ');
     return tokens.every(token => combined.includes(token));
 };

@@ -28,7 +28,7 @@ import {
     UnorderedListOutlined,
     ExclamationCircleOutlined,
 } from '@ant-design/icons';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { crmService } from '../../services/crmService';
 import UnifiedQuickSearchHeader from '../../components/Layout/UnifiedQuickSearchHeader';
 import { deepSearchMatch } from '../../utils/searchUtils';
@@ -77,6 +77,7 @@ const defaultContactValues = {
 
 const Contacts: React.FC = () => {
     const location = useLocation();
+    const navigate = useNavigate();
     const [contacts, setContacts] = useState<Contact[]>([]);
     const [companies, setCompanies] = useState<CompanyOption[]>([]);
     const [extraCompany, setExtraCompany] = useState<CompanyOption | null>(null);
@@ -385,7 +386,7 @@ const Contacts: React.FC = () => {
                     >
                         {viewMode === 'grid' ? 'Listás nézet' : 'Kártyás nézet'}
                     </Button>
-                    <Button type="primary" icon={<PlusOutlined />} onClick={showCreateModal}>Új kapcsolattartó</Button>
+                    <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/crm/contacts/new')}>Új kapcsolattartó</Button>
                 </Space>
             }
             loading={loading}

@@ -33,6 +33,7 @@ import {
 } from '@ant-design/icons';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { crmService } from '../../services/crmService';
+import { postalCodeService } from '../../services/postalCodeService';
 import UnifiedQuickSearchHeader from '../../components/Layout/UnifiedQuickSearchHeader';
 import { deepSearchMatch } from '../../utils/searchUtils';
 
@@ -132,6 +133,29 @@ const STREET_TYPES = [
     'utca', 'út', 'útja', 'tér', 'sétány', 'fasor', 'köz', 'park', 'körút', 'sor', 'lejáró', 'dűlő', 'lejtő', 'lépcső', 'rakpart', 'kert', 'halom', 'domb', 'híd', 'rkp', 'krt', 'u', 'u.', 'út.', 'útja'
 ];
 
+const COUNTRIES = [
+    'Magyarország', 'Németország', 'Ausztria', 'Szlovákia', 'Románia',
+    'Horvátország', 'Szlovénia', 'Lengyelország', 'Csehország', 'Olaszország',
+    'Franciaország', 'Spanyolország', 'Hollandia', 'Belgium', 'Svájc',
+    'Egyesült Királyság', 'Írország', 'Dánia', 'Svédország', 'Norvégia',
+    'Finnország', 'Észtország', 'Lettország', 'Litvánia', 'Portugália',
+    'Görögország', 'Bulgária', 'Szerbia', 'Bosznia-Hercegovina',
+    'Montenegró', 'Észak-Macedónia', 'Albánia', 'Moldova', 'Ukrajna',
+    'Fehéroroszország', 'Oroszország', 'Törökország', 'Egyesült Államok', 'Kanada',
+    'Ausztrália', 'Új-Zéland', 'Japán', 'Kína', 'India',
+    'Brazília', 'Argentína', 'Mexikó', 'Dél-Afrika', 'Egyéb',
+];
+
+const PUBLIC_PLACE_CATEGORIES = [
+    'ÚT', 'TÉR', 'KÖZ', 'SÉTÁLY', 'KERT',
+    'UTCA', 'ÚTJA', 'SOR', 'FASOR', 'PARK',
+    'SÉTÁNY', 'RÉSZ', 'DŰLŐ', 'LEJTŐ', 'VÖLGY',
+    'HEGY', 'DOMB', 'RÉT', 'MEZŐ', 'ERDŐ',
+    'VÍZ', 'PART', 'SZIGET', 'FOK', 'CSÚCS',
+    'HÁT', 'VÉG', 'SZÉL', 'SAROK', 'KÖZPONT',
+    'KÖR', 'KÖRÚT',
+];
+
 const Companies: React.FC = () => {
     const location = useLocation();
     const navigate = useNavigate();
@@ -219,19 +243,9 @@ const Companies: React.FC = () => {
         const searchParams = new URLSearchParams(location.search);
         if (searchParams.get('action') === 'create') {
             const preset = searchParams.get('preset');
-            if (preset === 'supplier') {
-                form.setFieldsValue({
-                    ...defaultFormValues,
-                    is_customer: false,
-                    is_supplier: true
-                });
-            } else {
-                form.setFieldsValue(defaultFormValues);
-            }
-            setEditingCompany(null);
-            setIsModalVisible(true);
+            navigate(`/crm/companies/new${preset === 'supplier' ? '?preset=supplier' : ''}`);
         }
-    }, [location.search, showCreateModal, form]);
+    }, [location.search, navigate]);
 
     const filteredCompanies = useMemo(() => {
         return companies.filter((c) => {
@@ -532,7 +546,7 @@ const Companies: React.FC = () => {
                 const navResult = result as any;
                 form.setFieldsValue({
                     name: navResult.name,
-                    // If short name is not present, we leave it or empty.
+                    short_name: navResult.short_name || '',
                     
                     // PixiERP requires full format 12345678-1-11
                     tax_number: navResult.full_tax_number || navResult.tax_number,
@@ -647,7 +661,7 @@ const Companies: React.FC = () => {
                         <Option value="inactive">Inaktív</Option>
                     </Select>
                     <Button icon={<ReloadOutlined />} onClick={() => loadCompanies({ query: searchQuery })} />
-                    <Button type="primary" icon={<PlusOutlined />} onClick={showCreateModal}>
+                    <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/crm/companies/new')}>
                         Új
                     </Button>
                 </Space>
@@ -848,12 +862,31 @@ const Companies: React.FC = () => {
                     <Row gutter={16}>
                         <Col xs={24} md={8}>
                             <Form.Item name="country" label="Ország">
-                                <Input placeholder="Magyarország" />
+                                <Select
+                                    showSearch
+                                    allowClear
+                                    placeholder="Magyarország"
+                                    optionFilterProp="label"
+                                    options={COUNTRIES.map(c => ({ label: c, value: c }))}
+                                    filterOption={(input, option) =>
+                                        (option?.label ?? '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+                                            .includes(input.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, ''))
+                                    }
+                                />
                             </Form.Item>
                         </Col>
                         <Col xs={10} md={4}>
                             <Form.Item name="postal_code" label="Irányítószám">
-                                <Input maxLength={10} />
+                                <Input
+                                    maxLength={10}
+                                    onChange={(e) => {
+                                        const code = e.target.value;
+                                        if (code && code.length === 4) {
+                                            const city = postalCodeService.getCityByPostalCode(code);
+                                            if (city) form.setFieldValue('city', city);
+                                        }
+                                    }}
+                                />
                             </Form.Item>
                         </Col>
                         <Col xs={14} md={12}>
@@ -881,8 +914,8 @@ const Companies: React.FC = () => {
                                             allowClear
                                             showSearch
                                             optionFilterProp="label"
-                                            options={STREET_TYPES.map((t) => ({ label: t, value: t }))}
-                                            placeholder="pl. utca"
+                                            options={PUBLIC_PLACE_CATEGORIES.map((t) => ({ label: t, value: t }))}
+                                            placeholder="pl. ÚT"
                                         />
                                     </Form.Item>
                                 </Col>

@@ -1,24 +1,54 @@
 import React, { useEffect, useState } from 'react';
-import { Card, Tag, Space, Button, message, Typography, Table, Descriptions, Collapse } from 'antd';
+import { Card, Space, Button, message, Typography, Table, Collapse, Select, Tag } from 'antd';
 import { CheckOutlined, CloseOutlined, FolderOpenOutlined } from '@ant-design/icons';
 import EnhancedTable from '../../components/EnhancedTable';
-import { useNavigate } from 'react-router-dom';
 import { salesService } from '../../services/salesService';
 import { deepSearchMatch } from '../../utils/searchUtils';
 
 const { Text, Paragraph } = Typography;
 
+type InvitationFilter = 'new' | 'accepted' | 'declined' | 'active' | 'inactive';
+
+const FINISHED_OR_HIGHER_STATUSES = new Set([
+  'ready',
+  'in_delivery',
+  'delivered',
+  'invoiced',
+  'cancelled',
+  'archived',
+  'expired',
+  'rejected',
+]);
+
+const isInvitationActive = (inv: any) => {
+  const invitationStatus = String(inv?.status || '');
+  const qrStatus = String(inv?.qr_status || '');
+
+  if (invitationStatus === 'declined') return false;
+  if (FINISHED_OR_HIGHER_STATUSES.has(qrStatus)) return false;
+  return invitationStatus === 'pending' || invitationStatus === 'accepted';
+};
+
 const MyInvitations: React.FC = () => {
-  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<any[]>([]);
   const [filtered, setFiltered] = useState<any[]>([]);
   const [query, setQuery] = useState('');
+  const [statusFilters, setStatusFilters] = useState<InvitationFilter[]>([]);
 
   const load = async () => {
     try {
       setLoading(true);
-      const data = await salesService.listMyInvitations('pending');
+      const [pending, accepted, declined] = await Promise.all([
+        salesService.listMyInvitations('pending'),
+        salesService.listMyInvitations('accepted'),
+        salesService.listMyInvitations('declined'),
+      ]);
+      const data = [...pending, ...accepted, ...declined].sort((a: any, b: any) => {
+        const aa = a?.created_at ? new Date(a.created_at).getTime() : 0;
+        const bb = b?.created_at ? new Date(b.created_at).getTime() : 0;
+        return bb - aa;
+      });
       setRows(data);
       setFiltered(data);
     } catch (e) {
@@ -30,10 +60,27 @@ const MyInvitations: React.FC = () => {
   useEffect(() => { load(); }, []);
 
   useEffect(() => {
-    if (!query?.trim()) { setFiltered(rows); return; }
-    const next = rows.filter(inv => deepSearchMatch(query, inv));
+    let next = rows;
+
+    if (statusFilters.length > 0) {
+      next = next.filter((inv: any) => {
+        const checks: Record<InvitationFilter, boolean> = {
+          new: inv.status === 'pending',
+          accepted: inv.status === 'accepted',
+          declined: inv.status === 'declined',
+          active: isInvitationActive(inv),
+          inactive: !isInvitationActive(inv),
+        };
+        return statusFilters.some((f) => checks[f]);
+      });
+    }
+
+    if (query?.trim()) {
+      next = next.filter(inv => deepSearchMatch(query, inv));
+    }
+
     setFiltered(next);
-  }, [query, rows]);
+  }, [query, rows, statusFilters]);
 
   const columns = [
     {
@@ -41,12 +88,33 @@ const MyInvitations: React.FC = () => {
       key: 'rfq_info',
       render: (_: any, r: any) => (
         <div>
-          <div style={{ fontWeight: 600 }}>{r.quote_request_number || `#${r.quote_request}`}</div>
+          <div style={{ fontWeight: 600 }}>{r.quote_request_slug || r.quote_request_number || `#${r.quote_request}`}</div>
           <div style={{ color: '#555' }}>{r.qr_title}</div>
           {r.company_name && <div style={{ fontSize: 12, color: '#888' }}>{r.company_name}{r.contact_names ? ` · ${r.contact_names}` : ''}</div>}
         </div>
       ),
-      sorter: (a: any, b: any) => (a.quote_request_number || '').localeCompare(b.quote_request_number || ''),
+      sorter: (a: any, b: any) => String(a.quote_request_slug || a.quote_request_number || '').localeCompare(String(b.quote_request_slug || b.quote_request_number || '')),
+    },
+    {
+      title: 'Státusz',
+      key: 'status',
+      width: 170,
+      render: (_: any, r: any) => {
+        const invStatusMap: Record<string, { text: string; color: string }> = {
+          pending: { text: 'Új', color: 'gold' },
+          accepted: { text: 'Elfogadott', color: 'green' },
+          declined: { text: 'Elutasított', color: 'red' },
+        };
+        const invStatus = invStatusMap[r.status] || { text: r.status || 'Ismeretlen', color: 'default' };
+        const active = isInvitationActive(r);
+        return (
+          <Space size={4} wrap>
+            <Tag color={invStatus.color}>{invStatus.text}</Tag>
+            <Tag color={active ? 'blue' : 'default'}>{active ? 'Aktív' : 'Nem aktív'}</Tag>
+          </Space>
+        );
+      },
+      sorter: (a: any, b: any) => String(a.status || '').localeCompare(String(b.status || '')),
     },
     {
       title: 'Leírás',
@@ -108,42 +176,49 @@ const MyInvitations: React.FC = () => {
           <Button
             icon={<FolderOpenOutlined />}
             size="small"
-            onClick={() => navigate(`/sales/rfqs/${r.quote_request}`)}
+            onClick={() => {
+              const slug = r.quote_request_slug || r.quote_request_number || r.quote_request;
+              window.open(`/sales/rfqs/${slug}`, '_blank', 'noopener,noreferrer');
+            }}
           >
             Megnyitás
           </Button>
-          <Button
-            type="primary"
-            size="small"
-            icon={<CheckOutlined />}
-            onClick={async () => {
-              try {
-                await salesService.acceptInvitation(r.quote_request);
-                message.success('Meghívás elfogadva');
-                load();
-              } catch {
-                message.error('Nem sikerült elfogadni');
-              }
-            }}
-          >
-            Elfogad
-          </Button>
-          <Button
-            danger
-            size="small"
-            icon={<CloseOutlined />}
-            onClick={async () => {
-              try {
-                await salesService.declineInvitation(r.quote_request);
-                message.success('Meghívás elutasítva');
-                load();
-              } catch {
-                message.error('Nem sikerült elutasítani');
-              }
-            }}
-          >
-            Elutasít
-          </Button>
+          {r.status === 'pending' && (
+            <>
+              <Button
+                type="primary"
+                size="small"
+                icon={<CheckOutlined />}
+                onClick={async () => {
+                  try {
+                    await salesService.acceptInvitation(r.quote_request);
+                    message.success('Meghívás elfogadva');
+                    load();
+                  } catch {
+                    message.error('Nem sikerült elfogadni');
+                  }
+                }}
+              >
+                Elfogad
+              </Button>
+              <Button
+                danger
+                size="small"
+                icon={<CloseOutlined />}
+                onClick={async () => {
+                  try {
+                    await salesService.declineInvitation(r.quote_request);
+                    message.success('Meghívás elutasítva');
+                    load();
+                  } catch {
+                    message.error('Nem sikerült elutasítani');
+                  }
+                }}
+              >
+                Elutasít
+              </Button>
+            </>
+          )}
         </Space>
       ),
     },
@@ -151,6 +226,24 @@ const MyInvitations: React.FC = () => {
 
   return (
     <Card title="Meghívásaim">
+      <Space style={{ marginBottom: 12 }} wrap>
+        <Text type="secondary">Státusz szűrő:</Text>
+        <Select<InvitationFilter[]>
+          mode="multiple"
+          allowClear
+          style={{ minWidth: 360 }}
+          placeholder="Válassz státuszt..."
+          value={statusFilters}
+          onChange={(vals) => setStatusFilters(vals)}
+          options={[
+            { value: 'new', label: 'Új' },
+            { value: 'accepted', label: 'Elfogadott' },
+            { value: 'declined', label: 'Elutasított' },
+            { value: 'active', label: 'Aktív' },
+            { value: 'inactive', label: 'Nem aktív' },
+          ]}
+        />
+      </Space>
       <EnhancedTable
         tableKey="myInvitations"
         rowKey="id"

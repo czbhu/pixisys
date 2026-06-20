@@ -244,7 +244,7 @@ const Invoicing: React.FC = () => {
         companyOrders.forEach(order => {
           order.items?.forEach((item: any) => {
             // Use the flattened fields from serializer
-            const itemName = item.product_name || item.material_name || item.manufacturing_product_name || item.service_name || 'Tétel';
+            const itemName = item.item_name || item.product_name || item.material_name || item.manufacturing_product_name || item.service_name || item.description || 'Tétel';
             const itemCode = item.product_code || item.material_code || item.manufacturing_product_code || item.service_code || '';
             
             console.log('[INVOICE] Item:', {

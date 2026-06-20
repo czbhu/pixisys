@@ -1592,7 +1592,7 @@ interface CustomerOrder {
             <Button
               icon={<EyeOutlined />}
               size="small"
-              onClick={() => navigate(`/sales/customer-orders/${record.id}`)}
+              onClick={() => navigate(`/sales/rfqs/${record.quote_request_id || record.quote_request}`)}
             />
           </Tooltip>
           
@@ -1717,7 +1717,7 @@ interface CustomerOrder {
         <div>
           <a
             style={{ color: '#1677ff', cursor: 'pointer', fontWeight: 500 }}
-            onClick={() => navigate(`/sales/customer-orders/${record.id}`)}
+            onClick={() => navigate(`/sales/rfqs/${record.quote_request_id || record.quote_request}`)}
           >
             {text}
           </a>
@@ -2230,7 +2230,7 @@ interface CustomerOrder {
   const renderOrderCardActions = (record: CustomerOrder) => (
     <Space size="small" wrap>
       <Tooltip title="Részletek">
-        <Button icon={<EyeOutlined />} size="small" onClick={() => navigate(`/sales/customer-orders/${record.id}`)} />
+        <Button icon={<EyeOutlined />} size="small" onClick={() => navigate(`/sales/rfqs/${record.quote_request_id || record.quote_request}`)} />
       </Tooltip>
       {(record.status === 'ready' || record.status === 'in_delivery') && (
         <Tooltip title={record.status === 'ready' ? 'Szállítás indítása' : 'Szállítási email újraküldése'}>
@@ -2276,7 +2276,7 @@ interface CustomerOrder {
   const renderItemCardActions = (record: any) => (
     <Space size="small" wrap>
       <Tooltip title="Részletek">
-        <Button icon={<EyeOutlined />} size="small" onClick={() => navigate(`/sales/customer-orders/${record.originalOrder.id}`)} />
+        <Button icon={<EyeOutlined />} size="small" onClick={() => navigate(`/sales/rfqs/${record.originalOrder?.quote_request_id || record.originalOrder?.quote_request || record.originalOrder?.id}`)} />
       </Tooltip>
       <Tooltip title="Tétel munkalap">
         <Button icon={<PrinterOutlined />} size="small" onClick={() => printOrderItemWorksheet(record)} />

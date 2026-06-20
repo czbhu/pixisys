@@ -74,9 +74,15 @@ class QuoteRequestItemAttachmentSerializer(serializers.ModelSerializer):
 
 class QuoteRequestAttachmentSerializer(serializers.ModelSerializer):
     file_url = serializers.SerializerMethodField()
+    uploaded_by_name = serializers.SerializerMethodField()
+    approved_by_name = serializers.SerializerMethodField()
     class Meta:
         model = QuoteRequestAttachment
-        fields = ['id', 'file', 'file_url', 'original_filename', 'remark', 'uploaded_by', 'created_at']
+        fields = [
+            'id', 'file', 'file_url', 'original_filename', 'remark',
+            'uploaded_by', 'uploaded_by_name', 'created_at',
+            'is_manufacturing_file', 'approved_by', 'approved_by_name', 'approved_at',
+        ]
         read_only_fields = ['file_url', 'uploaded_by', 'created_at']
 
     def get_file_url(self, obj):
@@ -87,6 +93,14 @@ class QuoteRequestAttachmentSerializer(serializers.ModelSerializer):
                 return request.build_absolute_uri(url)
             return url
         return None
+
+    def get_uploaded_by_name(self, obj):
+        u = getattr(obj, 'uploaded_by', None)
+        return (u.get_full_name() or u.username) if u else ''
+
+    def get_approved_by_name(self, obj):
+        u = getattr(obj, 'approved_by', None)
+        return (u.get_full_name() or u.username) if u else ''
 
 class QuoteRequestItemSerializer(serializers.ModelSerializer):
     product_name = serializers.SerializerMethodField()
@@ -344,6 +358,7 @@ class QuoteRequestSerializer(serializers.ModelSerializer):
     effective_status = serializers.SerializerMethodField()
     effective_status_label = serializers.SerializerMethodField()
     is_partial_order = serializers.SerializerMethodField()
+    manufacturable_marked_by_name = serializers.SerializerMethodField()
     
     class Meta:
         model = QuoteRequest
@@ -406,6 +421,15 @@ class QuoteRequestSerializer(serializers.ModelSerializer):
             ]
         except Exception:
             return []
+
+    def get_manufacturable_marked_by_name(self, obj):
+        try:
+            u = obj.manufacturable_marked_by
+            if not u:
+                return ""
+            return u.get_full_name() or u.username or ""
+        except Exception:
+            return ""
     
     def get_total_amount(self, obj):
         """Calculate total amount from items"""
@@ -441,16 +465,22 @@ class QuoteRequestSerializer(serializers.ModelSerializer):
     # Status rank: lower = "earlier" in the workflow, so the "lowest" status wins.
     _ORDER_STATUS_RANK = {
         'new': 0,
-        'confirmed': 1,
-        'in_production': 2,
-        'ready': 3,
-        'in_delivery': 4,
-        'delivered': 5,
-        'invoiced': 6,
+        'in_design': 1,
+        'pending_internal_approval': 2,
+        'pending_customer_approval': 3,
+        'confirmed': 4,
+        'in_production': 5,
+        'ready': 6,
+        'in_delivery': 7,
+        'delivered': 8,
+        'invoiced': 9,
         'cancelled': 99,  # ignored unless it's the only one
     }
     _ORDER_STATUS_LABELS = {
         'new': 'Új',
+        'in_design': 'Tervezés alatt',
+        'pending_internal_approval': 'Belső jóváhagyásra vár',
+        'pending_customer_approval': 'Ügyfél jóváhagyásra vár',
         'confirmed': 'Megerősítve',
         'in_production': 'Gyártásban',
         'ready': 'Kész',
@@ -460,6 +490,9 @@ class QuoteRequestSerializer(serializers.ModelSerializer):
         'cancelled': 'Törölve',
     }
     _RFQ_STATUS_LABELS = {
+        'in_design': 'Tervezés alatt',
+        'pending_customer_approval': 'Ügyfél jóváhagyásra vár',
+        'pending_internal_approval': 'Belső jóváhagyásra vár',
         'sent': 'Kiküldve',
         'quoted': 'Árazva',
         'accepted': 'Elfogadva',
@@ -612,6 +645,8 @@ class QuoteRequestSerializer(serializers.ModelSerializer):
 class QuoteRequestInvitationSerializer(serializers.ModelSerializer):
     invitee_name = serializers.SerializerMethodField()
     quote_request_number = serializers.CharField(source='quote_request.number', read_only=True)
+    quote_request_slug = serializers.SerializerMethodField()
+    qr_status = serializers.CharField(source='quote_request.status', read_only=True)
     
     # Tooltip / detail fields
     company_name = serializers.SerializerMethodField()
@@ -626,13 +661,20 @@ class QuoteRequestInvitationSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = QuoteRequestInvitation
-        fields = ['id', 'quote_request', 'quote_request_number', 'invitee', 'invitee_name', 
+        fields = ['id', 'quote_request', 'quote_request_number', 'quote_request_slug', 'invitee', 'invitee_name', 
                   'invited_by', 'status', 'created_at', 'responded_at',
+                  'qr_status',
                   'company_name', 'contact_names', 'qr_title', 'qr_description', 
                   'qr_internal_description', 'item_count', 'issue_date', 'qr_deadline', 'items']
 
     def get_invitee_name(self, obj):
         return obj.invitee.get_full_name() or obj.invitee.username
+
+    def get_quote_request_slug(self, obj):
+        qr = getattr(obj, 'quote_request', None)
+        if not qr:
+            return ''
+        return qr.number or qr.request_number or str(qr.id)
 
     def get_company_name(self, obj):
         if obj.quote_request and obj.quote_request.company:
@@ -1165,6 +1207,11 @@ class CustomerOrderListSerializer(serializers.ModelSerializer):
     deadline = serializers.SerializerMethodField()
     pending_approval = serializers.SerializerMethodField()
     last_rejection = serializers.SerializerMethodField()
+    first_item_name = serializers.SerializerMethodField()
+    first_item_description = serializers.SerializerMethodField()
+    first_item_internal_description = serializers.SerializerMethodField()
+    first_item_quantity = serializers.SerializerMethodField()
+    first_item_unit = serializers.SerializerMethodField()
 
     class Meta:
         model = CustomerOrder
@@ -1176,11 +1223,81 @@ class CustomerOrderListSerializer(serializers.ModelSerializer):
             'confirmed_at', 'production_started_at', 'ready_at',
             'delivery_started_at', 'delivered_at',
             'notes', 'created_by', 'created_at', 'updated_at',
-            'invoice_number', 'pending_approval', 'last_rejection', 'ip_address'
+            'invoice_number', 'pending_approval', 'last_rejection', 'ip_address',
+            'first_item_name', 'first_item_description', 'first_item_internal_description',
+            'first_item_quantity', 'first_item_unit',
         ]
 
     def _iter_items(self, obj):
         return obj.items.all()
+
+    def _first_quote_item(self, obj):
+        try:
+            # Use prefetched items if available to avoid extra queries
+            prefetched = getattr(obj, '_prefetched_objects_cache', {})
+            if 'items' in prefetched:
+                items_list = list(prefetched['items'])
+            else:
+                items_list = list(obj.items.select_related(
+                    'quote_item',
+                    'quote_item__product',
+                    'quote_item__manufacturing_product',
+                    'quote_item__service',
+                    'quote_item__material',
+                ).all()[:1])
+            if not items_list:
+                return None
+            coi = items_list[0]
+            # Ensure quote_item related objects are loaded
+            if coi.quote_item_id and not hasattr(coi, '_quote_item_cache'):
+                try:
+                    from apps.sales.models import QuoteRequestItem
+                    qi = QuoteRequestItem.objects.select_related(
+                        'product', 'manufacturing_product', 'service', 'material'
+                    ).get(pk=coi.quote_item_id)
+                    return qi
+                except Exception:
+                    pass
+            return coi.quote_item if hasattr(coi, 'quote_item') else None
+        except Exception:
+            return None
+
+    def get_first_item_name(self, obj):
+        qi = self._first_quote_item(obj)
+        if not qi:
+            return ''
+        return (qi.item_name
+                or getattr(qi.product, 'name', None)
+                or getattr(qi.manufacturing_product, 'name', None)
+                or getattr(qi.service, 'name', None)
+                or getattr(qi.material, 'name', None)
+                or '')
+
+    def get_first_item_description(self, obj):
+        qi = self._first_quote_item(obj)
+        return qi.description or '' if qi else ''
+
+    def get_first_item_internal_description(self, obj):
+        qi = self._first_quote_item(obj)
+        if not qi:
+            return ''
+        return (qi.internal_description
+                or getattr(qi.manufacturing_product, 'internal_description', None)
+                or '')
+
+    def get_first_item_quantity(self, obj):
+        try:
+            coi = obj.items.first()
+            return float(coi.quantity) if coi else None
+        except Exception:
+            return None
+
+    def get_first_item_unit(self, obj):
+        try:
+            coi = obj.items.first()
+            return coi.unit or '' if coi else ''
+        except Exception:
+            return ''
 
     def get_pending_approval(self, obj):
         req = obj.approval_requests.filter(status='pending').first()
@@ -1309,6 +1426,7 @@ class CustomerOrderListWithItemsSerializer(CustomerOrderListSerializer):
 
 
 class InvoiceableOrderItemSerializer(serializers.ModelSerializer):
+    item_name = serializers.CharField(source='quote_item.item_name', read_only=True)
     product_name = serializers.CharField(source='quote_item.product.name', read_only=True)
     product_code = serializers.CharField(source='quote_item.product.code', read_only=True)
     material_name = serializers.CharField(source='quote_item.material.name', read_only=True)
@@ -1322,7 +1440,7 @@ class InvoiceableOrderItemSerializer(serializers.ModelSerializer):
         model = CustomerOrderItem
         fields = [
             'id', 'quantity', 'unit', 'net_unit_price', 'discount_percent', 'vat_rate',
-            'product_name', 'product_code', 'material_name', 'material_code',
+            'item_name', 'product_name', 'product_code', 'material_name', 'material_code',
             'manufacturing_product_name', 'manufacturing_product_code', 'service_name', 'service_code',
             'description',
         ]

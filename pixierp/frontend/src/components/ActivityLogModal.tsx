@@ -58,7 +58,13 @@ const ActivityLogModal: React.FC<ActivityLogModalProps> = ({
         ? `/sales/quote-requests/${objectId}/timeline/`
         : `/sales/customer-orders/${objectId}/activity_logs/`;
       const response = await api.get(endpoint);
-      setEvents(response.data);
+      const list = Array.isArray(response.data) ? response.data : [];
+      const sorted = [...list].sort((a: TimelineEvent, b: TimelineEvent) => {
+        const ta = a.timestamp ? dayjs(a.timestamp).valueOf() : 0;
+        const tb = b.timestamp ? dayjs(b.timestamp).valueOf() : 0;
+        return tb - ta;
+      });
+      setEvents(sorted);
     } catch (error) {
       console.error('Hiba a napló betöltésekor:', error);
       setEvents([]);
@@ -112,6 +118,10 @@ const ActivityLogModal: React.FC<ActivityLogModalProps> = ({
         );
         const tag = <Tag color={categoryColors[record.category] || 'default'} style={{ marginRight: 6 }}>{label}</Tag>;
         if (!hasChanges) return <span>{tag}{what}</span>;
+        const summary = Object.entries(changes!)
+          .slice(0, 3)
+          .map(([field, { old: oldVal, new: newVal }]) => `${field}: ${String(oldVal) || '–'} → ${String(newVal) || '–'}`)
+          .join('; ');
         const tooltipContent = (
           <div>
             {Object.entries(changes!).map(([field, { old: oldVal, new: newVal }]) => (
@@ -125,7 +135,7 @@ const ActivityLogModal: React.FC<ActivityLogModalProps> = ({
           <span>
             {tag}
             <Tooltip title={tooltipContent}>
-              <span style={{ borderBottom: '1px dashed #aaa', cursor: 'help' }}>{what}</span>
+              <span style={{ borderBottom: '1px dashed #aaa', cursor: 'help' }}>{what}: {summary}</span>
             </Tooltip>
           </span>
         );

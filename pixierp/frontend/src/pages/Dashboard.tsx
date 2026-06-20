@@ -48,6 +48,7 @@ interface WorkLogDetail {
     id: number;
     order_number: string;
     order_id: number;
+    rfq_number?: string;
     customer_name: string;
     quote_title: string;
     item_name: string;
@@ -55,11 +56,14 @@ interface WorkLogDetail {
     workflow_name: string;
     duration_seconds: number;
     is_running: boolean;
+    started_at?: string | null;
+    ended_at?: string | null;
 }
 
 interface ActiveWork {
     order_number: string;
     order_id: number;
+    rfq_number?: string;
     customer_name: string;
     quote_title: string;
     item_name: string;
@@ -111,6 +115,11 @@ function timeLabel(iso: string | null): string {
     return new Date(iso).toLocaleTimeString('hu-HU', { hour: '2-digit', minute: '2-digit' });
 }
 
+function timeLabelHms(iso: string | null | undefined): string {
+    if (!iso) return '—';
+    return new Date(iso).toLocaleTimeString('hu-HU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
 // ---------- Worker: expandable daily work log table ----------
 
 const WorkerDailyTable: React.FC<{ logs: WorkLogDetail[]; navigate: ReturnType<typeof useNavigate> }> = ({ logs, navigate }) => {
@@ -126,17 +135,29 @@ const WorkerDailyTable: React.FC<{ logs: WorkLogDetail[]; navigate: ReturnType<t
             title: 'Megrendelés',
             key: 'order',
             render: (_: any, r: WorkLogDetail) => (
-                <a onClick={() => navigate(`/orders/${r.order_id}`)} style={{ fontSize: 12 }}>
-                    <span style={{ fontWeight: 500 }}>{r.order_number}</span>
-                    {r.quote_title && <span style={{ color: '#888', marginLeft: 4 }}>— {r.quote_title}</span>}
+                <a
+                    onClick={() => window.open(`/sales/rfqs/${r.rfq_number || r.order_number}`, '_blank', 'noopener,noreferrer')}
+                    style={{ fontSize: 12 }}
+                >
+                    <span style={{ fontWeight: 500 }}>{r.rfq_number || r.order_number || '—'}</span>
                 </a>
             ),
+        },
+        {
+            title: 'Tól-ig',
+            key: 'from_to',
+            width: 170,
+            render: (_: any, r: WorkLogDetail) => {
+                const from = timeLabelHms(r.started_at);
+                const to = r.is_running ? 'fut' : timeLabelHms(r.ended_at);
+                return <Text style={{ whiteSpace: 'nowrap', fontSize: 12 }}>{`${from} – ${to}`}</Text>;
+            },
         },
         {
             title: 'Tétel',
             dataIndex: 'item_name',
             key: 'item_name',
-            render: (v: string) => <Text style={{ fontSize: 12 }}>{v || '—'}</Text>,
+            render: (v: string, r: WorkLogDetail) => <Text style={{ fontSize: 12 }}>{v || r.workflow_name || '—'}</Text>,
         },
         {
             title: 'Altétel',
@@ -206,7 +227,7 @@ const ManufacturingDashboard: React.FC<{
             dataIndex: 'order_number',
             key: 'order_number',
             render: (text: string, r: OrderRow) => (
-                <a onClick={() => navigate(`/orders/${r.id}`)}>
+                <a onClick={() => navigate(`/sales/customer-orders/${r.id}`)}>
                     <div style={{ fontWeight: 500 }}>{text}</div>
                     <div style={{ fontSize: 12, color: '#888' }}>{r.customer_name}</div>
                 </a>
@@ -247,8 +268,11 @@ const ManufacturingDashboard: React.FC<{
                     <Text strong>{name}</Text>
                     {r.active_work && (
                         <Text style={{ fontSize: 12, color: '#1677ff' }}>
-                            — <a onClick={() => navigate(`/orders/${r.active_work!.order_id}`)} style={{ fontSize: 12 }}>
-                                {r.active_work.order_number}
+                            — <a
+                                onClick={() => window.open(`/sales/rfqs/${r.active_work!.rfq_number || r.active_work!.order_number}`, '_blank', 'noopener,noreferrer')}
+                                style={{ fontSize: 12 }}
+                            >
+                                {r.active_work.rfq_number || r.active_work.order_number}
                             </a>
                             {r.active_work.customer_name && ` (${r.active_work.customer_name}`}
                             {r.active_work.quote_title && ` — ${r.active_work.quote_title}`}
@@ -368,7 +392,7 @@ const ManufacturingDashboard: React.FC<{
                                                     {w.active_work && (
                                                         <Text
                                                             style={{ fontSize: 12, color: '#1677ff', cursor: 'pointer' }}
-                                                            onClick={() => navigate(`/orders/${w.active_work!.order_id}`)}
+                                                            onClick={() => navigate(`/sales/customer-orders/${w.active_work!.order_id}`)}
                                                         >
                                                             — {w.active_work.order_number}
                                                         </Text>
@@ -381,8 +405,16 @@ const ManufacturingDashboard: React.FC<{
                                                         {[
                                                             w.active_work.customer_name,
                                                             w.active_work.quote_title,
-                                                            w.active_work.sub_item_name || w.active_work.workflow_name,
                                                         ].filter(Boolean).join(' — ')}
+                                                        {w.active_work.order_number && (
+                                                            <> — <a
+                                                                style={{ color: '#1677ff' }}
+                                                                onClick={() => navigate(`/sales/customer-orders/${w.active_work!.order_id}`)}
+                                                            >{w.active_work.order_number}</a></>
+                                                        )}
+                                                        {(w.active_work.sub_item_name || w.active_work.workflow_name) && (
+                                                            <> — {w.active_work.sub_item_name || w.active_work.workflow_name}</>
+                                                        )}
                                                     </Text>
                                                 ) : (
                                                     <Text type="secondary" style={{ fontSize: 12 }}>
@@ -524,7 +556,7 @@ const SalesDashboard: React.FC<{
             dataIndex: 'order_number',
             key: 'order_number',
             render: (text: string, r: OrderRow) => (
-                <a onClick={() => navigate(`/orders/${r.id}`)}>
+                <a onClick={() => navigate(`/sales/customer-orders/${r.id}`)}>
                     <div style={{ fontWeight: 500 }}>{text}</div>
                     <div style={{ fontSize: 12, color: '#888' }}>{r.customer_name}</div>
                 </a>

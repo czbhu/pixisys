@@ -1419,6 +1419,11 @@ class ManufacturingCostItemViewSet(
         product = _product if _product is not None else (ci.product if ci is not None else None)
         if _order is not None:
             order, coi = _order, None
+        elif _rfq is not None:
+            # RFQ-origin worksheet must use RFQ/direct-item context only.
+            # Resolving a CustomerOrder by product here can pick an unrelated
+            # order and produce mismatched header/quantity values in the PDF.
+            order, coi = None, None
         elif ci is not None:
             order, coi = self._resolve_order_context(ci)
         else:
@@ -2118,7 +2123,13 @@ class ManufacturingCostItemViewSet(
         all_pdf_pages = []
         for rfq_id in rfq_ids:
             try:
-                rfq = QuoteRequest.objects.get(pk=rfq_id)
+                rfq = None
+                if str(rfq_id).isdigit():
+                    rfq = QuoteRequest.objects.filter(pk=int(rfq_id)).first()
+                if not rfq:
+                    rfq = QuoteRequest.objects.filter(number=rfq_id).first() or QuoteRequest.objects.filter(request_number=rfq_id).first()
+                if not rfq:
+                    continue
             except QuoteRequest.DoesNotExist:
                 continue
 
@@ -2143,7 +2154,7 @@ class ManufacturingCostItemViewSet(
                               .order_by(F('queue_position').asc(nulls_last=True), 'id')
                               .first())
                         if ci:
-                            pdf_bytes = self._render_full_work_sheet_pdf_bytes(ci, highlight_id=0, _item_name=rfq_item_name, _direct_item=item)
+                            pdf_bytes = self._render_full_work_sheet_pdf_bytes(ci, highlight_id=0, _rfq=rfq, _item_name=rfq_item_name, _direct_item=item)
                         else:
                             pdf_bytes = self._render_full_work_sheet_pdf_bytes(None, highlight_id=0, _product=mp, _rfq=rfq, _item_name=rfq_item_name, _direct_item=item)
                     elif item.id not in seen_direct:

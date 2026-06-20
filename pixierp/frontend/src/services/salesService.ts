@@ -166,7 +166,7 @@ export const salesService = {
         const response = await api.get('/sales/quote-requests/open_demands/');
         return response.data;
     },
-      async setQuoteRequestStatus(id: number, status: string) {
+      async setQuoteRequestStatus(id: number | string, status: string) {
           const response = await api.post(`/sales/quote-requests/${id}/set_status/`, { status });
           return response.data;
       },
@@ -177,7 +177,9 @@ export const salesService = {
         return response.data;
     },
 
-    async getQuoteRequest(id: number) {
+    async getQuoteRequest(id: number | string) {
+        // All IDs (numeric DB pk or request_number slug) go directly to /{id}/
+        // The backend get_object() resolves both.
         const response = await api.get(`/sales/quote-requests/${id}/`);
         return response.data;
     },
@@ -191,11 +193,11 @@ export const salesService = {
         const response = await api.put(`/sales/quote-requests/${id}/`, quoteRequestData);
         return response.data;
     },
-    async updateQuoteRequestBasic(id: number, data: any) {
+    async updateQuoteRequestBasic(id: number | string, data: any) {
         const response = await api.post(`/sales/quote-requests/${id}/update_basic/`, data);
         return response.data;
     },
-    async copyQuoteRequest(id: number) {
+    async copyQuoteRequest(id: number | string) {
         const response = await api.post(`/sales/quote-requests/${id}/copy/`, {});
         return response.data as { id: number; number: string };
     },
@@ -205,7 +207,7 @@ export const salesService = {
         return response.data;
     },
     // Soft delete lifecycle
-    async softDeleteQuoteRequest(id: number) {
+    async softDeleteQuoteRequest(id: number | string) {
         const response = await api.post(`/sales/quote-requests/${id}/soft_delete/`, {});
         return response.data;
     },
@@ -213,28 +215,28 @@ export const salesService = {
         const response = await api.get(`/sales/quote-requests/deleted/`);
         return response.data;
     },
-    async restoreQuoteRequest(id: number) {
+    async restoreQuoteRequest(id: number | string) {
         const response = await api.post(`/sales/quote-requests/${id}/restore/`, {});
         return response.data;
     },
-    async purgeQuoteRequest(id: number) {
+    async purgeQuoteRequest(id: number | string) {
         const response = await api.delete(`/sales/quote-requests/${id}/purge/`);
         return response.data;
     },
     // Assignment actions
-    async takeQuoteRequest(id: number) {
+    async takeQuoteRequest(id: number | string) {
         const response = await api.post(`/sales/quote-requests/${id}/take/`, {});
         return response.data;
     },
-    async joinQuoteRequest(id: number) {
+    async joinQuoteRequest(id: number | string) {
         const response = await api.post(`/sales/quote-requests/${id}/join/`, {});
         return response.data;
     },
-    async leaveQuoteRequest(id: number) {
+    async leaveQuoteRequest(id: number | string) {
         const response = await api.post(`/sales/quote-requests/${id}/leave/`, {});
         return response.data;
     },
-    async takeoverQuoteRequest(id: number) {
+    async takeoverQuoteRequest(id: number | string) {
         const response = await api.post(`/sales/quote-requests/${id}/takeover/`, {});
         return response.data;
     },
@@ -243,19 +245,19 @@ export const salesService = {
         const response = await api.get(`/sales/quote-requests/users/`);
         return response.data as Array<{ id: number; name: string; email?: string }>;
     },
-    async listInvitations(id: number) {
+    async listInvitations(id: number | string) {
         const response = await api.get(`/sales/quote-requests/${id}/invitations/`);
         return response.data;
     },
-    async inviteUserToRfq(id: number, userId: number) {
+    async inviteUserToRfq(id: number | string, userId: number) {
         const response = await api.post(`/sales/quote-requests/${id}/invite/`, { user_id: userId });
         return response.data;
     },
-    async acceptInvitation(id: number) {
+    async acceptInvitation(id: number | string) {
         const response = await api.post(`/sales/quote-requests/${id}/accept_invite/`, {});
         return response.data;
     },
-    async declineInvitation(id: number) {
+    async declineInvitation(id: number | string) {
         const response = await api.post(`/sales/quote-requests/${id}/decline_invite/`, {});
         return response.data;
     },
@@ -271,15 +273,15 @@ export const salesService = {
     },
 
     // RFQ actions
-    async setRfqProject(id: number, projectId: number) {
+    async setRfqProject(id: number | string, projectId: number) {
         const response = await api.post(`/sales/quote-requests/${id}/set_project/`, { project_id: projectId });
         return response.data;
     },
-    async orderAllFromRfq(id: number, deadline?: string) {
+    async orderAllFromRfq(id: number | string, deadline?: string) {
         const response = await api.post(`/sales/quote-requests/${id}/order_all/`, deadline ? { deadline } : {});
         return response.data;
     },
-    async orderPartialFromRfq(id: number, itemIds: number[], deadline?: string) {
+    async orderPartialFromRfq(id: number | string, itemIds: number[], deadline?: string) {
         const response = await api.post(`/sales/quote-requests/${id}/order_partial/`, { item_ids: itemIds, ...(deadline ? { deadline } : {}) });
         return response.data;
     },
@@ -431,9 +433,21 @@ export const salesService = {
         const response = await api.get(`/sales/quote-requests/${id}/attachments/`);
         return response.data;
     },
+    async getQuoteRequestManufacturingAttachments(id: number | string) {
+        const response = await api.get(`/sales/quote-requests/${id}/attachments/?manufacturing=1`);
+        return response.data;
+    },
     async uploadQuoteRequestAttachment(id: number, file: File, remark?: string) {
         const fd = new FormData();
         fd.append('file', file);
+        if (remark) fd.append('remark', remark);
+        const response = await api.post(`/sales/quote-requests/${id}/attachments/`, fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+        return response.data;
+    },
+    async uploadQuoteRequestManufacturingAttachment(id: number | string, file: File, remark?: string) {
+        const fd = new FormData();
+        fd.append('file', file);
+        fd.append('is_manufacturing_file', '1');
         if (remark) fd.append('remark', remark);
         const response = await api.post(`/sales/quote-requests/${id}/attachments/`, fd, { headers: { 'Content-Type': 'multipart/form-data' } });
         return response.data;
@@ -444,6 +458,10 @@ export const salesService = {
     },
     async deleteQuoteRequestAttachment(id: number, attachmentId: number) {
         const response = await api.post(`/sales/quote-requests/${id}/delete_attachment/`, { attachment_id: attachmentId });
+        return response.data;
+    },
+    async approveQuoteRequestAttachment(id: number | string, attachmentId: number) {
+        const response = await api.post(`/sales/quote-requests/${id}/approve_attachment/`, { attachment_id: attachmentId });
         return response.data;
     },
     async renameQuoteRequestAttachment(id: number, attachmentId: number, original_filename: string) {

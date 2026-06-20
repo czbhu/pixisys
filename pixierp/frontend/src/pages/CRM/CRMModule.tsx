@@ -7,7 +7,9 @@ import {
     BellOutlined
 } from '@ant-design/icons';
 import Companies from './Companies';
+import CompanyForm from './CompanyForm';
 import Contacts from './Contacts';
+import ContactForm from './ContactForm';
 import Activities from './Activities';
 import Campaigns from './Campaigns';
 import ModuleDashboard from '../../components/ModuleDashboard';
@@ -24,7 +26,9 @@ const CRMModule = () => {
         <Routes>
             <Route path="/" element={<ModuleDashboard title="CRM" items={dashboardItems} />} />
             <Route path="/companies" element={<Companies />} />
+            <Route path="/companies/new" element={<CompanyForm />} />
             <Route path="/contacts" element={<Contacts />} />
+            <Route path="/contacts/new" element={<ContactForm />} />
             <Route path="/activities" element={<Activities />} />
             <Route path="/campaigns" element={<Campaigns />} />
         </Routes>

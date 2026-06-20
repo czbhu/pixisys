@@ -7,7 +7,7 @@ import { Card, Table, Button, Space, Tag, Spin, Alert, message, Tooltip, Modal, 
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
 import type { UploadFile } from 'antd/es/upload/interface';
-import { PlusOutlined, EyeOutlined, SendOutlined, MailOutlined, EditOutlined, SearchOutlined, CopyOutlined, PlusCircleOutlined, ExclamationCircleOutlined, FileTextOutlined, DeleteOutlined, FilterOutlined, CameraOutlined, PictureOutlined, UploadOutlined, PaperClipOutlined, LeftOutlined, RightOutlined, ShoppingCartOutlined, HistoryOutlined, WarningOutlined, PrinterOutlined, UserSwitchOutlined, FolderAddOutlined, RocketOutlined, CarOutlined } from '@ant-design/icons';
+import { PlusOutlined, EyeOutlined, SendOutlined, MailOutlined, EditOutlined, SearchOutlined, CopyOutlined, PlusCircleOutlined, ExclamationCircleOutlined, FileTextOutlined, DeleteOutlined, FilterOutlined, CameraOutlined, PictureOutlined, UploadOutlined, PaperClipOutlined, LeftOutlined, RightOutlined, ShoppingCartOutlined, HistoryOutlined, WarningOutlined, PrinterOutlined, UserSwitchOutlined, FolderAddOutlined, RocketOutlined, CarOutlined, CheckCircleOutlined } from '@ant-design/icons';
 import { isPdf, openPdfPreview } from '../../utils/pdfPreview';
 import { useNewRowTracker, newDotColumn } from '../../hooks/useNewRowTracker';
 import { useNavigate, useSearchParams } from 'react-router-dom'; // Add useSearchParams
@@ -45,6 +45,17 @@ const accentInsensitiveLabelFilter = (input: string, option: any): boolean => {
   return tokens.every(token => label.includes(token));
 };
 
+const getRfqRef = (rfq: any): string => String(rfq?.number || rfq?.request_number || rfq?.id || '');
+
+const findRfqByRef = (rfqs: any[], rfqRef: string | number) => {
+  const ref = String(rfqRef ?? '');
+  return (rfqs || []).find((r: any) =>
+    String(r?.id ?? '') === ref ||
+    String(r?.number ?? '') === ref ||
+    String(r?.request_number ?? '') === ref
+  );
+};
+
 const cloneDraftRfqItem = <T,>(value: T): T => {
   if (value === null || value === undefined) return value;
   if (typeof File !== 'undefined' && value instanceof File) return value;
@@ -60,11 +71,11 @@ const cloneDraftRfqItem = <T,>(value: T): T => {
 const { TextArea } = Input;
 
 const STATUS_COMBOS: Record<string, string[]> = {
-  mind: ['new', 'sent', 'ordered', 'confirmed', 'in_production', 'ready', 'in_delivery', 'delivered', 'invoiced', 'expired', 'archived'],
-  foglalkozos: ['ordered', 'confirmed', 'in_production', 'ready'],
+  mind: ['new', 'sent', 'ordered', 'confirmed', 'in_design', 'pending_customer_approval', 'pending_internal_approval', 'in_production', 'ready', 'in_delivery', 'delivered', 'invoiced', 'expired', 'archived'],
+  foglalkozos: ['ordered', 'confirmed', 'in_design', 'pending_customer_approval', 'pending_internal_approval', 'in_production', 'ready'],
   szallitando: ['ready'],
   szamlazando: ['ready', 'in_delivery', 'delivered'],
-  aktiv: ['new', 'sent', 'ordered', 'confirmed', 'in_production', 'ready', 'in_delivery', 'delivered', 'invoiced'],
+  aktiv: ['new', 'sent', 'ordered', 'confirmed', 'in_design', 'pending_customer_approval', 'pending_internal_approval', 'in_production', 'ready', 'in_delivery', 'delivered', 'invoiced'],
   szamlazható: ['ready', 'in_delivery', 'delivered'],
 };
 const STATUS_COMBO_KEYS = ['foglalkozos', 'szallitando', 'szamlazando', 'aktiv', 'szamlazható'] as const;
@@ -118,6 +129,7 @@ const RFQs: React.FC = () => {
   const [copyItemNextNumber, setCopyItemNextNumber] = useState<string>('');
   const [copyItemUserName, setCopyItemUserName] = useState<string>('');
   const [copyItemLoading, setCopyItemLoading] = useState(false);
+  const [allUsers, setAllUsers] = useState<Array<{ id: number; name: string }>>([]);
   // Ctrl+V paste support in create modal
   useClipboardImagePaste(handleCreateModalPaste, createOpen);
   const [nextNumber, setNextNumber] = useState<string>('');
@@ -146,7 +158,7 @@ const RFQs: React.FC = () => {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewTitle, setPreviewTitle] = useState('');
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [sendOpenId, setSendOpenId] = useState<number | null>(null);
+  const [sendOpenId, setSendOpenId] = useState<number | string | null>(null);
   const [sendForm] = Form.useForm();
   const [confirmEmailForm] = Form.useForm();
   const [sendPreview, setSendPreview] = useState<any | null>(null);
@@ -245,12 +257,12 @@ const RFQs: React.FC = () => {
   const [confirmEmailSending, setConfirmEmailSending] = useState(false);
   const [confirmEmailSentSet, setConfirmEmailSentSet] = useState<number[]>([]);
   const [confirmEmailPreview, setConfirmEmailPreview] = useState<any | null>(null);
-  const [sendRfqList, setSendRfqList] = useState<{ rfqId: number; additionalRfqIds?: number[]; itemIds?: number[]; sent: boolean }[]>([]);
+  const [sendRfqList, setSendRfqList] = useState<{ rfqId: number | string; additionalRfqIds?: (number | string)[]; itemIds?: number[]; sent: boolean }[]>([]);
   const [sendRfqIndex, setSendRfqIndex] = useState(0);
   // Cache per-RFQ form edits so navigating back restores user's changes
   const sendFormCacheRef = React.useRef<Record<number, any>>({});
   // Track additionalRfqIds and itemIds for the currently open send modal (used in render/preview)
-  const currentSendAdditionalRfqIdsRef = React.useRef<number[]>([]);
+  const currentSendAdditionalRfqIdsRef = React.useRef<(number | string)[]>([]);
   const currentSendItemIdsRef = React.useRef<number[]>([]);
   const [expandedRfqKeys, setExpandedRfqKeys] = useState<React.Key[]>([]);
   const [rfqExpandedItems, setRfqExpandedItems] = useState<Record<number, any[]>>({});
@@ -271,10 +283,12 @@ const RFQs: React.FC = () => {
   const [rfqItemRemark, setRfqItemRemark] = useState<Record<number, string>>({});
 
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [historySearch, setHistorySearch] = useState('');
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyItems, setHistoryItems] = useState<any[]>([]);
   const [historySelectedKeys, setHistorySelectedKeys] = useState<React.Key[]>([]);
   const [historyUseQty, setHistoryUseQty] = useState<Record<string | number, boolean>>({});
+  const [historyAllCompanies, setHistoryAllCompanies] = useState(false);
 
   const lastPasteTargetRef = useRef<{ type: 'rfq' | 'item', id: number } | null>(null);
   const rfqLevelRemarkRef = useRef<Record<number, string>>({});
@@ -832,6 +846,9 @@ const RFQs: React.FC = () => {
 
   const RFQ_STATUS_META: Record<string, { color: string; text: string }> = {
     new: { color: 'blue', text: 'Új' },
+    in_design: { color: 'magenta', text: 'Tervezés alatt' },
+    pending_customer_approval: { color: 'gold', text: 'Ügyfél jóváhagyásra vár' },
+    pending_internal_approval: { color: 'volcano', text: 'Belső jóváhagyásra vár' },
     sent: { color: 'gold', text: 'Kiküldve' },
     confirmed: { color: 'cyan', text: 'Megerősítve' },
     in_production: { color: 'orange', text: 'Gyártásban' },
@@ -853,6 +870,9 @@ const RFQs: React.FC = () => {
     { value: 'sent', label: 'Kiküldve' },
     { value: 'ordered', label: 'Megrendelve' },
     { value: 'confirmed', label: 'Megerősítve' },
+    { value: 'in_design', label: 'Tervezés alatt' },
+    { value: 'pending_customer_approval', label: 'Ügyfél jóváhagyásra vár' },
+    { value: 'pending_internal_approval', label: 'Belső jóváhagyásra vár' },
     { value: 'in_production', label: 'Gyártásban' },
     { value: 'ready', label: 'Kész' },
     { value: 'in_delivery', label: 'Szállítás alatt' },
@@ -860,11 +880,14 @@ const RFQs: React.FC = () => {
     { value: 'rejected', label: 'Elutasítva' },
   ];
 
-  const getDisplayStatus = (record: any) => record?._costTopStatus || record?.effective_status || record?.status || 'new';
+  const getDisplayStatus = (record: any) => record?.status || record?.effective_status || record?._costTopStatus || 'new';
 
-  const COST_ITEM_STATUS_ORDER = ['new', 'sent', 'ordered', 'confirmed', 'in_production', 'ready', 'in_delivery', 'delivered', 'rejected'];
+  const COST_ITEM_STATUS_ORDER = ['new', 'sent', 'ordered', 'confirmed', 'in_design', 'pending_customer_approval', 'pending_internal_approval', 'in_production', 'ready', 'in_delivery', 'delivered', 'rejected'];
   const COST_STATUS_META: Record<string, { color: string; text: string }> = {
     new:          { color: 'blue',     text: 'Új' },
+    in_design:    { color: 'magenta',  text: 'Tervezés alatt' },
+    pending_customer_approval: { color: 'gold', text: 'Ügyfél jóváhagyásra vár' },
+    pending_internal_approval: { color: 'volcano', text: 'Belső jóváhagyásra vár' },
     sent:         { color: 'gold',     text: 'Kiküldve' },
     ordered:      { color: 'purple',   text: 'Megrendelve' },
     confirmed:    { color: 'cyan',     text: 'Megerősítve' },
@@ -880,6 +903,9 @@ const RFQs: React.FC = () => {
     { value: 'sent',         label: 'Kiküldve' },
     { value: 'ordered',      label: 'Megrendelve' },
     { value: 'confirmed',    label: 'Megerősítve' },
+    { value: 'in_design',    label: 'Tervezés alatt' },
+    { value: 'pending_customer_approval', label: 'Ügyfél jóváhagyásra vár' },
+    { value: 'pending_internal_approval', label: 'Belső jóváhagyásra vár' },
     { value: 'in_production',label: 'Gyártásban' },
     { value: 'ready',        label: 'Kész' },
     { value: 'in_delivery',  label: 'Szállítás alatt' },
@@ -925,11 +951,14 @@ const RFQs: React.FC = () => {
             style={{ paddingTop: 1, paddingBottom: 1, lineHeight: 1.4 }}
             onClick={async () => {
               try {
-                await salesService.setQuoteRequestStatus(rfqId, option.value);
-                message.success(`Státusz: ${option.label}`);
+                const res = await salesService.setQuoteRequestStatus(rfqId, option.value);
+                const appliedStatus = res?.requested_status || res?.status || option.value;
+                const appliedLabel = RFQ_STATUS_META[appliedStatus]?.text || option.label;
+                message.success(`Státusz: ${appliedLabel}`);
                 setRfqs(prev => prev.map(rfq =>
-                  rfq.id !== rfqId ? rfq : { ...rfq, status: option.value, effective_status: option.value, effective_status_label: option.label }
+                  rfq.id !== rfqId ? rfq : { ...rfq, status: appliedStatus, effective_status: appliedStatus, effective_status_label: appliedLabel }
                 ));
+                loadData();
               } catch {
                 message.error('Hiba a státusz frissítésekor');
               }
@@ -1044,6 +1073,17 @@ const RFQs: React.FC = () => {
     const res: any[] = [];
     filtered.forEach((rfq: any) => {
       const allItems: any[] = rfq.items || [];
+      const firstItem = allItems.find((it: any) => !it?.parent) || allItems[0] || {
+        id: undefined,
+        item_name: rfq.primary_item_name || '',
+        description: rfq.primary_item_description || '',
+        quantity: rfq.primary_quantity ?? 1,
+        unit: rfq.primary_unit || 'db',
+        net_unit_price: rfq.primary_net_unit_price ?? 0,
+        vat_rate: rfq.primary_vat_rate ?? 27,
+        discount_percent: rfq.primary_discount_percent ?? 0,
+        quote_item_id: rfq.primary_quote_item_id,
+      };
       const rfqCompanyName = (() => {
         if (rfq.company?.name) return rfq.company.name;
         if (rfq.company_name) return rfq.company_name;
@@ -1052,65 +1092,54 @@ const RFQs: React.FC = () => {
       })();
       const rfqContactNames = rfq.contact_names || (rfq.contacts || []).map((c: any) => c.name).filter(Boolean).join(', ');
       const rfqIsPrivate = !rfq.company?.name && !rfq.company_name && !(rfq.contacts || []).some((c: any) => c.company?.name || c.company_name);
+      const itemStatus = rfq.status === 'ordered'
+        ? (firstItem?.is_ordered ? (rfq.effective_status || 'ordered') : 'quoted')
+        : rfq.status;
+      const rawCostStatuses: string[] = ((firstItem?.cost_items_statuses || []) as any[])
+        .map((ci: any) => ci.status)
+        .filter((s: string) => COST_ITEM_STATUS_ORDER.includes(s));
+      const costTopStatus: string | null = rawCostStatuses.length > 0
+        ? rawCostStatuses.reduce((best: string, s: string) =>
+            COST_ITEM_STATUS_ORDER.indexOf(s) > COST_ITEM_STATUS_ORDER.indexOf(best) ? s : best
+          )
+        : null;
+      const costIsPartial = costTopStatus !== null && rawCostStatuses.some(s => s !== costTopStatus);
+      const overriddenStatus = firstItem?.id ? (costStatusOverrides[firstItem.id] ?? costTopStatus) : costTopStatus;
+      const overriddenIsPartial = (firstItem?.id && costStatusOverrides[firstItem.id]) ? false : costIsPartial;
 
-      const enrich = (item: any, idx: number) => {
-        const itemStatus = rfq.status === 'ordered'
-          ? (item.is_ordered ? (rfq.effective_status || 'ordered') : 'quoted')
-          : rfq.status;
-        const rawCostStatuses: string[] = ((item.cost_items_statuses || []) as any[])
-          .map((ci: any) => ci.status)
-          .filter((s: string) => COST_ITEM_STATUS_ORDER.includes(s));
-        const costTopStatus: string | null = rawCostStatuses.length > 0
-          ? rawCostStatuses.reduce((best: string, s: string) =>
-              COST_ITEM_STATUS_ORDER.indexOf(s) > COST_ITEM_STATUS_ORDER.indexOf(best) ? s : best
-            )
-          : null;
-        const costIsPartial = costTopStatus !== null && rawCostStatuses.some(s => s !== costTopStatus);
-        // Apply any pending local override so the row reference changes immediately after a status change
-        const overriddenStatus = costStatusOverrides[item.id] ?? costTopStatus;
-        const overriddenIsPartial = costStatusOverrides[item.id] ? false : costIsPartial;
-        return {
-          ...item,
-          uniqueId: `${rfq.id}_${item.id ?? idx}`,
-          rfq_number: rfq.number || rfq.request_number,
-          rfq_id: rfq.id,
-          rfq_title: rfq.title,
-          company_name: rfqCompanyName,
-          company_id: rfq.company?.id ?? null,
-          contact_names: rfqContactNames,
-          is_private: rfqIsPrivate,
-          issue_date: rfq.issue_date,
-          deadline: rfq.deadline,
-          project_name: rfq.project?.name || rfq.project_name || '',
-          status: itemStatus,
-          rfq_status: rfq.status,
-          effective_status: rfq.effective_status,
-          effective_status_label: rfq.effective_status_label,
-          currency_symbol: rfq.currency_symbol || rfq.currency_code || 'Ft',
-          currency_code: rfq.currency_code || '',
-          created_by_name: rfq.created_by_name,
-          _costTopStatus: overriddenStatus,
-          _costIsPartial: overriddenIsPartial,
-        };
-      };
-
-      // Build tree: only root items at top level, children nested
-      const itemById = new Map<number, any>();
-      allItems.forEach((item: any, idx: number) => {
-        itemById.set(item.id, { enriched: enrich(item, idx), childrenList: [] as any[] });
-      });
-      allItems.forEach((item: any) => {
-        if (item.parent && itemById.has(item.parent)) {
-          const childEnriched = itemById.get(item.id)!.enriched;
-          itemById.get(item.parent)!.childrenList.push(childEnriched);
-        }
-      });
-      allItems.filter((item: any) => !item.parent).forEach((item: any) => {
-        const entry = itemById.get(item.id);
-        if (!entry) return;
-        const node = { ...entry.enriched };
-        if (entry.childrenList.length > 0) node.sub_items = entry.childrenList;
-        res.push(node);
+      res.push({
+        ...firstItem,
+        name: firstItem.name || firstItem.item_name || rfq.primary_item_name || rfq.title || '',
+        description: firstItem.description || rfq.primary_item_description || '',
+        quantity: firstItem.quantity ?? rfq.primary_quantity ?? 1,
+        unit: firstItem.unit || rfq.primary_unit || 'db',
+        net_unit_price: firstItem.net_unit_price ?? rfq.primary_net_unit_price ?? 0,
+        vat_rate: firstItem.vat_rate ?? rfq.primary_vat_rate ?? 27,
+        discount_percent: firstItem.discount_percent ?? rfq.primary_discount_percent ?? 0,
+        uniqueId: String(getRfqRef(rfq)),
+        rfq_number: rfq.number || rfq.request_number,
+        rfq_id: getRfqRef(rfq),
+        rfq_pk: rfq.id,
+        rfq_title: rfq.title,
+        company_name: rfqCompanyName,
+        company_id: rfq.company?.id ?? null,
+        contact_names: rfqContactNames,
+        is_private: rfqIsPrivate,
+        issue_date: rfq.issue_date,
+        deadline: rfq.deadline,
+        project_name: rfq.project?.name || rfq.project_name || '',
+        status: itemStatus,
+        rfq_status: rfq.status,
+        effective_status: rfq.effective_status,
+        effective_status_label: rfq.effective_status_label,
+        currency_symbol: rfq.currency_symbol || rfq.currency_code || 'Ft',
+        currency_code: rfq.currency_code || '',
+        created_by_name: rfq.created_by_name,
+        _costTopStatus: overriddenStatus,
+        _costIsPartial: overriddenIsPartial,
+        is_manufacturable: rfq.is_manufacturable ?? false,
+        // Keep the full item list so existing render paths (expanded/details) can still work.
+        _rfq_items: allItems,
       });
     });
     // Apply status filter at item level (based on derived cost item status or rfq status)
@@ -1123,7 +1152,7 @@ const RFQs: React.FC = () => {
         else effectiveStatuses.add(s);
       }
       return res.filter((item: any) => {
-        const itemStatus = item._costTopStatus || item.effective_status || item.status || 'new';
+        const itemStatus = item.status || item.effective_status || item._costTopStatus || 'new';
         return effectiveStatuses.has(itemStatus);
       });
     }
@@ -1132,7 +1161,7 @@ const RFQs: React.FC = () => {
 
   // Load new IDs from backend whenever displayed items change
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { loadNewRfqIds(flattenedItems.map((r: any) => r.id).filter(Boolean)); }, [flattenedItems]);
+  useEffect(() => { loadNewRfqIds(flattenedItems.map((r: any) => r.rfq_pk || r.id).filter(Boolean)); }, [flattenedItems]);
 
   const renderExpandedItemRow = (r: any) => {
     const subItems: any[] = r.sub_items || [];
@@ -1179,7 +1208,7 @@ const RFQs: React.FC = () => {
               manufacturingProductId={Number(r.manufacturing_product)}
               quantity={Number(r.quantity || 1)}
               sourceType="rfq"
-              sourceId={Number(r.rfq_id || 0)}
+              sourceId={Number(r.rfq_pk || 0)}
               sourceNumber={r.rfq_number || String(r.rfq_id || '')}
               sourceItemName={r.manufacturing_product_name || r.product_name || r.name || ''}
             />
@@ -1314,7 +1343,7 @@ const RFQs: React.FC = () => {
       title: 'Ajánlat szám', key: 'rfq_number', width: 140,
       sorter: (a: any, b: any) => (a.rfq_number || '').localeCompare(b.rfq_number || ''),
       render: (_: any, r: any) => (
-        <a href={`/sales/rfqs/${r.rfq_id}`} target="_blank" rel="noopener noreferrer" style={{ color: '#1677ff', fontWeight: 500 }}>
+        <a href={`/sales/rfqs/${r.rfq_number || r.rfq_id}`} target="_blank" rel="noopener noreferrer" style={{ color: '#1677ff', fontWeight: 500 }}>
           {r.rfq_number}
         </a>
       ),
@@ -1412,14 +1441,23 @@ const RFQs: React.FC = () => {
     {
       title: 'Státusz', key: 'item_status', width: 150,
       sorter: (a: any, b: any) => getDisplayStatus(a).localeCompare(getDisplayStatus(b)),
-      render: (_: any, r: any) => renderItemCostStatusControl(r),
+      render: (_: any, r: any) => (
+        <Space size={4} align="center">
+          {renderRfqStatusControl(r, r.rfq_id)}
+          {r.is_manufacturable && (
+            <Tooltip title="Gyártható" getPopupContainer={() => document.body}>
+              <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 16 }} />
+            </Tooltip>
+          )}
+        </Space>
+      ),
     },
     {
       title: 'Műveletek', key: 'actions', width: 200,
       render: (_: any, r: any) => (
         <Space size="small" wrap>
           <Tooltip title="Megnyitás">
-            <Button icon={<EditOutlined style={{ color: '#595959' }} />} size="small" style={{ background: '#f5f5f5', borderColor: '#d9d9d9' }} onClick={() => window.open(`/sales/rfqs/${r.rfq_id}`, '_blank')} />
+            <Button icon={<EditOutlined style={{ color: '#595959' }} />} size="small" style={{ background: '#f5f5f5', borderColor: '#d9d9d9' }} onClick={() => window.open(`/sales/rfqs/${r.rfq_number || r.rfq_id}`, '_blank')} />
           </Tooltip>
           {(() => {
             const ORDERED_ABOVE = ['ordered', 'partially_ordered', 'confirmed', 'in_production', 'ready', 'in_delivery', 'delivered', 'invoiced'];
@@ -1441,7 +1479,10 @@ const RFQs: React.FC = () => {
             <Button icon={<SendOutlined style={{ color: '#1677ff' }} />} size="small" style={{ background: '#e6f4ff', borderColor: '#91caff' }} onClick={(e) => { e.stopPropagation(); setSendRfqList([{ rfqId: r.rfq_id, sent: false }]); setSendRfqIndex(0); openSendModal(r.rfq_id); }} />
           </Tooltip>
           <Tooltip title="Másolás (preload)">
-            <Button icon={<CopyOutlined style={{ color: '#5c3bc2' }} />} size="small" style={{ background: '#f5f0ff', borderColor: '#d3adf7' }} onClick={(e) => { e.stopPropagation(); const parentRfq = rfqs.find((q: any) => q.id === r.rfq_id); if (parentRfq) openCreateFromCopy(parentRfq, r); }} />
+            <Button icon={<CopyOutlined style={{ color: '#5c3bc2' }} />} size="small" style={{ background: '#f5f0ff', borderColor: '#d3adf7' }} onClick={(e) => { e.stopPropagation(); const parentRfq = findRfqByRef(rfqs, r.rfq_id); if (parentRfq) openCreateFromCopy(parentRfq, r); }} />
+          </Tooltip>
+          <Tooltip title="Munkalap nyomtatás">
+            <Button icon={<PrinterOutlined style={{ color: '#d4380d' }} />} size="small" style={{ background: '#fff2e8', borderColor: '#ffbb96' }} onClick={(e) => { e.stopPropagation(); window.open(`/api/manufacturing/cost-items/bulk_work_sheets_for_rfqs/?rfq_ids=${r.rfq_id}`, '_blank'); }} />
           </Tooltip>
 
         </Space>
@@ -1674,16 +1715,23 @@ const RFQs: React.FC = () => {
 
   const openHistoryModal = async () => {
     const companyId = form.getFieldValue('company_id');
-    if (!companyId || companyId === 'private') {
-      message.warning('Kérlek válassz céget először');
+    if (!historyAllCompanies && (!companyId || companyId === 'private')) {
+      message.warning('Kérlek válassz céget először, vagy kapcsold be a "Minden ügyfél" opciót');
       return;
     }
     setHistoryOpen(true);
+    setHistorySearch('');
     setHistoryLoading(true);
     setHistorySelectedKeys([]);
     setHistoryUseQty({});
     try {
-      const res = await api.get('/sales/quote-requests/items_history/', { params: { company_id: companyId } });
+      const params: any = {};
+      if (historyAllCompanies) {
+        params.all_companies = 1;
+      } else {
+        params.company_id = companyId;
+      }
+      const res = await api.get('/sales/quote-requests/items_history/', { params });
       setHistoryItems(res.data || []);
     } catch {
       message.error('Nem sikerült betölteni a korábbi tételeket');
@@ -1700,11 +1748,14 @@ const RFQs: React.FC = () => {
       ref_id: it.ref_id,
       name: it.name,
       code: it.code,
+      quote_number: it.quote_number || '',
       quantity: historyUseQty[it.item_id] ? it.quantity : 1,
       unit: it.unit,
       net_unit_price: it.net_unit_price,
       vat_rate: it.vat_rate,
       description: it.description,
+      internal_description: it.internal_description || '',
+      cost_items_data: it.cost_items_data || [],
       _fromHistory: true,
     }));
     setNewItems(prev => [...prev, ...newItemsToAdd]);
@@ -1740,6 +1791,8 @@ const RFQs: React.FC = () => {
     // Automatikus kitöltés az aktuális felhasználóval
     const userName = user?.first_name && user?.last_name ? `${user.last_name} ${user.first_name}` : user?.username || '';
     setCurrentUserName(userName);
+    // Felhasználók betöltése a select-hez
+    try { const us = await salesService.listUsers(); setAllUsers(us); } catch {}
     setValidityDays(30);
     const today = dayjs();
     const nn = await salesService.getNextQuoteRequestNumber(today.format('YYYY-MM-DD'));
@@ -1887,25 +1940,20 @@ const RFQs: React.FC = () => {
       } catch {}
     }
     
-    setCreateOpen(true);
-
-    // Restore draft if this is a page-refresh reopen
+    // Reset items immediately before opening to guarantee empty state
+    form.resetFields();
+    setNewItems([]);
+    setNewCosts([]);
+    setRfqFiles([]);
+    setRfqImpositionPresets([]);
+    setRfqFileRemarks({});
+    setRfqFileDisplayNames({});
     try {
-      const raw = sessionStorage.getItem('rfq_create_draft');
-      if (raw) {
-        const draft = JSON.parse(raw);
-        if (draft.formValues) {
-          const fv = { ...draft.formValues };
-          if (fv.issue_date) fv.issue_date = dayjs(fv.issue_date);
-          if (fv.deadline) fv.deadline = dayjs(fv.deadline);
-          setPendingFormValues(fv);
-        }
-        if (Array.isArray(draft.newItems) && draft.newItems.length > 0) setNewItems(draft.newItems);
-        if (draft.currency) setCurrency(draft.currency);
-        if (Array.isArray(draft.companies) && draft.companies.length > 0) setCompanies(draft.companies);
-        if (Array.isArray(draft.contacts) && draft.contacts.length > 0) setContacts(draft.contacts);
-      }
+      sessionStorage.removeItem('rfq_create_draft');
+      sessionStorage.removeItem('rfq_create_draft_active');
     } catch {}
+
+    setCreateOpen(true);
 
     // Defer form.setFieldsValue until after the modal renders (via useEffect)
     if (pendingCompanyId || pendingContactId) {
@@ -1933,6 +1981,8 @@ const RFQs: React.FC = () => {
       setCopyItemContacts(rfqContacts);
       const uName = user?.first_name && user?.last_name ? `${user.last_name} ${user.first_name}` : user?.username || '';
       setCopyItemUserName(uName);
+      // Felhasználók betöltése a select-hez
+      try { const us = await salesService.listUsers(); setAllUsers(us); } catch {}
       // Open modal immediately — fetch data in background
       setCopyItemLoading(true);
       setCopyItemModalOpen(true);
@@ -2152,10 +2202,11 @@ const RFQs: React.FC = () => {
         companies,
         contacts,
       }));
+      sessionStorage.setItem('rfq_create_draft_active', '1');
     } catch {}
   };
 
-  const clearDraft = () => { try { sessionStorage.removeItem(DRAFT_KEY); } catch {} };
+  const clearDraft = () => { try { sessionStorage.removeItem(DRAFT_KEY); sessionStorage.removeItem('rfq_create_draft_active'); } catch {} };
 
   // Auto-save draft when items change
   useEffect(() => {
@@ -2233,6 +2284,7 @@ const RFQs: React.FC = () => {
     } else {
       clearDraft();
       setCopySourceItem(null);
+      setCreateOpen(false);
       form.resetFields();
       clearParams();
     }
@@ -2270,7 +2322,7 @@ const RFQs: React.FC = () => {
     // rfq.status='ordered' only means an order was PLACED (could be via public form), not that it's in production
     const IN_PRODUCTION_OR_ABOVE = ['in_production', 'ready', 'in_delivery', 'delivered', 'invoiced'];
     const alreadyOrderedIds = rfqIds.filter(id => {
-      const rfq = (rfqs || []).find((r: any) => r.id === id);
+      const rfq = findRfqByRef((rfqs || []) as any[], id);
       const effectiveStatus = rfq?.effective_status || rfq?.status;
       return rfq && IN_PRODUCTION_OR_ABOVE.includes(effectiveStatus);
     });
@@ -2341,7 +2393,7 @@ const RFQs: React.FC = () => {
       // Group orders by customer (company or customer id) so same customer gets one combined email
       const grouped: { [key: string]: { orderId: number; rfqId: number }[] } = {};
       for (const co of createdOrders) {
-        const rfq = (rfqs || []).find((r: any) => r.id === co.rfqId);
+        const rfq = findRfqByRef((rfqs || []) as any[], co.rfqId);
         const companyKey = String(rfq?.company?.id || rfq?.customer?.id || `rfq_${co.rfqId}`);
         if (!grouped[companyKey]) grouped[companyKey] = [];
         grouped[companyKey].push(co);
@@ -2372,7 +2424,7 @@ const RFQs: React.FC = () => {
       confirmEmailForm.setFieldsValue({ to: res.data.to || '', subject: res.data.subject || '', body: res.data.body || '', signature_key: sigKey });
       setConfirmEmailPreview(res.data);
     } catch {
-      const rfq = (rfqs || []).find((r: any) => r.id === orderEntry.rfqId);
+      const rfq = findRfqByRef((rfqs || []) as any[], orderEntry.rfqId);
       const to = (rfq?.contacts || []).map((c: any) => c.email).filter(Boolean).join(', ');
       confirmEmailForm.setFieldsValue({ to, subject: 'Megrendelés visszaigazolás', body: '' });
     }
@@ -2381,7 +2433,7 @@ const RFQs: React.FC = () => {
 
   const buildCombinedPublicUrl = (rec: any) => {
     const additionalTokens = currentSendAdditionalRfqIdsRef.current
-      .map(id => (rfqs || []).find((r: any) => r.id === id)?.public_token)
+      .map(id => findRfqByRef((rfqs || []) as any[], id)?.public_token)
       .filter(Boolean);
     const baseUrl = rec?.public_order_url || '';
     const urlParams: string[] = [];
@@ -2390,7 +2442,7 @@ const RFQs: React.FC = () => {
     return urlParams.length ? `${baseUrl}?${urlParams.join('&')}` : baseUrl;
   };
 
-  const openSendModal = async (rfqId: number, additionalRfqIds?: number[], itemIds?: number[]) => {
+  const openSendModal = async (rfqId: number | string, additionalRfqIds?: (number | string)[], itemIds?: number[]) => {
     setSendOpenId(rfqId);
     setSendPreview(null);
     currentSendAdditionalRfqIdsRef.current = additionalRfqIds || [];
@@ -2415,7 +2467,7 @@ const RFQs: React.FC = () => {
       setSignatures(sigs);
     } catch {}
 
-    const record = (rfqs || []).find((r: any) => r.id === rfqId);
+    const record = findRfqByRef((rfqs || []) as any[], rfqId);
     if (!record) {
       sendForm.setFieldsValue({ template_key: 'rfq_send', to: '', cc: '', reply_to: '', subject: '', body: '' });
       return;
@@ -2523,81 +2575,68 @@ const RFQs: React.FC = () => {
 
   const [bulkStatusChangeLoading, setBulkStatusChangeLoading] = useState(false);
   const handleBulkChangeStatus = async (newStatus: string) => {
-    const selectedItems = flattenedItems.filter((item: any) => bulkSelectedKeys.includes(item.uniqueId));
-    if (!selectedItems.length) return;
+    const selectedRows = flattenedItems.filter((item: any) => bulkSelectedKeys.includes(item.uniqueId));
+    if (!selectedRows.length) return;
     const label = rfqStatusOptions.find(o => o.value === newStatus)?.label || newStatus;
     setBulkStatusChangeLoading(true);
     let successCount = 0;
 
-    // Items with cost items: change cost_items status only when status is valid for cost items
-    const COST_ITEM_VALID_STATUSES = ['new', 'confirmed', 'sent', 'in_production', 'ready', 'in_delivery', 'delivered', 'rejected'];
+    // Cost-item statuses apply to the manufacturing cost items of the RFQ's primary item.
+    const COST_ITEM_VALID_STATUSES = ['new', 'in_design', 'pending_customer_approval', 'pending_internal_approval', 'confirmed', 'sent', 'in_production', 'ready', 'in_delivery', 'delivered', 'rejected'];
     const isCostItemStatus = COST_ITEM_VALID_STATUSES.includes(newStatus);
-    const itemsWithCosts = isCostItemStatus
-      ? selectedItems.filter((item: any) => (item.cost_items_statuses || []).length > 0)
-      : [];
-    for (const item of itemsWithCosts) {
-      try {
-        await salesService.updateRfqItemCostItemsStatus(item.id, newStatus);
-        successCount++;
-      } catch {
-        message.error(`Hiba a tétel #${item.id} státuszának frissítésekor`);
-      }
-    }
 
-    // Items without cost items (or non-cost-item statuses): change RFQ (QuoteRequest) status
-    const rfqIdsNoCost = Array.from(new Set(
-      selectedItems
-        .filter((item: any) => !isCostItemStatus || !(item.cost_items_statuses || []).length)
-        .map((item: any) => item.rfq_id as number)
-    ));
-    for (const rfqId of rfqIdsNoCost) {
-      try {
-        await salesService.setQuoteRequestStatus(rfqId, newStatus);
-        successCount++;
-      } catch {
-        message.error(`Hiba az ajánlat #${rfqId} státuszának frissítésekor`);
+    for (const row of selectedRows) {
+      const hasCosts = (row.cost_items_statuses || []).length > 0;
+      if (isCostItemStatus && hasCosts && row.id) {
+        // row.id = firstItem.id (1 RFQ = 1 item guaranteed)
+        try {
+          await salesService.updateRfqItemCostItemsStatus(row.id, newStatus);
+          successCount++;
+        } catch {
+          message.error(`Hiba a gyártási státusz frissítésekor (#${row.rfq_id})`);
+        }
+      } else {
+        try {
+          await salesService.setQuoteRequestStatus(row.rfq_id, newStatus);
+          successCount++;
+        } catch {
+          message.error(`Hiba az ajánlat #${row.rfq_id} státuszának frissítésekor`);
+        }
       }
     }
 
     setBulkStatusChangeLoading(false);
     if (successCount > 0) {
-      message.success(`${successCount} tétel → ${label}`);
+      message.success(`${successCount} ajánlat → ${label}`);
       setBulkSelectedKeys([]);
       loadData();
     }
   };
 
   const handleBulkSendEmail = () => {
-    const selectedItems = flattenedItems.filter((item: any) => bulkSelectedKeys.includes(item.uniqueId));
-    const rfqIds = Array.from(new Set(selectedItems.map((item: any) => item.rfq_id as number)));
-    if (!rfqIds.length) return;
-    // Group RFQs by company so same-company RFQs are combined into one email.
-    // For private persons (no company), group by sorted contact IDs so same-person RFQs are also combined.
-    const getRfqGroupKey = (rfq: any, fallbackId: number): string => {
+    const selectedRows = flattenedItems.filter((item: any) => bulkSelectedKeys.includes(item.uniqueId));
+    if (!selectedRows.length) return;
+    // Group by company so same-company RFQs get one combined email.
+    const getGroupKey = (rfq: any, fallbackId: any): string => {
       if (rfq?.company?.id || rfq?.company_id) return String(rfq?.company?.id || rfq?.company_id);
       const contactIds = ((rfq?.contacts || []) as any[]).map((c: any) => c.id).sort();
       if (contactIds.length) return `contacts_${contactIds.join('_')}`;
       return `_${fallbackId}`;
     };
-    const byCompany = new Map<string, number[]>();
-    const itemIdsByCompany = new Map<string, number[]>();
-    rfqIds.forEach(rfqId => {
-      const rfq = (rfqs || []).find((r: any) => r.id === rfqId);
-      const companyKey = getRfqGroupKey(rfq, rfqId);
-      if (!byCompany.has(companyKey)) byCompany.set(companyKey, []);
-      byCompany.get(companyKey)!.push(rfqId);
+    const byCompany = new Map<string, string[]>();
+    selectedRows.forEach((row: any) => {
+      const rfq = findRfqByRef((rfqs || []) as any[], row.rfq_id);
+      const key = getGroupKey(rfq, row.rfq_id);
+      if (!byCompany.has(key)) byCompany.set(key, []);
+      byCompany.get(key)!.push(row.rfq_id);
     });
-    // Collect real item IDs (database IDs) per company group
-    selectedItems.forEach((item: any) => {
-      const rfq = (rfqs || []).find((r: any) => r.id === item.rfq_id);
-      const companyKey = getRfqGroupKey(rfq, item.rfq_id);
-      if (!itemIdsByCompany.has(companyKey)) itemIdsByCompany.set(companyKey, []);
-      if (item.id) itemIdsByCompany.get(companyKey)!.push(item.id);
-    });
-    const list = Array.from(byCompany.entries()).map(([companyKey, ids]) => ({
+    const list = Array.from(byCompany.entries()).map(([, ids]) => ({
       rfqId: ids[0],
       additionalRfqIds: ids.slice(1),
-      itemIds: itemIdsByCompany.get(companyKey) || [],
+      // itemIds: for 1 RFQ = 1 item, the first item id is the row id
+      itemIds: selectedRows
+        .filter((r: any) => ids.includes(r.rfq_id) && r.id)
+        .map((r: any) => r.id),
       sent: false,
     }));
     setSendRfqList(list);
@@ -2609,11 +2648,11 @@ const RFQs: React.FC = () => {
 
   const handleBulkDelivery = async () => {
     const selectedItems = flattenedItems.filter((item: any) => bulkSelectedKeys.includes(item.uniqueId));
-    const orderedItems = selectedItems.filter((item: any) =>
-      item.is_ordered || DELIVERABLE_RFQ_STATUSES.includes(item.rfq_status)
+    const deliverableRows = selectedItems.filter((item: any) =>
+      DELIVERABLE_RFQ_STATUSES.includes(item.rfq_status || item.status)
     );
-    if (!orderedItems.length) {
-      message.warning('Nincs szállítható tétel a kijelöltek között (csak megrendelt vagy kész tételeket lehet szállítani)');
+    if (!deliverableRows.length) {
+      message.warning('Nincs szállítható ajánlat a kijelöltek között (csak megrendelt/kész státuszú ajánlatot lehet szállítani)');
       return;
     }
     // Load pickup locations if not loaded yet
@@ -2635,26 +2674,27 @@ const RFQs: React.FC = () => {
       message.error('Válasszon átvételi pontot!');
       return;
     }
-    const selectedItems = flattenedItems.filter((item: any) => bulkSelectedKeys.includes(item.uniqueId) && (
-      item.is_ordered || DELIVERABLE_RFQ_STATUSES.includes(item.rfq_status)
-    ));
+    const selectedItems = flattenedItems.filter((item: any) =>
+      bulkSelectedKeys.includes(item.uniqueId) &&
+      DELIVERABLE_RFQ_STATUSES.includes(item.rfq_status || item.status)
+    );
     if (!selectedItems.length) return;
-    const groups = new Map<string, { items: any[]; rfqId: number }>();
+    const groups = new Map<string, { rfqIds: string[] }>();
     selectedItems.forEach((item: any) => {
-      const rfq = (rfqs || []).find((r: any) => r.id === item.rfq_id);
+      const rfq = findRfqByRef((rfqs || []) as any[], item.rfq_id);
       const companyKey = String(rfq?.company?.id || rfq?.company_id || item.rfq_id);
-      if (!groups.has(companyKey)) groups.set(companyKey, { items: [], rfqId: item.rfq_id });
-      groups.get(companyKey)!.items.push(item);
+      if (!groups.has(companyKey)) groups.set(companyKey, { rfqIds: [] });
+      groups.get(companyKey)!.rfqIds.push(item.rfq_id);
     });
 
     setBulkDeliveryLoading(true);
     let successCount = 0;
     const createdNoteIds: number[] = [];
     try {
-      for (const group of Array.from(groups.values())) {
-        const rfq = (rfqs || []).find((r: any) => r.id === group.rfqId);
+      for (const [, group] of Array.from(groups.entries())) {
+        const rfq = findRfqByRef((rfqs || []) as any[], group.rfqIds[0]);
         const payload: any = {
-          rfq_item_ids: group.items.map((i: any) => i.id),
+          rfq_ids: group.rfqIds,
           delivery_type: deliveryType,
           delivery_date: new Date().toISOString().split('T')[0],
         };
@@ -2689,26 +2729,26 @@ const RFQs: React.FC = () => {
   };
 
   const handleBulkInvoice = async () => {
-    const selectedItems = flattenedItems.filter((item: any) => bulkSelectedKeys.includes(item.uniqueId) && item.is_ordered);
-    if (!selectedItems.length) {
-      message.warning('Nincs megrendelt tétel a kijelöltek között (csak megrendelt tételeket lehet számlázni)');
+    const selectedRows = flattenedItems.filter((item: any) => bulkSelectedKeys.includes(item.uniqueId));
+    if (!selectedRows.length) {
+      message.warning('Nincs kijelölt ajánlat számlázásra');
       return;
     }
     setBulkInvoiceLoading(true);
     try {
-      // Group by company
-      const groups = new Map<string, { items: any[]; rfqId: number }>();
-      selectedItems.forEach((item: any) => {
-        const rfq = (rfqs || []).find((r: any) => r.id === item.rfq_id);
-        const companyKey = String(rfq?.company?.id || rfq?.company_id || item.rfq_id);
-        if (!groups.has(companyKey)) groups.set(companyKey, { items: [], rfqId: item.rfq_id });
-        groups.get(companyKey)!.items.push(item);
+      // Group by company — one PixInvoice tab per company
+      const groups = new Map<string, { rows: any[]; rfqId: string }>();
+      selectedRows.forEach((row: any) => {
+        const rfq = findRfqByRef((rfqs || []) as any[], row.rfq_id);
+        const companyKey = String(rfq?.company?.id || rfq?.company_id || row.rfq_id);
+        if (!groups.has(companyKey)) groups.set(companyKey, { rows: [], rfqId: row.rfq_id });
+        groups.get(companyKey)!.rows.push({ row, rfq });
       });
 
       for (const group of Array.from(groups.values())) {
-        const rfq = (rfqs || []).find((r: any) => r.id === group.rfqId);
-        const company = rfq?.company;
-        const contacts = rfq?.contacts;
+        const firstRfq = group.rows[0]?.rfq;
+        const company = firstRfq?.company;
+        const contacts = firstRfq?.contacts;
 
         let customerData: any = {};
         if (company) {
@@ -2721,43 +2761,26 @@ const RFQs: React.FC = () => {
           };
         } else if (contacts?.length) {
           const c = typeof contacts[0] === 'object' ? contacts[0] : null;
-          if (c) {
-            customerData = {
-              name: c.name || c.company || '',
-              tax_number: c.tax_number || '',
-              address: c.address || '',
-            };
-          }
+          if (c) customerData = { name: c.name || '', tax_number: c.tax_number || '', address: c.address || '' };
         }
 
-        const invoiceItems: any[] = group.items.map((item: any) => ({
-          description: item.product_name || item.material_name || item.manufacturing_product_name || item.service_name || 'Tétel',
-          product_code_value: item.quote_number || item.product_code || item.material_code || item.manufacturing_product_code || item.service_code || '',
-          quantity: parseFloat(item.quantity),
-          unit_price: parseFloat(item.net_unit_price),
-          vat_rate: parseFloat(item.vat_rate),
-          unit_of_measure: item.unit || 'db',
+        // 1 RFQ = 1 invoice line; use row snapshot with RFQ-level fallbacks
+        const invoiceItems: any[] = group.rows.map(({ row, rfq }: any) => ({
+          description: row.name || row.item_name || rfq?.primary_item_name || rfq?.title || 'Tétel',
+          product_code_value: row.quote_number || row.product_code || rfq?.number || '',
+          quantity: parseFloat(row.quantity ?? rfq?.primary_quantity ?? 1),
+          unit_price: parseFloat(row.net_unit_price ?? rfq?.primary_net_unit_price ?? 0),
+          vat_rate: parseFloat(row.vat_rate ?? rfq?.primary_vat_rate ?? 27),
+          unit_of_measure: row.unit || rfq?.primary_unit || 'db',
         }));
 
-        // Collect unique customer_order_ids for ERP callback
-        const orderIds = Array.from(new Set(
-          group.items.map((i: any) => i.customer_order_id).filter(Boolean)
-        ));
-
-        // Find the latest delivery note date; fall back to today
-        const deliveryDates = group.items
-          .map((i: any) => i.delivery_note_date as string | null | undefined)
-          .filter(Boolean) as string[];
-        const deliveryDate = deliveryDates.length > 0
-          ? [...deliveryDates].sort().pop()!
-          : dayjs().format('YYYY-MM-DD');
-
+        const rfqNumbers = group.rows.map(({ row }: any) => row.rfq_number || row.rfq_id);
         const invoiceData = {
           customer: customerData,
           items: invoiceItems,
-          notes: `ERP árajánlat tételek: ${Array.from(new Set(group.items.map((i: any) => i.rfq_number))).join(', ')}`,
-          erp_order_ids: orderIds,
-          delivery_date: deliveryDate,
+          notes: `ERP árajánlat: ${rfqNumbers.join(', ')}`,
+          erp_rfq_ids: group.rows.map(({ row }: any) => row.rfq_id),
+          delivery_date: dayjs().format('YYYY-MM-DD'),
         };
 
         const encodedData = btoa(encodeURIComponent(JSON.stringify(invoiceData)));
@@ -2837,27 +2860,28 @@ const RFQs: React.FC = () => {
   };
 
   const handleBulkDelete = () => {
-    const selectedItems = flattenedItems.filter((item: any) => bulkSelectedKeys.includes(item.uniqueId));
-    if (!selectedItems.length) return;
+    const selectedRows = flattenedItems.filter((item: any) => bulkSelectedKeys.includes(item.uniqueId));
+    if (!selectedRows.length) return;
+    const rfqIds = Array.from(new Set(selectedRows.map((r: any) => r.rfq_id)));
     Modal.confirm({
-      title: 'Tételek törlése',
+      title: 'Ajánlatok törlése',
       icon: <ExclamationCircleOutlined style={{ color: '#ff4d4f' }} />,
-      content: `Biztosan töröl ${selectedItems.length} kijelölt tételt? Ez a művelet nem visszavonható.`,
+      content: `Biztosan töröl ${rfqIds.length} kijelölt ajánlatot? Ez a művelet nem visszavonható.`,
       okText: 'Igen, törlöm',
       okButtonProps: { danger: true },
       cancelText: 'Mégse',
       onOk: async () => {
         let successCount = 0;
-        for (const item of selectedItems) {
+        for (const rfqId of rfqIds) {
           try {
-            await salesService.deleteQuoteRequestItem(item.id, item.rfq_id);
+            await salesService.softDeleteQuoteRequest(rfqId);
             successCount++;
           } catch {
-            message.error(`Hiba a tétel #${item.id} törlésekor`);
+            message.error(`Hiba az ajánlat #${rfqId} törlésekor`);
           }
         }
         if (successCount > 0) {
-          message.success(`${successCount} tétel törölve`);
+          message.success(`${successCount} ajánlat törölve`);
           setBulkSelectedKeys([]);
           loadData();
         }
@@ -2927,6 +2951,20 @@ const RFQs: React.FC = () => {
         title={<span>Árajánlatok{backgroundLoading && <> <Spin size="small" style={{ marginLeft: 8 }} /><span style={{ fontSize: 12, color: '#888', marginLeft: 4 }}>Betöltés…</span></>}</span>}
         extra={
             <Space wrap className="rfqs-toolbar-actions pixi-unified-card-actions">
+              {bulkSelectedKeys.length > 0 && (
+                <Tooltip title="Összes kijelölés törlése">
+                  <Button
+                    size="small"
+                    type="primary"
+                    danger
+                    icon={<span style={{ marginRight: 4, fontWeight: 700 }}>✕</span>}
+                    onClick={() => setBulkSelectedKeys([])}
+                    style={{ fontWeight: 600 }}
+                  >
+                    {bulkSelectedKeys.length} kijelölve
+                  </Button>
+                </Tooltip>
+              )}
               <Tooltip title={bulkSelectedKeys.length > 0 ? `CSV export (${bulkSelectedKeys.length} kijelölve)` : 'CSV export (jelölj ki tételeket)'}>
                 <Button icon={<FileTextOutlined />} onClick={exportCsv} type={bulkSelectedKeys.length > 0 ? 'primary' : 'default'} />
               </Tooltip>
@@ -2955,6 +2993,9 @@ const RFQs: React.FC = () => {
                       <Select.Option value="sent">Kiküldve</Select.Option>
                       <Select.Option value="ordered">Megrendelve</Select.Option>
                       <Select.Option value="confirmed">Megerősítve</Select.Option>
+                      <Select.Option value="in_design">Tervezés alatt</Select.Option>
+                      <Select.Option value="pending_customer_approval">Ügyfél jóváhagyásra vár</Select.Option>
+                      <Select.Option value="pending_internal_approval">Belső jóváhagyásra vár</Select.Option>
                       <Select.Option value="in_production">Gyártásban</Select.Option>
                       <Select.Option value="ready">Kész</Select.Option>
                       <Select.Option value="in_delivery">Szállítás alatt</Select.Option>
@@ -3039,6 +3080,9 @@ const RFQs: React.FC = () => {
                       <Select.Option value="sent">Kiküldve</Select.Option>
                       <Select.Option value="ordered">Megrendelve</Select.Option>
                       <Select.Option value="confirmed">Megerősítve</Select.Option>
+                      <Select.Option value="in_design">Tervezés alatt</Select.Option>
+                      <Select.Option value="pending_customer_approval">Ügyfél jóváhagyásra vár</Select.Option>
+                      <Select.Option value="pending_internal_approval">Belső jóváhagyásra vár</Select.Option>
                       <Select.Option value="in_production">Gyártásban</Select.Option>
                       <Select.Option value="ready">Kész</Select.Option>
                       <Select.Option value="in_delivery">Szállítás alatt</Select.Option>
@@ -3152,7 +3196,7 @@ const RFQs: React.FC = () => {
         )}
 
         <EnhancedTable key="rfqs-items" tableKey="rfqs-items" searchValue={query} onSearchChange={handleSearchChange} searchPlaceholder="Keresés…" columns={itemsColumns as any} dataSource={flattenedItems} rowKey="uniqueId" pagination={{ pageSize: 10 }} size="small" cardBreakpoint={750} sticky={{ offsetScroll: 0 }} className="rfq-items-table" onRow={(r: any) => {
-          return { onDoubleClick: () => window.open(`/sales/rfqs/${r.rfq_id}`, '_blank'), style: { cursor: 'pointer' } };
+          return { onDoubleClick: () => window.open(`/sales/rfqs/${r.rfq_number || r.rfq_id}`, '_blank'), style: { cursor: 'pointer' } };
         }}
         rowClassName={(r: any) => { const st = getDisplayStatus(r); return st !== 'new' ? `rfq-row-${st}` : ''; }} rowSelection={{ selectedRowKeys: bulkSelectedKeys, onChange: (keys) => setBulkSelectedKeys(keys), columnWidth: 32 }} expandable={{
           columnWidth: 24,
@@ -3174,7 +3218,7 @@ const RFQs: React.FC = () => {
       </Card>
       <Modal 
         title={(() => {
-            const rec = (rfqs || []).find((r: any) => r.id === sendOpenId);
+            const rec = findRfqByRef((rfqs || []) as any[], sendOpenId);
             const contactNames = (rec?.contacts || []).map((c: any) => c.name).filter(Boolean).join(', ');
             const recLabel = rec ? `${rec.request_number || rec.number || ''} (${rec.company?.name || ''}${contactNames ? ' - ' + contactNames : ''})` : '';
             const rfqProgress = sendRfqList.length > 1 ? ` [${sendRfqIndex + 1}/${sendRfqList.length}]` : '';
@@ -3266,7 +3310,7 @@ const RFQs: React.FC = () => {
               />
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                 {sendRfqList.map((item, i) => {
-                  const rec = (rfqs || []).find((r: any) => r.id === item.rfqId);
+                  const rec = findRfqByRef((rfqs || []) as any[], item.rfqId);
                   return (
                     <Tag key={item.rfqId}
                       color={item.sent ? 'success' : i === sendRfqIndex ? 'processing' : 'default'}
@@ -3570,7 +3614,18 @@ const RFQs: React.FC = () => {
             <Row gutter={[8, 4]}>
               <Col xs={24} md={6}>
                 <Form.Item label="Rögzítette" style={{ marginBottom: 6 }}>
-                  <Input value={currentUserName || ''} readOnly style={{ width: '100%' }} />
+                  <Select
+                    showSearch
+                    optionFilterProp="label"
+                    style={{ width: '100%' }}
+                    value={currentUserName || undefined}
+                    onChange={(val) => setCurrentUserName(val)}
+                    placeholder="Válassz felhasználót"
+                  >
+                    {allUsers.map((u) => (
+                      <Select.Option key={u.id} value={u.name} label={u.name}>{u.name}</Select.Option>
+                    ))}
+                  </Select>
                 </Form.Item>
               </Col>
               <Col xs={24} md={4}>
@@ -4619,6 +4674,9 @@ const RFQs: React.FC = () => {
           net_unit_price: Number(newItems[editIdx].net_unit_price || 0),
           vat_rate: Number(newItems[editIdx].vat_rate || 27),
           description: newItems[editIdx].description,
+          internal_description: (newItems[editIdx] as any).internal_description || '',
+          quote_number: (newItems[editIdx] as any).quote_number || '',
+          cost_items_data: (newItems[editIdx] as any).cost_items_data || [],
           discount_percent: Number((newItems[editIdx] as any).discount_percent || 0),
           discount_amount: Number((newItems[editIdx] as any).discount_amount || 0),
         } : undefined) : undefined}
@@ -4648,7 +4706,18 @@ const RFQs: React.FC = () => {
             <Row gutter={[8, 4]}>
               <Col xs={24} md={6}>
                 <Form.Item label="Rögzítette" style={{ marginBottom: 6 }}>
-                  <Input value={copyItemUserName} readOnly style={{ width: '100%' }} />
+                  <Select
+                    showSearch
+                    optionFilterProp="label"
+                    style={{ width: '100%' }}
+                    value={copyItemUserName || undefined}
+                    onChange={(val) => setCopyItemUserName(val)}
+                    placeholder="Válassz felhasználót"
+                  >
+                    {allUsers.map((u) => (
+                      <Select.Option key={u.id} value={u.name} label={u.name}>{u.name}</Select.Option>
+                    ))}
+                  </Select>
                 </Form.Item>
               </Col>
               <Col xs={24} md={4}>
@@ -4899,15 +4968,58 @@ const RFQs: React.FC = () => {
         width={1100}
         okButtonProps={{ disabled: historySelectedKeys.length === 0 }}
       >
+        {/* Keresősor + minden ügyfél checkbox — mindig látszik */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 12 }}>
+          <Input.Search
+            placeholder="Keresés tétel neve, leírás, ajánlat száma alapján..."
+            value={historySearch}
+            onChange={(e) => setHistorySearch(e.target.value)}
+            allowClear
+            style={{ flex: 1 }}
+          />
+          <Checkbox
+            checked={historyAllCompanies}
+            onChange={(e) => {
+              setHistoryAllCompanies(e.target.checked);
+              setHistoryItems([]);
+              setHistorySelectedKeys([]);
+              setHistoryLoading(true);
+              const companyId = form.getFieldValue('company_id');
+              const params: any = e.target.checked
+                ? { all_companies: 1 }
+                : (companyId && companyId !== 'private' ? { company_id: companyId } : { all_companies: 1 });
+              api.get('/sales/quote-requests/items_history/', { params })
+                .then(res => setHistoryItems(res.data || []))
+                .catch(() => message.error('Nem sikerült betölteni'))
+                .finally(() => setHistoryLoading(false));
+            }}
+          >
+            Minden ügyfél
+          </Checkbox>
+        </div>
+
         {historyLoading ? (
           <div style={{ textAlign: 'center', padding: 40 }}><Spin /></div>
         ) : historyItems.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: 40, color: '#888' }}>Nincs korábbi tétel ehhez az ügyfélhez.</div>
+          <div style={{ textAlign: 'center', padding: 40, color: '#888' }}>Nincs korábbi tétel{historyAllCompanies ? '' : ' ehhez az ügyfélhez'}.</div>
         ) : (
+          <>
           <Table
             size="small"
             rowKey="item_id"
-            dataSource={historyItems}
+            dataSource={historyItems.filter((it: any) => {
+              const trimmedSearch = (historySearch || '').trim();
+              if (!trimmedSearch) return true;
+              const norm = (s: string) => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9 ]/g, '');
+              const tokens = norm(trimmedSearch).split(/\s+/).filter(Boolean);
+              if (tokens.length === 0) return true;
+              const combined = [
+                it.name, it.description, it.internal_description,
+                it.rfq_number, it.code, it.quote_number, it.company_name || '',
+                ...(it.costs || []).flatMap((c: any) => [c.name, c.code]),
+              ].map(norm).join(' ');
+              return tokens.every((t: string) => combined.includes(t));
+            })}
             rowSelection={{
               type: 'checkbox',
               selectedRowKeys: historySelectedKeys,
@@ -4951,7 +5063,34 @@ const RFQs: React.FC = () => {
               { title: 'Dátum', dataIndex: 'rfq_date', key: 'rfq_date', width: 100,
                 sorter: (a: any, b: any) => a.rfq_date.localeCompare(b.rfq_date),
                 defaultSortOrder: 'descend' as const },
-              { title: 'Ajánlat #', dataIndex: 'rfq_number', key: 'rfq_number', width: 120 },
+              { title: 'Státusz', key: 'item_status', width: 110,
+                render: (_: any, r: any) => {
+                  const SM: Record<string, { color: string; text: string }> = {
+                    new:           { color: 'default', text: 'Új' },
+                    quoted:        { color: 'blue',    text: 'Ajánlatban' },
+                    ordered:       { color: 'cyan',    text: 'Megrendelve' },
+                    in_production: { color: 'orange',  text: 'Gyártásban' },
+                    ready:         { color: 'green',   text: 'Kész' },
+                    in_delivery:   { color: 'geekblue', text: 'Szállítás' },
+                    delivered:     { color: 'success', text: 'Kiszállítva' },
+                    invoiced:      { color: 'gold',    text: 'Számlázva' },
+                    cancelled:     { color: 'red',     text: 'Törölve' },
+                  };
+                  const st = r.item_status || 'new';
+                  const m = SM[st] || { color: 'default', text: st };
+                  return <Tag color={m.color}>{m.text}</Tag>;
+                },
+              },
+              { title: 'Ajánlat #', dataIndex: 'rfq_number', key: 'rfq_number', width: 150,
+                render: (v: string, r: any) => (
+                  <div>
+                    <div style={{ fontWeight: 500 }}>{v}</div>
+                    {historyAllCompanies && r.company_name && (
+                      <div style={{ fontSize: 11, color: '#666' }}>{r.company_name}</div>
+                    )}
+                  </div>
+                ),
+              },
               { title: 'Tétel neve', dataIndex: 'name', key: 'name',
                 render: (v: string, r: any) => (
                   <div>
@@ -4983,6 +5122,7 @@ const RFQs: React.FC = () => {
             ]}
             pagination={{ pageSize: 20 }}
           />
+          </>
         )}
       </Modal>
 
@@ -5007,7 +5147,7 @@ const RFQs: React.FC = () => {
       <Modal
         title={(() => {
           const entry = confirmEmailOrders[confirmEmailIndex];
-          const rfq = entry ? (rfqs || []).find((r: any) => r.id === entry.rfqId) : null;
+          const rfq = entry ? findRfqByRef((rfqs || []) as any[], entry.rfqId) : null;
           const label = rfq ? `${rfq.request_number || rfq.number || ''} (${rfq.company?.name || ''})` : '';
           const progress = confirmEmailOrders.length > 1 ? ` [${confirmEmailIndex + 1}/${confirmEmailOrders.length}]` : '';
           return `Megrendelés visszaigazolás${progress}: ${label}`;
@@ -5067,7 +5207,7 @@ const RFQs: React.FC = () => {
             />
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
               {confirmEmailOrders.map((entry, i) => {
-                const rfq = (rfqs || []).find((r: any) => r.id === entry.rfqId);
+                const rfq = findRfqByRef((rfqs || []) as any[], entry.rfqId);
                 return (
                   <Tag key={entry.primaryOrderId}
                     color={confirmEmailSentSet.includes(i) ? 'success' : i === confirmEmailIndex ? 'processing' : 'default'}

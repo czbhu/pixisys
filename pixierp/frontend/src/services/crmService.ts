@@ -2,6 +2,7 @@ import api from './api';
 
 type NavLookupResult = {
     name: string;
+    short_name: string;
     company_type: string;
     tax_number: string;
     group_tax_number: string;
@@ -66,7 +67,8 @@ export const crmService = {
         const normalizeFromNav = (d: any) => {
             if (!d) return null;
             if (d.taxpayer_name || d.taxpayer_address_list) {
-                const name = d.taxpayer_short_name || d.taxpayer_name || '';
+                const name = d.taxpayer_name || d.taxpayer_short_name || '';
+                const short_name = d.taxpayer_short_name || '';
                 const tdet = d.tax_number_detail || {};
                 const tpid = tdet.taxpayerId || d.taxpayerId || '';
                 const vatc = (tdet.vatCode ?? '').toString();
@@ -87,6 +89,7 @@ export const crmService = {
                 const full_address = parts.join(' ');
                 return {
                     name,
+                    short_name,
                     company_type: 'customer',
                     tax_number: taxNumber || `${tax8}--`,
                     group_tax_number: '',

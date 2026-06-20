@@ -48,6 +48,9 @@ class QuoteRequest(models.Model):
     """Árajánlat (korábban: Ajánlatkérés)"""
     STATUS_CHOICES = [
         ('new', 'Új'),
+        ('in_design', 'Tervezés alatt'),
+        ('pending_customer_approval', 'Ügyfél jóváhagyásra vár'),
+        ('pending_internal_approval', 'Belső jóváhagyásra vár'),
         ('in_progress', 'Feldolgozás alatt'),
         ('quoted', 'Ajánlat kész'),
         ('accepted', 'Elfogadva'),
@@ -70,7 +73,7 @@ class QuoteRequest(models.Model):
     title = models.CharField(max_length=200, verbose_name="Cím")
     description = models.TextField(verbose_name="Leírás")
     internal_description = models.TextField(blank=True, verbose_name="Belső leírás")
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='new', verbose_name="Státusz")
+    status = models.CharField(max_length=40, choices=STATUS_CHOICES, default='new', verbose_name="Státusz")
     # requested_by helyett created_by használatos
     requested_by = models.ForeignKey(User, on_delete=models.CASCADE, verbose_name="Kérte", related_name='requested_quotes', null=True, blank=True)
     deadline = models.DateField(verbose_name="Határidő", null=True, blank=True)
@@ -95,6 +98,23 @@ class QuoteRequest(models.Model):
     valid_until = models.DateField(null=True, blank=True, verbose_name="Érvényes")
     # RFQ-szintű impozíció presetek (lista)
     imposition_presets = models.JSONField(default=list, blank=True, verbose_name="Impozíció presetek")
+    is_manufacturable = models.BooleanField(default=False, verbose_name="Gyártható")
+    manufacturable_marked_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='manufacturable_marked_quote_requests', verbose_name="Gyárthatóvá tette")
+    manufacturable_marked_at = models.DateTimeField(null=True, blank=True, verbose_name="Gyárthatóvá jelölés ideje")
+
+    # RFQ-first transition snapshot fields (1 RFQ = 1 item = 1 order)
+    primary_item_name = models.CharField(max_length=200, blank=True, default='', verbose_name="Elsődleges tétel neve")
+    primary_item_description = models.TextField(blank=True, default='', verbose_name="Elsődleges tétel leírás")
+    primary_quantity = models.DecimalField(max_digits=10, decimal_places=2, default=1, verbose_name="Elsődleges mennyiség")
+    primary_unit = models.CharField(max_length=20, default='db', verbose_name="Elsődleges egység")
+    primary_net_unit_price = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name="Elsődleges nettó egységár")
+    primary_vat_rate = models.DecimalField(max_digits=5, decimal_places=2, default=27.0, verbose_name="Elsődleges ÁFA %")
+    primary_discount_percent = models.DecimalField(max_digits=5, decimal_places=2, default=0, verbose_name="Elsődleges kedvezmény %")
+    primary_quote_item_id = models.IntegerField(null=True, blank=True, verbose_name="Elsődleges tétel azonosító")
+
+    primary_order_number = models.CharField(max_length=50, blank=True, default='', verbose_name="Elsődleges megrendelés szám")
+    primary_delivery_note_number = models.CharField(max_length=50, blank=True, default='', verbose_name="Elsődleges szállítólevél szám")
+    primary_invoice_number = models.CharField(max_length=100, blank=True, default='', verbose_name="Elsődleges számla szám")
 
     class Meta:
         verbose_name = "Árajánlat"
@@ -629,6 +649,9 @@ class QuoteRequestAttachment(models.Model):
     file = models.FileField(upload_to='quote_requests/%Y/%m/%d/')
     original_filename = models.CharField(max_length=255, blank=True, verbose_name='Eredeti fájlnév')
     remark = models.CharField(max_length=255, blank=True)
+    is_manufacturing_file = models.BooleanField(default=False, verbose_name='Gyártási fájl')
+    approved_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='approved_quote_request_attachments')
+    approved_at = models.DateTimeField(null=True, blank=True)
     storage_file_id = models.IntegerField(null=True, blank=True, verbose_name='Storage fájl ID')
     uploaded_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
