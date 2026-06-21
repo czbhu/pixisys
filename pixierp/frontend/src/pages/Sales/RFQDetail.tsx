@@ -167,6 +167,8 @@ const RFQDetail: React.FC = () => {
     return (showCompany && compName) ? `${baseName} — ${compName}` : baseName;
   };
 
+  const getContactOptionValue = (p: any, fallback?: number) => String(p?.local_id ?? p?.id ?? fallback ?? '');
+
   /** Refresh only the items list without showing the full-page spinner.
    *  Used after item add/edit/delete/reorder so the cost table updates in place. */
   const refreshItems = useCallback(async () => {
@@ -528,7 +530,21 @@ const RFQDetail: React.FC = () => {
   const saveBasicFromCurrentForm = async () => {
     if (!id || !rfq) return;
     const values = formBasic.getFieldsValue();
-    const companyId = values.company_id ?? rfq.company?.id;
+    let companyId = values.company_id ?? rfq.company?.id;
+    const selectedContactIds = Array.isArray(values.contact_ids) ? values.contact_ids.map(String) : [];
+    if (!companyId && selectedContactIds.length > 0) {
+      const selectedContacts = (contacts || []).filter((contact: any) => (
+        selectedContactIds.includes(getContactOptionValue(contact)) ||
+        selectedContactIds.includes(String(contact?.id ?? ''))
+      ));
+      if (selectedContacts.length > 0) {
+        const inferredCompanyId = selectedContacts
+          .map((contact: any) => contact?.customer || contact?.customer_id || contact?.company || contact?.company_id)
+          .find(Boolean);
+        companyId = inferredCompanyId || 'private';
+        formBasic.setFieldValue('company_id', companyId);
+      }
+    }
     if (!companyId && companyId !== 'private') {
       throw new Error('A Cég mező kötelező.');
     }
@@ -1337,7 +1353,7 @@ const RFQDetail: React.FC = () => {
                       <Space.Compact style={{ width: '100%' }}>
                         <Form.Item name="contact_ids" noStyle>
                           <Select size="small" mode="multiple" allowClear showSearch filterOption={filterOptionAccents} optionLabelProp="label" placeholder="Kapcsolattartók" style={{ width: 'calc(100% - 72px)' }}
-                            options={(contacts || []).map((p: any, idx: number) => ({ value: String(p.id ?? idx), label: contactOptionLabel(p, !formBasic.getFieldValue('company_id')) }))}
+                            options={(contacts || []).map((p: any, idx: number) => ({ value: getContactOptionValue(p, idx), label: contactOptionLabel(p, !formBasic.getFieldValue('company_id')) }))}
                             onFocus={async () => {
                               const cid = formBasic.getFieldValue('company_id');
                               if (cid === 'private') { const l = await crmService.getPrivateContacts(); setContacts((l as any).results ?? l); }
@@ -1349,17 +1365,36 @@ const RFQDetail: React.FC = () => {
                               const cid = formBasic.getFieldValue('company_id');
                               if (!cid && Array.isArray(val) && val.length > 0) {
                                 const lastId = val[val.length - 1];
-                                const chosen = contacts.find((c: any) => String(c.id) === String(lastId));
+                                const chosen = contacts.find((c: any) => (
+                                  getContactOptionValue(c) === String(lastId) || String(c.id) === String(lastId)
+                                ));
                                 const chosenCid = chosen?.customer || chosen?.customer_id || chosen?.company || chosen?.company_id;
                                 if (chosenCid) {
                                   formBasic.setFieldsValue({ company_id: chosenCid });
                                   const cl = await crmService.getContactsByCompany(chosenCid);
                                   const loaded: any[] = ((cl as any).results ?? cl) || [];
                                   const merged = [...loaded];
-                                  (val as any[]).forEach((selId: any) => { if (!merged.find((c: any) => String(c.id) === String(selId))) { const ex = contacts.find((c: any) => String(c.id) === String(selId)); if (ex) merged.push(ex); } });
+                                  (val as any[]).forEach((selId: any) => {
+                                    if (!merged.find((c: any) => getContactOptionValue(c) === String(selId) || String(c.id) === String(selId))) {
+                                      const ex = contacts.find((c: any) => getContactOptionValue(c) === String(selId) || String(c.id) === String(selId));
+                                      if (ex) merged.push(ex);
+                                    }
+                                  });
                                   setContacts(merged);
                                   const cname = chosen?.customer_name || chosen?.company_name;
                                   if (cname) setCompanies((prev: any[]) => prev.find((c: any) => String(c.id) === String(chosenCid)) ? prev : [{ id: chosenCid, name: cname }, ...prev]);
+                                } else {
+                                  formBasic.setFieldsValue({ company_id: 'private' });
+                                  const l = await crmService.getPrivateContacts();
+                                  const loaded: any[] = ((l as any).results ?? l) || [];
+                                  const merged = [...loaded];
+                                  (val as any[]).forEach((selId: any) => {
+                                    if (!merged.find((c: any) => getContactOptionValue(c) === String(selId) || String(c.id) === String(selId))) {
+                                      const ex = contacts.find((c: any) => getContactOptionValue(c) === String(selId) || String(c.id) === String(selId));
+                                      if (ex) merged.push(ex);
+                                    }
+                                  });
+                                  setContacts(merged);
                                 }
                               }
                             }}

@@ -1482,7 +1482,16 @@ const RFQs: React.FC = () => {
             <Button icon={<CopyOutlined style={{ color: '#5c3bc2' }} />} size="small" style={{ background: '#f5f0ff', borderColor: '#d3adf7' }} onClick={(e) => { e.stopPropagation(); const parentRfq = findRfqByRef(rfqs, r.rfq_id); if (parentRfq) openCreateFromCopy(parentRfq, r); }} />
           </Tooltip>
           <Tooltip title="Munkalap nyomtatás">
-            <Button icon={<PrinterOutlined style={{ color: '#d4380d' }} />} size="small" style={{ background: '#fff2e8', borderColor: '#ffbb96' }} onClick={(e) => { e.stopPropagation(); window.open(`/api/manufacturing/cost-items/bulk_work_sheets_for_rfqs/?rfq_ids=${r.rfq_id}`, '_blank'); }} />
+            <Button
+              icon={<PrinterOutlined style={{ color: '#d4380d' }} />}
+              size="small"
+              style={{ background: '#fff2e8', borderColor: '#ffbb96' }}
+              onClick={(e) => {
+                e.stopPropagation();
+                setBulkSelectedKeys([r.uniqueId]);
+                setRfqBulkPrintModalOpen(true);
+              }}
+            />
           </Tooltip>
 
         </Space>
@@ -2680,12 +2689,45 @@ const RFQs: React.FC = () => {
       DELIVERABLE_RFQ_STATUSES.includes(item.rfq_status || item.status)
     );
     if (!selectedItems.length) return;
-    const groups = new Map<string, { rfqIds: string[] }>();
+    const getPrimaryContactId = (rfq: any): number | null => {
+      const rawContactId =
+        rfq?.primary_contact?.id ??
+        rfq?.primary_contact_id ??
+        (Array.isArray(rfq?.contacts) && rfq.contacts.length
+          ? (typeof rfq.contacts[0] === 'object' ? rfq.contacts[0]?.id : rfq.contacts[0])
+          : null) ??
+        (Array.isArray(rfq?.contact_ids) && rfq.contact_ids.length ? rfq.contact_ids[0] : null);
+      const parsed = Number(rawContactId);
+      return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+    };
+    const isPrivateRfq = (rfq: any): boolean => {
+      if (rfq?.company?.id || rfq?.company_id || rfq?.company?.name || rfq?.company_name) return false;
+      const contacts = Array.isArray(rfq?.contacts) ? rfq.contacts : [];
+      return !contacts.some((c: any) => c?.company?.id || c?.company_id || c?.company?.name || c?.company_name);
+    };
+    const groups = new Map<string, { rfqIds: string[]; customerId: number | null; contactId: number | null }>();
     selectedItems.forEach((item: any) => {
       const rfq = findRfqByRef((rfqs || []) as any[], item.rfq_id);
-      const companyKey = String(rfq?.company?.id || rfq?.company_id || item.rfq_id);
-      if (!groups.has(companyKey)) groups.set(companyKey, { rfqIds: [] });
-      groups.get(companyKey)!.rfqIds.push(item.rfq_id);
+      const companyId = Number(rfq?.company?.id || rfq?.company_id || 0) || null;
+      const contactId = getPrimaryContactId(rfq);
+      const usePrivateContactGrouping = isPrivateRfq(rfq) && !!contactId;
+      const groupKey = usePrivateContactGrouping
+        ? `private_contact_${contactId}`
+        : companyId
+          ? `company_${companyId}`
+          : `rfq_${item.rfq_id}`;
+
+      if (!groups.has(groupKey)) {
+        groups.set(groupKey, {
+          rfqIds: [],
+          customerId: usePrivateContactGrouping ? null : companyId,
+          contactId: usePrivateContactGrouping ? contactId : null,
+        });
+      }
+      const group = groups.get(groupKey)!;
+      if (!group.rfqIds.includes(item.rfq_id)) {
+        group.rfqIds.push(item.rfq_id);
+      }
     });
 
     setBulkDeliveryLoading(true);
@@ -2702,7 +2744,11 @@ const RFQs: React.FC = () => {
         if (deliveryType === 'pickup' && selectedPickupLocationId) {
           payload.pickup_location_id = selectedPickupLocationId;
         }
-        if (rfq?.company?.id) {
+        if (group.customerId) {
+          payload.customer_id = group.customerId;
+        } else if (group.contactId) {
+          payload.contact_id = group.contactId;
+        } else if (rfq?.company?.id) {
           payload.customer_id = rfq.company.id;
         } else if (rfq?.contacts?.length) {
           payload.contact_id = typeof rfq.contacts[0] === 'object' ? rfq.contacts[0].id : rfq.contacts[0];

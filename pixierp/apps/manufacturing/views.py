@@ -1794,9 +1794,6 @@ class ManufacturingCostItemViewSet(
             if internal and product_internal_desc:
                 draw_text_block("Belső leírás:", product_internal_desc)
 
-            if internal and item_note and product_desc and item_note.strip() != product_desc.strip():
-                draw_text_block("Termék leírása:", product_desc)
-
             if internal and rfq_internal_desc:
                 draw_text_block("Ajánlat belső leírása:", rfq_internal_desc)
 

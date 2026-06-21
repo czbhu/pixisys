@@ -51,6 +51,62 @@ def _filter_by_query(items, query):
     return filtered
 
 
+def _find_remote_customer_match(customers, local_company):
+    local_tax = str(getattr(local_company, 'tax_number', '') or getattr(local_company, 'full_tax_number', '') or '').replace(' ', '').strip()
+    local_name = str(getattr(local_company, 'name', '') or '').strip().lower()
+    local_city = str(getattr(local_company, 'city', '') or '').strip().lower()
+    local_postal = str(getattr(local_company, 'postal_code', '') or '').strip()
+    local_address = str(getattr(local_company, 'address', '') or '').strip().lower()
+
+    if local_tax:
+        found = next(
+            (
+                cust for cust in customers
+                if str(cust.get('tax_number') or cust.get('taxNumber') or '').replace(' ', '').strip() == local_tax
+            ),
+            None,
+        )
+        if found:
+            return found
+
+    if local_name:
+        found = next(
+            (
+                cust for cust in customers
+                if str(cust.get('name') or cust.get('full_name') or '').strip().lower() == local_name
+            ),
+            None,
+        )
+        if found:
+            return found
+
+        found = next(
+            (
+                cust for cust in customers
+                if local_name in str(cust.get('name') or cust.get('full_name') or '').strip().lower()
+                or str(cust.get('name') or cust.get('full_name') or '').strip().lower() in local_name
+            ),
+            None,
+        )
+        if found:
+            return found
+
+    if local_postal or local_city or local_address:
+        found = next(
+            (
+                cust for cust in customers
+                if (not local_postal or str(cust.get('postal_code') or cust.get('zip') or '').strip() == local_postal)
+                and (not local_city or str(cust.get('city') or '').strip().lower() == local_city)
+                and (not local_address or str(cust.get('address') or cust.get('billing_address') or '').strip().lower() == local_address)
+            ),
+            None,
+        )
+        if found:
+            return found
+
+    return None
+
+
 def _is_truthy_flag(value):
     if isinstance(value, bool):
         return value
@@ -169,6 +225,7 @@ class CompanyViewSet(viewsets.ViewSet):
                 return Response({'error': 'PixInvoice company_id hiányzik'}, status=status.HTTP_400_BAD_REQUEST)
 
             # If pk looks like a local integer ID, resolve the PixInvoice UUID via external_id
+            # or, when missing, by tax number / exact company name from PixInvoice.
             pixinvoice_pk = pk
             try:
                 local_id = int(pk)
@@ -176,6 +233,25 @@ class CompanyViewSet(viewsets.ViewSet):
                 local = LocalCompany.objects.filter(id=local_id).first()
                 if local and local.external_id:
                     pixinvoice_pk = local.external_id
+                elif local:
+                    customers = client.list_customers(company_id=company_id)
+                    found = _find_remote_customer_match(customers, local)
+
+                    if found:
+                        pixinvoice_pk = found.get('id') or found.get('customer_id') or pk
+                        remote_country = found.get('country') or found.get('countryCode')
+                        update_fields = []
+                        if pixinvoice_pk and local.external_id != pixinvoice_pk:
+                            local.external_id = pixinvoice_pk
+                            update_fields.append('external_id')
+                        if remote_country and local.country != remote_country:
+                            local.country = remote_country
+                            update_fields.append('country')
+                        if update_fields:
+                            try:
+                                local.save(update_fields=update_fields)
+                            except Exception:
+                                pass
             except (ValueError, TypeError):
                 pass  # pk is already a UUID string
 
@@ -193,6 +269,56 @@ class CompanyViewSet(viewsets.ViewSet):
             return Response(item)
         except requests.HTTPError as e:
             code = e.response.status_code if e.response is not None else status.HTTP_502_BAD_GATEWAY
+            if code == 404:
+                try:
+                    # Some PixInvoice tenants return 404 for customer detail when a
+                    # tenant-scoped company_id is passed, while the same UUID is
+                    # retrievable without the tenant parameter.
+                    if str(pixinvoice_pk) != str(pk):
+                        client = PixinvoiceClient()
+                        item = client.get_customer(pixinvoice_pk)
+                        if item is not None and not item.get('eu_tax_number'):
+                            tax_digits = ''.join(filter(str.isdigit, str(item.get('tax_number') or '')[:8]))
+                            if tax_digits:
+                                item['eu_tax_number'] = f"HU{tax_digits}"
+                        return Response(item)
+                except Exception:
+                    pass
+            if code == 404:
+                try:
+                    local_id = int(pk)
+                    from .models import Company as LocalCompany
+                    local = LocalCompany.objects.filter(id=local_id).first()
+                    if local:
+                        client = PixinvoiceClient()
+                        retry_company_id = _resolve_company_id(request) or _ensure_company_id(client)
+                        if retry_company_id:
+                            customers = client.list_customers(company_id=retry_company_id)
+                            found = _find_remote_customer_match(customers, local)
+
+                            if found:
+                                remote_pk = found.get('id') or found.get('customer_id')
+                                try:
+                                    item = client.get_customer(remote_pk, company_id=retry_company_id)
+                                except requests.HTTPError as retry_err:
+                                    retry_code = retry_err.response.status_code if retry_err.response is not None else None
+                                    if retry_code == 404:
+                                        item = client.get_customer(remote_pk)
+                                    else:
+                                        raise
+                                if remote_pk and not local.external_id:
+                                    try:
+                                        local.external_id = remote_pk
+                                        local.save(update_fields=['external_id'])
+                                    except Exception:
+                                        pass
+                                if item is not None and not item.get('eu_tax_number'):
+                                    tax_digits = ''.join(filter(str.isdigit, str(item.get('tax_number') or '')[:8]))
+                                    if tax_digits:
+                                        item['eu_tax_number'] = f"HU{tax_digits}"
+                                return Response(item)
+                except Exception:
+                    pass
             # Ha a PixInvoice 404-et ad vissza, töröljük az elavult external_id-t a local DB-ből
             if code == 404:
                 try:

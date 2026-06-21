@@ -2661,6 +2661,39 @@ def public_order_view(request, token: str):
     qr = get_object_or_404(QuoteRequest, public_token=token)
     if qr.public_expires_at and timezone.now() > qr.public_expires_at:
         return Response({'error': 'Link lejárt'}, status=410)
+
+    country_code_map = {
+        'HU': 'Magyarország',
+        'DE': 'Németország',
+        'AT': 'Ausztria',
+        'RO': 'Románia',
+        'SK': 'Szlovákia',
+        'HR': 'Horvátország',
+        'SI': 'Szlovénia',
+        'PL': 'Lengyelország',
+        'CZ': 'Csehország',
+        'IT': 'Olaszország',
+        'FR': 'Franciaország',
+        'ES': 'Spanyolország',
+        'NL': 'Hollandia',
+        'BE': 'Belgium',
+        'CH': 'Svájc',
+        'GB': 'Egyesült Királyság',
+        'IE': 'Írország',
+        'SE': 'Svédország',
+        'NO': 'Norvégia',
+        'FI': 'Finnország',
+        'DK': 'Dánia',
+        'PT': 'Portugália',
+        'GR': 'Görögország',
+        'BG': 'Bulgária',
+    }
+
+    def normalize_country_name(value):
+        raw = str(value or '').strip()
+        if not raw:
+            return ''
+        return country_code_map.get(raw.upper(), raw)
     
     # Megrendelő adatok
     customer_data = None
@@ -2683,24 +2716,69 @@ def public_order_view(request, token: str):
             if extras:
                 street_line = f"{street_line} {extras}".strip()
         _full_tax = getattr(qr.company, 'full_tax_number', '') or ''
-        if not _full_tax and qr.company.external_id:
+        remote_country = ''
+        remote_city = ''
+        remote_postal_code = ''
+        remote_street_line = ''
+        remote_external_id = qr.company.external_id or ''
+        if qr.company.external_id or qr.company.name:
             try:
                 from apps.finance.views import PixinvoiceClient
                 _client = PixinvoiceClient()
-                _remote = _client.get_customer(qr.company.external_id, company_id=_client.company_id)
+                _remote = None
+                if qr.company.external_id:
+                    _remote = _client.get_customer(qr.company.external_id, company_id=_client.company_id)
+                else:
+                    customers = _client.list_customers(company_id=_client.company_id)
+                    local_name = (qr.company.name or '').strip().lower()
+                    local_tax = (qr.company.tax_number or qr.company.full_tax_number or '').replace(' ', '').strip()
+                    for candidate in customers:
+                        candidate_name = (candidate.get('name') or candidate.get('full_name') or '').strip().lower()
+                        candidate_tax = str(candidate.get('tax_number') or candidate.get('taxNumber') or '').replace(' ', '').strip()
+                        if local_tax and candidate_tax and candidate_tax == local_tax:
+                            _remote = candidate
+                            break
+                        if local_name and candidate_name == local_name:
+                            _remote = candidate
+                            break
+                if _remote:
+                    remote_external_id = str(_remote.get('id') or _remote.get('customer_id') or remote_external_id or '')
                 _full_tax = _remote.get('full_tax_number') or ''
-                if _full_tax:
+                remote_country = normalize_country_name(_remote.get('country') or _remote.get('countryCode'))
+                remote_city = _remote.get('city') or ''
+                remote_postal_code = _remote.get('postal_code') or _remote.get('zip') or ''
+                remote_street_line = _remote.get('address') or _remote.get('billing_address') or ''
+
+                update_fields = []
+                if remote_external_id and qr.company.external_id != remote_external_id:
+                    qr.company.external_id = remote_external_id
+                    update_fields.append('external_id')
+                if _full_tax and qr.company.full_tax_number != _full_tax:
                     qr.company.full_tax_number = _full_tax
-                    qr.company.save(update_fields=['full_tax_number'])
+                    update_fields.append('full_tax_number')
+                if remote_country and qr.company.country != remote_country:
+                    qr.company.country = remote_country
+                    update_fields.append('country')
+                if remote_city and not qr.company.city:
+                    qr.company.city = remote_city
+                    update_fields.append('city')
+                if remote_postal_code and not qr.company.postal_code:
+                    qr.company.postal_code = remote_postal_code
+                    update_fields.append('postal_code')
+                if remote_street_line and not qr.company.address:
+                    qr.company.address = remote_street_line
+                    update_fields.append('address')
+                if update_fields:
+                    qr.company.save(update_fields=update_fields)
             except Exception:
                 pass
         customer_data = {
             'name': qr.company.name,
             'tax_number': _full_tax or qr.company.tax_number or '',
-            'address': street_line,
-            'city': qr.company.city or '',
-            'postal_code': qr.company.postal_code or '',
-            'country': qr.company.country or 'Magyarország',
+            'address': street_line or remote_street_line,
+            'city': qr.company.city or remote_city or '',
+            'postal_code': qr.company.postal_code or remote_postal_code or '',
+            'country': normalize_country_name(remote_country or qr.company.country) or 'Magyarország',
         }
     elif qr.customer:
         customer_data = {
