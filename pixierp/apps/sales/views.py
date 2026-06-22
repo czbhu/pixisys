@@ -450,7 +450,10 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         user = getattr(self.request, 'user', None)
         if user and user.is_authenticated and not user.is_superuser:
             invited_ids = QuoteRequestInvitation.objects.filter(invitee=user).values_list('quote_request_id', flat=True)
-            queryset = queryset | QuoteRequest.objects.filter(id__in=invited_ids).distinct()
+            # Avoid queryset OR-combine errors when one side is already DISTINCT.
+            queryset = QuoteRequest.objects.filter(
+                Q(id__in=queryset.values('id')) | Q(id__in=invited_ids)
+            )
 
         # Majd szűrjük a törölt elemeket
         queryset = queryset.filter(is_deleted=False)
