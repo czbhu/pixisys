@@ -65,6 +65,9 @@ function AppContent() {
   const [isMobile, setIsMobile] = useState(false);
   const [mobileMenuVisible, setMobileMenuVisible] = useState(false);
   const [inviteCount, setInviteCount] = useState<number>(0);
+  // True if the user is individually signed (assignee/invited/owner) to any RFQ,
+  // so the Árajánlatok menu can be shown even without sales.rfqs base permission.
+  const [hasRfqAccess, setHasRfqAccess] = useState<boolean>(false);
   // Add state for generic notification counts map
   const [notificationCounts, setNotificationCounts] = useState<NotificationCounts>({});
   
@@ -168,6 +171,8 @@ function AppContent() {
         const mod = await import('./services/salesService');
         const cnt = await mod.salesService.getMyInvitationsCount('pending');
         if (!cancelled) setInviteCount(cnt);
+        const access = await mod.salesService.getMyRfqAccess();
+        if (!cancelled) setHasRfqAccess(access);
       } catch (e) {
         // ignore
       }
@@ -332,6 +337,7 @@ function AppContent() {
             onCollapse={() => setMobileMenuVisible(false)}
             onNavigate={() => setMobileMenuVisible(false)}
             inviteCount={inviteCount}
+            hasRfqAccess={hasRfqAccess}
             notificationCounts={notificationCounts}
           />
         </Drawer>
@@ -340,6 +346,7 @@ function AppContent() {
             collapsed={sidebarCollapsed} 
             onCollapse={setSidebarCollapsed}
             inviteCount={inviteCount}
+            hasRfqAccess={hasRfqAccess}
             notificationCounts={notificationCounts}
         />
       )}

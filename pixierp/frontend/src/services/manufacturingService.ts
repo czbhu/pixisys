@@ -109,7 +109,7 @@ class ManufacturingService {
     }
 
     async getServices() {
-        const response = await api.get('/manufacturing/services/');
+        const response = await api.get('/manufacturing/services/?page_size=1000');
         if (response.data && response.data.results) return response.data.results;
         return response.data || [];
     }

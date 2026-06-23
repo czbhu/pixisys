@@ -158,6 +158,7 @@ const SaveButton = styled.button`
 
 const TEMPLATE_TYPES = [
   { value: 'invoice_send', label: 'Számlaküldés' },
+  { value: 'proforma_send', label: 'Díjbekérő küldése' },
   { value: 'arrears', label: 'Kintlévőségi' },
   { value: 'reminder_1', label: '1. felszólítás' },
   { value: 'reminder_2', label: '2. felszólítás' },

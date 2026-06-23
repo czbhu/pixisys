@@ -138,22 +138,54 @@ export default function Proformas() {
     try {
       const [settingsRes, templatesRes] = await Promise.all([
         emailSettingsAPI.getSettings(),
-        emailTemplateAPI.getTemplates(),
+        emailTemplateAPI.list({
+          company_id: pf?.company?.id || companyId || undefined,
+        }),
       ]);
       const settings = settingsRes.data;
       const templates = Array.isArray(templatesRes.data) ? templatesRes.data : (templatesRes.data?.results || []);
-      const tpl = templates.find(t => t.type === 'proforma') || templates[0];
+      const tpl = templates.find((t) => t?.template_type === 'proforma_send' && t?.language === 'hu' && t?.is_active !== false)
+        || templates.find((t) => t?.template_type === 'proforma_send' && t?.is_active !== false)
+        || templates.find((t) => t?.template_type === 'invoice_send' && t?.language === 'hu' && t?.is_active !== false)
+        || templates.find((t) => t?.template_type === 'invoice_send' && t?.is_active !== false)
+        || templates[0];
+      const replaceTpl = (source, vars) => {
+        let out = String(source || '');
+        Object.entries(vars || {}).forEach(([k, v]) => {
+          const val = String(v ?? '');
+          out = out
+            .replaceAll(`{{${k}}}`, val)
+            .replaceAll(`{${k}}`, val);
+        });
+        return out;
+      };
+      const vars = {
+        invoice_number: pf?.proforma_number || '',
+        proforma_number: pf?.proforma_number || '',
+        customer_name: pf?.customer?.name || '',
+        company_name: pf?.company?.name || '',
+      };
+      const renderedSubject = replaceTpl(tpl?.subject_template || '', vars).trim();
+      const renderedBody = replaceTpl(tpl?.body_template || '', vars).trim();
       setEmailDefaults({
         defaultFrom: settings?.default_from || '',
         defaultReplyTo: settings?.default_reply_to || '',
         defaultTo: pf.customer?.email || '',
         defaultCc: '',
         defaultBcc: '',
-        defaultSubject: tpl ? tpl.subject.replace('{{proforma_number}}', pf.proforma_number) : `Díjbekérő: ${pf.proforma_number}`,
-        defaultBody: tpl ? tpl.body.replace('{{proforma_number}}', pf.proforma_number) : `Díjbekérő száma: ${pf.proforma_number}`,
+        defaultSubject: renderedSubject || `Díjbekérő: ${pf.proforma_number}`,
+        defaultBody: renderedBody || `Tisztelt Partner!<br><br>Küldjük a díjbekérőt: ${pf.proforma_number}.<br><br>Üdvözlettel,`,
       });
     } catch {
-      setEmailDefaults({ defaultTo: pf.customer?.email || '', defaultSubject: `Díjbekérő: ${pf.proforma_number}`, defaultBody: '' });
+      setEmailDefaults({
+        defaultFrom: '',
+        defaultReplyTo: '',
+        defaultTo: pf.customer?.email || '',
+        defaultCc: '',
+        defaultBcc: '',
+        defaultSubject: `Díjbekérő: ${pf.proforma_number}`,
+        defaultBody: `Tisztelt Partner!<br><br>Küldjük a díjbekérőt: ${pf.proforma_number}.<br><br>Üdvözlettel,`,
+      });
     }
     setEmailModalOpen(true);
   };

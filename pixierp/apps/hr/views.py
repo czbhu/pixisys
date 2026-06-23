@@ -1998,20 +1998,21 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             # Active work log for this user
             awl = active_wl_map.get(user.id)
             active_work = None
-            if awl and awl.customer_order_id:
+            if awl:
                 try:
-                    customer_name = _customer_name(awl.customer_order)
-                    quote_title = awl.customer_order.quote_request.title if awl.customer_order.quote_request else ''
+                    customer_name = _customer_name(awl.customer_order) if awl.customer_order_id else ''
+                    quote_title = awl.customer_order.quote_request.title if awl.customer_order_id and awl.customer_order.quote_request else ''
                 except Exception:
                     customer_name = ''
                     quote_title = ''
                 active_work = {
-                    'order_number': awl.customer_order.order_number,
-                    'order_id': awl.customer_order.id,
-                    'rfq_number': (awl.customer_order.quote_request.number or awl.customer_order.quote_request.request_number) if awl.customer_order.quote_request else '',
+                    'order_number': awl.customer_order.order_number if awl.customer_order_id else '',
+                    'order_id': awl.customer_order.id if awl.customer_order_id else None,
+                    'order_label': awl.order_label or '',
+                    'rfq_number': (awl.customer_order.quote_request.number or awl.customer_order.quote_request.request_number) if awl.customer_order_id and awl.customer_order.quote_request else '',
                     'customer_name': customer_name,
                     'quote_title': quote_title,
-                    'item_name': _item_name(awl.item, awl.customer_order),
+                    'item_name': _item_name(awl.item, awl.customer_order) if awl.customer_order_id else '',
                     'sub_item_name': awl.sub_item.name if awl.sub_item else '',
                     'workflow_name': awl.workflow_name or '',
                     'started_at': awl.started_at.isoformat(),
@@ -2035,6 +2036,7 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                     'id': wl.id,
                     'order_number': wl.customer_order.order_number if wl.customer_order_id else '',
                     'order_id': wl.customer_order.id if wl.customer_order_id else None,
+                    'order_label': wl.order_label or '',
                     'rfq_number': (wl.customer_order.quote_request.number or wl.customer_order.quote_request.request_number) if wl.customer_order_id and wl.customer_order.quote_request else '',
                     'customer_name': c_name,
                     'quote_title': q_title,

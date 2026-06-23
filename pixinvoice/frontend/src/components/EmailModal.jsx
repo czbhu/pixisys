@@ -18,11 +18,19 @@ export default function EmailModal({
   attachments = [],
   headerExtra = null,
 }) {
+  const normalizeEmailList = (value) => {
+    if (Array.isArray(value)) return value.filter(Boolean).map(String);
+    if (typeof value === 'string') {
+      return value.split(',').map((s) => s.trim()).filter(Boolean);
+    }
+    return [];
+  };
+
   const [from, setFrom] = useState(defaultFrom || '');
   const [replyTo, setReplyTo] = useState(defaultReplyTo || '');
-  const [to, setTo] = useState(defaultTo.join(', '));
-  const [cc, setCc] = useState(defaultCc.join(', '));
-  const [bcc, setBcc] = useState(defaultBcc.join(', '));
+  const [to, setTo] = useState(normalizeEmailList(defaultTo).join(', '));
+  const [cc, setCc] = useState(normalizeEmailList(defaultCc).join(', '));
+  const [bcc, setBcc] = useState(normalizeEmailList(defaultBcc).join(', '));
   const [subject, setSubject] = useState(defaultSubject);
   const [body, setBody] = useState(defaultBody);
   const [sending, setSending] = useState(false);
@@ -40,9 +48,9 @@ export default function EmailModal({
     if (isOpen) {
       setFrom(defaultFrom || '');
       setReplyTo(defaultReplyTo || '');
-      setTo((defaultTo || []).join(', '));
-      setCc((defaultCc || []).join(', '));
-      setBcc((defaultBcc || []).join(', '));
+      setTo(normalizeEmailList(defaultTo).join(', '));
+      setCc(normalizeEmailList(defaultCc).join(', '));
+      setBcc(normalizeEmailList(defaultBcc).join(', '));
       setSubject(defaultSubject || '');
       setBody(defaultBody || '');
       setSending(false);

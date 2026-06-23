@@ -60,7 +60,7 @@ class QuoteRequestItemAttachmentSerializer(serializers.ModelSerializer):
     file_url = serializers.SerializerMethodField()
     class Meta:
         model = QuoteRequestItemAttachment
-        fields = ['id', 'file', 'file_url', 'original_filename', 'remark', 'uploaded_by', 'created_at']
+        fields = ['id', 'file', 'file_url', 'original_filename', 'remark', 'is_manufacturing_file', 'uploaded_by', 'created_at']
         read_only_fields = ['file_url', 'uploaded_by', 'created_at']
 
     def get_file_url(self, obj):
@@ -597,11 +597,15 @@ class QuoteRequestSerializer(serializers.ModelSerializer):
         return obj.valid_until < timezone.now().date()
 
     def get_effective_status(self, obj):
-        if obj.status in ('sent', 'invoiced'):
-            # Even sent/invoiced can expire
-            if self._is_validity_expired(obj):
-                return 'expired'
+        if obj.status in self._ORDER_STATUS_LABELS:
             return obj.status
+        # deprecated: 2026-06-23 — a QuoteRequest.status sosem 'sent'/'invoiced' (nincs a STATUS_CHOICES-ban),
+        # ez az ág soha nem fut le. A kiküldés most 'quoted'-re vált, és a lenti email-log ág származtatja a 'sent'-et.
+        # if obj.status in ('sent', 'invoiced'):
+        #     # Even sent/invoiced can expire
+        #     if self._is_validity_expired(obj):
+        #         return 'expired'
+        #     return obj.status
         min_status, _ = self._aggregate_order_status(obj)
         if min_status:
             # Egy frissen leadott megrendelés (tétel 'new') az ajánlat szintjén
@@ -609,8 +613,6 @@ class QuoteRequestSerializer(serializers.ModelSerializer):
             if min_status == 'new':
                 return 'ordered'
             return min_status
-        if obj.status in self._ORDER_STATUS_LABELS:
-            return obj.status
         if self._is_validity_expired(obj):
             return 'expired'
         if obj.status in ('quoted', 'accepted') and self._has_email_log(obj):
@@ -618,6 +620,8 @@ class QuoteRequestSerializer(serializers.ModelSerializer):
         return obj.status
 
     def get_effective_status_label(self, obj):
+        if obj.status in self._ORDER_STATUS_LABELS:
+            return self._ORDER_STATUS_LABELS[obj.status]
         min_status, is_partial = self._aggregate_order_status(obj)
         if min_status is None:
             effective_status = self.get_effective_status(obj)

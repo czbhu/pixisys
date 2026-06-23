@@ -417,6 +417,7 @@ class CompanyEmailSettings(models.Model):
 
 class EmailTemplate(models.Model):
     TEMPLATE_INVOICE_SEND = 'invoice_send'
+    TEMPLATE_PROFORMA_SEND = 'proforma_send'
     TEMPLATE_ARREARS = 'arrears'
     TEMPLATE_REMINDER_1 = 'reminder_1'
     TEMPLATE_REMINDER_2 = 'reminder_2'
@@ -426,6 +427,7 @@ class EmailTemplate(models.Model):
 
     TEMPLATE_TYPE_CHOICES = [
         (TEMPLATE_INVOICE_SEND, 'Számlaküldés'),
+        (TEMPLATE_PROFORMA_SEND, 'Díjbekérő küldése'),
         (TEMPLATE_ARREARS, 'Kintlévőségi'),
         (TEMPLATE_REMINDER_1, '1. felszólítás'),
         (TEMPLATE_REMINDER_2, '2. felszólítás'),

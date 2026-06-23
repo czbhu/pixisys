@@ -167,7 +167,32 @@ export const salesService = {
         return response.data;
     },
       async setQuoteRequestStatus(id: number | string, status: string) {
-          const response = await api.post(`/sales/quote-requests/${id}/set_status/`, { status });
+          const normalizedStatus = status === 'sent' ? 'quoted' : status;
+          const allowedStatuses = new Set([
+              'new',
+              'confirmed',
+              'in_production',
+              'ready',
+              'in_delivery',
+              'delivered',
+              'invoiced',
+              'in_design',
+              'pending_customer_approval',
+              'pending_internal_approval',
+              'in_progress',
+              'quoted',
+              'accepted',
+              'rejected',
+              'expired',
+              'archived',
+              'ordered',
+          ]);
+
+          if (!allowedStatuses.has(normalizedStatus)) {
+              throw new Error(`Unsupported quote request status: ${status}`);
+          }
+
+          const response = await api.post(`/sales/quote-requests/${id}/set_status/`, { status: normalizedStatus });
           return response.data;
       },
 
@@ -270,6 +295,14 @@ export const salesService = {
         const data = response.data;
         const arr = Array.isArray(data?.results) ? data.results : (Array.isArray(data) ? data : []);
         return arr.length as number;
+    },
+    async getMyRfqAccess() {
+        try {
+            const response = await api.get('/sales/quote-requests/my_access/');
+            return !!response.data?.has_access;
+        } catch {
+            return false;
+        }
     },
 
     // RFQ actions
@@ -456,6 +489,10 @@ export const salesService = {
         const response = await api.post(`/sales/quote-requests/${id}/update_attachment_remark/`, { attachment_id: attachmentId, remark });
         return response.data;
     },
+    async setQuoteRequestAttachmentManufacturing(id: number | string, attachmentId: number, isManufacturing: boolean) {
+        const response = await api.post(`/sales/quote-requests/${id}/set_attachment_manufacturing/`, { attachment_id: attachmentId, is_manufacturing_file: isManufacturing ? '1' : '0' });
+        return response.data;
+    },
     async deleteQuoteRequestAttachment(id: number, attachmentId: number) {
         const response = await api.post(`/sales/quote-requests/${id}/delete_attachment/`, { attachment_id: attachmentId });
         return response.data;
@@ -471,7 +508,7 @@ export const salesService = {
 
     // Services
     async getServices() {
-        const response = await api.get('/sales/services/');
+        const response = await api.get('/sales/services/?page_size=1000');
         return response.data;
     },
     async getService(id: number) {
@@ -539,6 +576,10 @@ export const salesService = {
     },
     async updateQuoteRequestItemAttachmentRemark(itemId: number, attachmentId: number, remark: string) {
         const response = await api.post(`/sales/quote-request-items/${itemId}/update_attachment_remark/`, { attachment_id: attachmentId, remark });
+        return response.data;
+    },
+    async setQuoteRequestItemAttachmentManufacturing(itemId: number | string, attachmentId: number, isManufacturing: boolean) {
+        const response = await api.post(`/sales/quote-request-items/${itemId}/set_attachment_manufacturing/`, { attachment_id: attachmentId, is_manufacturing_file: isManufacturing ? '1' : '0' });
         return response.data;
     },
     async deleteQuoteRequestItemAttachment(itemId: number, attachmentId: number) {

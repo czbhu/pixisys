@@ -2591,8 +2591,8 @@ interface CustomerOrder {
             mode="multiple"
             style={{ minWidth: 160, maxWidth: 380 }}
             placeholder="Szűrés státuszra"
-            value={statusFilter}
-            onChange={setStatusFilter}
+            value={Array.isArray(statusFilter) ? statusFilter : []}
+            onChange={(values: any) => setStatusFilter(Array.isArray(values) ? values.map(String) : [])}
             options={[
               { value: 'new', label: 'Megrendelve' },
               { value: 'confirmed', label: 'Megerősítve' },

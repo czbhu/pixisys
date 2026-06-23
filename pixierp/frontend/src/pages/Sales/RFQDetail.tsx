@@ -13,7 +13,7 @@ import { ItemsTable } from '../../components/Sales/ItemsTable';
 import { Upload, Popconfirm } from 'antd';
 import { crmService } from '../../services/crmService';
 import dayjs from 'dayjs';
-import { LeftOutlined, DeleteOutlined, UserAddOutlined, UserSwitchOutlined, LogoutOutlined, TeamOutlined, PlusOutlined, MessageOutlined, ClockCircleOutlined, FileDoneOutlined, CheckCircleOutlined, RocketOutlined, CheckOutlined, CarOutlined, SmileOutlined, FileTextOutlined, HistoryOutlined, DownOutlined, EditOutlined, PaperClipOutlined } from '@ant-design/icons';
+import { LeftOutlined, DeleteOutlined, UserAddOutlined, UserSwitchOutlined, LogoutOutlined, TeamOutlined, PlusOutlined, MessageOutlined, ClockCircleOutlined, FileDoneOutlined, CheckCircleOutlined, RocketOutlined, CheckOutlined, CarOutlined, SmileOutlined, FileTextOutlined, HistoryOutlined, DownOutlined, EditOutlined, PaperClipOutlined, ToolOutlined } from '@ant-design/icons';
 import { useAuth } from '../../contexts/AuthContext';
 import { postalCodeService } from '../../services/postalCodeService';
 import { getCountries } from '../../services/countryService';
@@ -88,7 +88,7 @@ const RFQDetail: React.FC = () => {
   const [filePreviewUrl, setFilePreviewUrl] = useState<string | null>(null);
   const [takeoverConfirmOpen, setTakeoverConfirmOpen] = useState(false);
   const [allUsers, setAllUsers] = useState<Array<{ id: number; name: string }>>([]);
-  const [inviteUserId, setInviteUserId] = useState<number | null>(null);
+  const [inviteUserIds, setInviteUserIds] = useState<number[]>([]);
   const [isCompanyModalVisible, setIsCompanyModalVisible] = useState(false);
   const [companyForm] = Form.useForm();
   const [selectedCountry, setSelectedCountry] = useState('Magyarország');
@@ -274,7 +274,8 @@ const RFQDetail: React.FC = () => {
         });
       } catch {}
       try {
-        const atts = await salesService.getQuoteRequestManufacturingAttachments((rfqRes?.id || id) as any);
+        // Minden csatolmányt mutatunk (gyártási + ügyfél/publikus + chat feltöltések)
+        const atts = await salesService.getQuoteRequestAttachments((rfqRes?.id || id) as any);
         setManufacturingFiles(Array.isArray(atts) ? atts : (atts?.results || []));
       } catch {}
       // Load work logs and activity logs inline
@@ -295,9 +296,11 @@ const RFQDetail: React.FC = () => {
   }, [id]);
 
   const refreshManufacturingFiles = useCallback(async () => {
-    if (!id) return;
+    const targetId = rfqNumericIdRef.current || id;
+    if (!targetId) return;
     try {
-      const atts = await salesService.getQuoteRequestManufacturingAttachments((rfqNumericIdRef.current || id) as any);
+      // Minden csatolmányt mutatunk (gyártási + ügyfél/publikus + chat feltöltések)
+      const atts = await salesService.getQuoteRequestAttachments(targetId as any);
       setManufacturingFiles(Array.isArray(atts) ? atts : (atts?.results || []));
     } catch {}
   }, [id]);
@@ -313,11 +316,38 @@ const RFQDetail: React.FC = () => {
   }, []);
 
   const uploadManufacturingFile = useCallback(async (file: File) => {
-    const targetId = (rfq?.id || rfqNumericIdRef.current || id) as any;
-    if (!targetId) return;
+    let targetId = (rfq?.id || rfqNumericIdRef.current || id) as any;
+    
+    // Ha nincs ID, akkor először létrehozunk egy minimális RFQ-t
+    if (!targetId) {
+      try {
+        const values = formBasic.getFieldsValue();
+        const autoTitle = (values.title && String(values.title).trim())
+          ? String(values.title).trim()
+          : 'Új ajánlatkérés';
+        
+        const created = await salesService.createQuoteRequest({
+          title: autoTitle,
+          description: autoTitle || 'Új ajánlatkérés',
+          issue_date: values.issue_date ? values.issue_date.format('YYYY-MM-DD') : undefined,
+          deadline: values.deadline ? values.deadline.format('YYYY-MM-DD') : undefined,
+          validity_days: values.validity_days ?? 30,
+          valid_until: values.valid_until ? values.valid_until.format('YYYY-MM-DD') : undefined,
+        });
+        
+        targetId = created.id;
+        rfqNumericIdRef.current = created.id;
+        setRfq(created);
+        message.success('Ajánlatkérés mentve, csatolmány feltöltés...', 1);
+      } catch (error) {
+        message.error('Az ajánlatkérést nem sikerült menteni');
+        return;
+      }
+    }
+    
     setManufacturingUploading((prev) => prev + 1);
     try {
-      await salesService.uploadQuoteRequestManufacturingAttachment(targetId, file, manufacturingRemarkRef.current || undefined);
+      await salesService.uploadQuoteRequestAttachment(targetId, file, manufacturingRemarkRef.current || undefined);
       message.success(`Feltöltve: ${file.name}`);
       setRfqPendingRemark('');
       await refreshManufacturingFiles();
@@ -327,7 +357,7 @@ const RFQDetail: React.FC = () => {
     } finally {
       setManufacturingUploading((prev) => Math.max(0, prev - 1));
     }
-  }, [id, rfq?.id, refreshManufacturingFiles]);
+  }, [id, rfq?.id, refreshManufacturingFiles, formBasic, salesService]);
 
   useClipboardImagePaste((file: File) => { void uploadManufacturingFile(file); }, manufacturingPanelHovered);
 
@@ -456,9 +486,10 @@ const RFQDetail: React.FC = () => {
     }
   };
 
-  const statusTag = (status: string) => {
+  const statusTag = (status: string, customLabel?: string) => {
     const color: Record<string, any> = {
       new: 'blue', in_progress: 'orange',
+      sent: 'gold',
       quoted: isDemand(rfq) ? 'default' : 'cyan',
       accepted: 'green', rejected: 'red', expired: 'default',
       ordered: 'purple', confirmed: 'geekblue', in_production: 'volcano',
@@ -467,13 +498,14 @@ const RFQDetail: React.FC = () => {
     };
     const text: Record<string, string> = {
       new: 'Új', in_progress: 'Folyamatban',
-      quoted: isDemand(rfq) ? 'Zárt' : 'Árazva',
+      sent: 'Kiküldve',
+      quoted: isDemand(rfq) ? 'Zárt' : 'Kiküldve',
       accepted: 'Elfogadva', rejected: 'Elutasítva', expired: 'Lejárt',
       ordered: 'Megrendelve', confirmed: 'Megerősítve', in_production: 'Gyártásban',
       in_design: 'Tervezés alatt', pending_customer_approval: 'Ügyfél jóváhagyásra vár', pending_internal_approval: 'Belső jóváhagyásra vár',
       ready: 'Kész', in_delivery: 'Szállítás alatt', delivered: 'Kiszállítva', invoiced: 'Kiszámlázva',
     };
-    return <Tag color={color[status] || 'default'}>{text[status] || status}</Tag>;
+    return <Tag color={color[status] || 'default'}>{customLabel || text[status] || status}</Tag>;
   };
 
   // removed unused itemColumns and old add-item helpers (using ItemSelectorModal instead)
@@ -694,16 +726,24 @@ const RFQDetail: React.FC = () => {
 
   if (!rfq) return null;
 
-  const isDemandOpen = isDemand(rfq) && (rfq.status === 'new' || rfq.status === 'in_progress');
-  const isDemandClosed = isDemand(rfq) && rfq.status === 'quoted';
+  // Keep status display aligned with the RFQ list: prefer effective status from backend.
+  const displayStatus = rfq?.effective_status || rfq?.status || 'new';
+  const displayStatusLabel = rfq?.effective_status_label || undefined;
+
+  // Treat legacy/synthetic "sent" as "quoted" for workflow steps and demand open/close actions.
+  const normalizeWorkflowStatus = (st?: string) => (st === 'sent' ? 'quoted' : (st || 'new'));
+  const workflowStatus = normalizeWorkflowStatus(displayStatus);
+
+  const isDemandOpen = isDemand(rfq) && (workflowStatus === 'new' || workflowStatus === 'in_progress');
+  const isDemandClosed = isDemand(rfq) && workflowStatus === 'quoted';
 
   // Lifecycle step index
   const statusStepMap: Record<string, number> = {
-    new: 0, in_progress: 0, quoted: 1, accepted: 2, ordered: 3, confirmed: 4,
+    new: 0, in_progress: 0, quoted: 1, sent: 1, accepted: 2, ordered: 3, confirmed: 4,
     in_design: 5, pending_customer_approval: 6, pending_internal_approval: 7,
     in_production: 8, ready: 9, in_delivery: 10, delivered: 11, invoiced: 12,
   };
-  const currentStep = statusStepMap[rfq.status] ?? 0;
+  const currentStep = statusStepMap[displayStatus] ?? 0;
 
   // Clickable steps: map step index → target status
   const stepIndexToStatus: Record<number, string> = {
@@ -717,9 +757,30 @@ const RFQDetail: React.FC = () => {
     in_production: 'Gyártásban', ready: 'Kész',
     in_delivery: 'Szállítás alatt', delivered: 'Kiszállítva', invoiced: 'Kiszámlázva',
   };
+  const allowedRfqStatusUpdates = new Set([
+    'new',
+    'confirmed',
+    'in_production',
+    'ready',
+    'in_delivery',
+    'delivered',
+    'invoiced',
+    'in_progress',
+    'quoted',
+    'accepted',
+    'rejected',
+    'expired',
+    'archived',
+    'ordered',
+    'in_design',
+    'pending_customer_approval',
+    'pending_internal_approval',
+  ]);
   const handleStepClick = (stepIdx: number) => {
     const targetStatus = stepIndexToStatus[stepIdx];
-    if (!targetStatus || targetStatus === rfq.status) return;
+    if (!targetStatus || normalizeWorkflowStatus(targetStatus) === workflowStatus) return;
+    const normalizedTarget = normalizeWorkflowStatus(targetStatus);
+    if (!allowedRfqStatusUpdates.has(normalizedTarget)) return;
     const label = stepStatusLabel[targetStatus] || targetStatus;
     Modal.confirm({
       title: 'Státusz módosítás',
@@ -728,7 +789,7 @@ const RFQDetail: React.FC = () => {
       cancelText: 'Mégse',
       onOk: async () => {
         try {
-          await salesService.setQuoteRequestStatus(id as any, targetStatus);
+          await salesService.setQuoteRequestStatus(id as any, normalizedTarget);
           message.success(`Státusz: ${label}`);
           load();
         } catch { message.error('Nem sikerült a státuszváltás'); }
@@ -802,7 +863,7 @@ const RFQDetail: React.FC = () => {
             <Tag color={rfq?.is_manufacturable ? 'green' : 'red'}>{rfq?.is_manufacturable ? 'IGEN' : 'NEM'}</Tag>
             {rfq?.is_manufacturable && manufacturableMarkedInfo && <span style={{ color: '#666', fontSize: 12 }}>Beállította: {manufacturableMarkedInfo}</span>}
             <span style={{ color: '#666' }}>{rfq.number || rfq.request_number}</span>
-            {statusTag(rfq.status)}
+            {statusTag(displayStatus, displayStatusLabel)}
           </Space>
         }
         extra={
@@ -1005,10 +1066,34 @@ const RFQDetail: React.FC = () => {
                               return <Button size="small" onClick={async () => { try { if (isMeAssigned) { await salesService.leaveQuoteRequest(id as any); message.success('Kiszálltál'); } else { await salesService.joinQuoteRequest(id as any); message.success('Beszálltál'); } load(); } catch { message.error('Nem sikerült'); } }}>{isMeAssigned ? 'Kiszállok' : 'Beszállok'}</Button>;
                             })()}
                             <Button size="small" icon={<UserSwitchOutlined />} onClick={() => setTakeoverConfirmOpen(true)}>Átveszem</Button>
-                            <Select size="small" showSearch allowClear placeholder="Munkatárs meghívása" optionFilterProp="label" style={{ minWidth: 180 }} value={inviteUserId as any} onChange={(val) => setInviteUserId(val || null)}>
+                            <Select
+                              mode="multiple"
+                              size="small"
+                              showSearch
+                              allowClear
+                              placeholder="Munkatársak meghívása"
+                              optionFilterProp="label"
+                              style={{ minWidth: 260 }}
+                              value={inviteUserIds as any}
+                              onChange={(vals) => setInviteUserIds(Array.isArray(vals) ? vals.map((v: any) => Number(v)).filter((v: number) => Number.isFinite(v)) : [])}
+                            >
                               {allUsers.map((u) => <Select.Option key={u.id} value={u.id} label={u.name}>{u.name}</Select.Option>)}
                             </Select>
-                            <Button size="small" disabled={!inviteUserId} onClick={async () => { if (!inviteUserId) return; try { await salesService.inviteUserToRfq(id as any, inviteUserId); message.success('Meghívó elküldve'); setInviteUserId(null); load(); } catch { message.error('Nem sikerült meghívni'); } }}>Meghívás</Button>
+                            <Button size="small" disabled={inviteUserIds.length === 0} onClick={async () => {
+                              if (inviteUserIds.length === 0) return;
+                              const results = await Promise.allSettled(inviteUserIds.map((uid) => salesService.inviteUserToRfq(id as any, uid)));
+                              const successCount = results.filter((r) => r.status === 'fulfilled').length;
+                              const failedCount = results.length - successCount;
+                              if (successCount > 0 && failedCount === 0) {
+                                message.success(successCount === 1 ? 'Meghívó elküldve' : `${successCount} meghívó elküldve`);
+                              } else if (successCount > 0) {
+                                message.warning(`${successCount} meghívó elküldve, ${failedCount} sikertelen`);
+                              } else {
+                                message.error('Nem sikerült meghívni a kiválasztott felhasználókat');
+                              }
+                              setInviteUserIds([]);
+                              load();
+                            }}>Meghívás</Button>
                           </Space>
                         </div>
                       </div>
@@ -1119,9 +1204,9 @@ const RFQDetail: React.FC = () => {
                   size="small"
                   pagination={false}
                   tableLayout="fixed"
-                  rowKey={(r: any) => String(r.id)}
+                  rowKey={(r: any) => r.row_key || String(r.id)}
                   dataSource={manufacturingFiles}
-                  locale={{ emptyText: 'Nincs gyártási file.' }}
+                  locale={{ emptyText: 'Nincs csatolmány.' }}
                   style={{ fontSize: 12 }}
                   columns={[
                     {
@@ -1147,8 +1232,10 @@ const RFQDetail: React.FC = () => {
                                       const dotIdx = baseName.lastIndexOf('.');
                                       const ext = dotIdx > 0 ? baseName.slice(dotIdx) : '';
                                       const finalName = val + ext;
-                                      const res = await salesService.renameQuoteRequestAttachment((rfq?.id || id) as any, r.id, finalName);
-                                      setManufacturingFiles((prev: any[]) => prev.map((att) => att.id === r.id ? { ...att, original_filename: res.original_filename, file: res.file ?? att.file, file_url: res.file_url ?? att.file_url } : att));
+                                      const res = r.source === 'item'
+                                        ? await salesService.renameQuoteRequestItemAttachment(r.quote_item, r.id, finalName)
+                                        : await salesService.renameQuoteRequestAttachment((rfq?.id || id) as any, r.id, finalName);
+                                      setManufacturingFiles((prev: any[]) => prev.map((att) => (att.row_key || att.id) === (r.row_key || r.id) ? { ...att, original_filename: res.original_filename, file: res.file ?? att.file, file_url: res.file_url ?? att.file_url } : att));
                                       setManufacturingRenameId(null);
                                     } catch {
                                       message.error('Átnevezés sikertelen');
@@ -1162,8 +1249,10 @@ const RFQDetail: React.FC = () => {
                                       const dotIdx = baseName.lastIndexOf('.');
                                       const ext = dotIdx > 0 ? baseName.slice(dotIdx) : '';
                                       const finalName = val + ext;
-                                      const res = await salesService.renameQuoteRequestAttachment((rfq?.id || id) as any, r.id, finalName);
-                                      setManufacturingFiles((prev: any[]) => prev.map((att) => att.id === r.id ? { ...att, original_filename: res.original_filename, file: res.file ?? att.file, file_url: res.file_url ?? att.file_url } : att));
+                                      const res = r.source === 'item'
+                                        ? await salesService.renameQuoteRequestItemAttachment(r.quote_item, r.id, finalName)
+                                        : await salesService.renameQuoteRequestAttachment((rfq?.id || id) as any, r.id, finalName);
+                                      setManufacturingFiles((prev: any[]) => prev.map((att) => (att.row_key || att.id) === (r.row_key || r.id) ? { ...att, original_filename: res.original_filename, file: res.file ?? att.file, file_url: res.file_url ?? att.file_url } : att));
                                     } catch {
                                       message.error('Átnevezés sikertelen');
                                     } finally {
@@ -1234,8 +1323,12 @@ const RFQDetail: React.FC = () => {
                             onChange={(e) => setManufacturingExistingRemarks((prev) => ({ ...prev, [r.id]: e.target.value }))}
                             onBlur={async (e) => {
                               try {
-                                await salesService.updateQuoteRequestAttachmentRemark((rfq?.id || id) as any, r.id, e.target.value);
-                                setManufacturingFiles((prev: any[]) => prev.map((att) => att.id === r.id ? { ...att, remark: e.target.value } : att));
+                                if (r.source === 'item') {
+                                  await salesService.updateQuoteRequestItemAttachmentRemark(r.quote_item, r.id, e.target.value);
+                                } else {
+                                  await salesService.updateQuoteRequestAttachmentRemark((rfq?.id || id) as any, r.id, e.target.value);
+                                }
+                                setManufacturingFiles((prev: any[]) => prev.map((att) => (att.row_key || att.id) === (r.row_key || r.id) ? { ...att, remark: e.target.value } : att));
                               } catch {
                                 message.error('Nem sikerült menteni a megjegyzést');
                               }
@@ -1269,9 +1362,32 @@ const RFQDetail: React.FC = () => {
                     {
                       title: 'Művelet',
                       key: 'actions',
-                      width: 78,
+                      width: 104,
                       render: (_: any, r: any) => (
                         <Space size={0}>
+                          <Tooltip title={r.is_manufacturing_file ? 'Gyártási file jelölés levétele' : 'Megjelölés gyártási file-ként'}>
+                            <Button
+                              size="small"
+                              type="text"
+                              icon={<ToolOutlined style={{ color: r.is_manufacturing_file ? '#fa8c16' : '#bfbfbf' }} />}
+                              onClick={async () => {
+                                try {
+                                  const next = !r.is_manufacturing_file;
+                                  if (r.source === 'item') {
+                                    await salesService.setQuoteRequestItemAttachmentManufacturing(r.quote_item, r.id, next);
+                                    await refreshManufacturingFiles();
+                                  } else {
+                                    await salesService.setQuoteRequestAttachmentManufacturing((rfq?.id || id) as any, r.id, next);
+                                    setManufacturingFiles((prev: any[]) => prev.map((att) => (att.row_key || att.id) === (r.row_key || r.id) ? { ...att, is_manufacturing_file: next } : att));
+                                  }
+                                  message.success(next ? 'Megjelölve gyártási file-ként' : 'Gyártási file jelölés levéve');
+                                } catch {
+                                  message.error('Nem sikerült módosítani');
+                                }
+                              }}
+                            />
+                          </Tooltip>
+                          {r.source !== 'item' && (
                           <Tooltip title={r.approved_at ? 'Jóváhagyva' : 'Jóváhagyás'}>
                             <Button
                               size="small"
@@ -1288,13 +1404,18 @@ const RFQDetail: React.FC = () => {
                               }}
                             />
                           </Tooltip>
+                          )}
                           <Popconfirm
                             title="Biztosan törlöd ezt a fájlt?"
                             okText="Igen"
                             cancelText="Mégse"
                             onConfirm={async () => {
                               try {
-                                await salesService.deleteQuoteRequestAttachment((rfq?.id || id) as any, r.id);
+                                if (r.source === 'item') {
+                                  await salesService.deleteQuoteRequestItemAttachment(r.quote_item, r.id);
+                                } else {
+                                  await salesService.deleteQuoteRequestAttachment((rfq?.id || id) as any, r.id);
+                                }
                                 message.success('Törölve');
                                 await refreshManufacturingFiles();
                               } catch {
@@ -1353,6 +1474,7 @@ const RFQDetail: React.FC = () => {
                       <Space.Compact style={{ width: '100%' }}>
                         <Form.Item name="contact_ids" noStyle>
                           <Select size="small" mode="multiple" allowClear showSearch filterOption={filterOptionAccents} optionLabelProp="label" placeholder="Kapcsolattartók" style={{ width: 'calc(100% - 72px)' }}
+                            value={Array.isArray(formBasic.getFieldValue('contact_ids')) ? formBasic.getFieldValue('contact_ids') : []}
                             options={(contacts || []).map((p: any, idx: number) => ({ value: getContactOptionValue(p, idx), label: contactOptionLabel(p, !formBasic.getFieldValue('company_id')) }))}
                             onFocus={async () => {
                               const cid = formBasic.getFieldValue('company_id');
@@ -1483,6 +1605,7 @@ const RFQDetail: React.FC = () => {
             initialValues={editItemModalInitialValues}
             initialFormulas={editContext.item.formulas || {}}
             quoteItemId={editContext.item.id}
+            onManufacturingMarked={refreshManufacturingFiles}
           />
         </div>
         )}

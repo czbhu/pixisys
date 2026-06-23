@@ -47,6 +47,9 @@ const accentInsensitiveLabelFilter = (input: string, option: any): boolean => {
 
 const getRfqRef = (rfq: any): string => String(rfq?.number || rfq?.request_number || rfq?.id || '');
 
+const normalizeRfqWorkflowStatus = (status?: string): string =>
+  status === 'sent' ? 'quoted' : (status || 'new');
+
 const findRfqByRef = (rfqs: any[], rfqRef: string | number) => {
   const ref = String(rfqRef ?? '');
   return (rfqs || []).find((r: any) =>
@@ -71,11 +74,11 @@ const cloneDraftRfqItem = <T,>(value: T): T => {
 const { TextArea } = Input;
 
 const STATUS_COMBOS: Record<string, string[]> = {
-  mind: ['new', 'sent', 'ordered', 'confirmed', 'in_design', 'pending_customer_approval', 'pending_internal_approval', 'in_production', 'ready', 'in_delivery', 'delivered', 'invoiced', 'expired', 'archived'],
+  mind: ['new', 'quoted', 'ordered', 'confirmed', 'in_design', 'pending_customer_approval', 'pending_internal_approval', 'in_production', 'ready', 'in_delivery', 'delivered', 'invoiced', 'expired', 'archived'],
   foglalkozos: ['ordered', 'confirmed', 'in_design', 'pending_customer_approval', 'pending_internal_approval', 'in_production', 'ready'],
   szallitando: ['ready'],
   szamlazando: ['ready', 'in_delivery', 'delivered'],
-  aktiv: ['new', 'sent', 'ordered', 'confirmed', 'in_design', 'pending_customer_approval', 'pending_internal_approval', 'in_production', 'ready', 'in_delivery', 'delivered', 'invoiced'],
+  aktiv: ['new', 'quoted', 'ordered', 'confirmed', 'in_design', 'pending_customer_approval', 'pending_internal_approval', 'in_production', 'ready', 'in_delivery', 'delivered', 'invoiced'],
   szamlazható: ['ready', 'in_delivery', 'delivered'],
 };
 const STATUS_COMBO_KEYS = ['foglalkozos', 'szallitando', 'szamlazando', 'aktiv', 'szamlazható'] as const;
@@ -186,12 +189,12 @@ const RFQs: React.FC = () => {
         const expanded = new Set<string>();
         for (const v of parsed) {
           const combo = STATUS_COMBOS[v];
-          if (combo) combo.forEach((s: string) => expanded.add(s));
-          else expanded.add(v);
+          if (combo) combo.forEach((s: string) => expanded.add(normalizeRfqWorkflowStatus(s)));
+          else expanded.add(normalizeRfqWorkflowStatus(v));
         }
         return expanded.size > 0 ? Array.from(expanded) : ['mind'];
       }
-      return parsed;
+      return Array.from(new Set(parsed.map((v) => normalizeRfqWorkflowStatus(v))));
     } catch {
       return ['mind'];
     }
@@ -849,7 +852,6 @@ const RFQs: React.FC = () => {
     in_design: { color: 'magenta', text: 'Tervezés alatt' },
     pending_customer_approval: { color: 'gold', text: 'Ügyfél jóváhagyásra vár' },
     pending_internal_approval: { color: 'volcano', text: 'Belső jóváhagyásra vár' },
-    sent: { color: 'gold', text: 'Kiküldve' },
     confirmed: { color: 'cyan', text: 'Megerősítve' },
     in_production: { color: 'orange', text: 'Gyártásban' },
     ready: { color: 'green', text: 'Kész' },
@@ -857,7 +859,7 @@ const RFQs: React.FC = () => {
     delivered: { color: 'geekblue', text: 'Kiszállítva' },
     invoiced: { color: 'gold', text: 'Kiszámlázva' },
     in_progress: { color: 'orange', text: 'Folyamatban' },
-    quoted: { color: 'cyan', text: 'Árazva' },
+    quoted: { color: 'cyan', text: 'Kiküldve' },
     accepted: { color: 'green', text: 'Elfogadva' },
     rejected: { color: 'red', text: 'Elutasítva' },
     expired: { color: 'default', text: 'Lejárt' },
@@ -867,7 +869,9 @@ const RFQs: React.FC = () => {
 
   const rfqStatusOptions = [
     { value: 'new', label: 'Új' },
-    { value: 'sent', label: 'Kiküldve' },
+    { value: 'quoted', label: 'Kiküldve' },
+    { value: 'accepted', label: 'Elfogadva' },
+    { value: 'in_progress', label: 'Folyamatban' },
     { value: 'ordered', label: 'Megrendelve' },
     { value: 'confirmed', label: 'Megerősítve' },
     { value: 'in_design', label: 'Tervezés alatt' },
@@ -877,10 +881,17 @@ const RFQs: React.FC = () => {
     { value: 'ready', label: 'Kész' },
     { value: 'in_delivery', label: 'Szállítás alatt' },
     { value: 'delivered', label: 'Kiszállítva' },
+    { value: 'invoiced', label: 'Kiszámlázva' },
     { value: 'rejected', label: 'Elutasítva' },
+    { value: 'expired', label: 'Lejárt' },
+    { value: 'archived', label: 'Archív' },
   ];
 
-  const getDisplayStatus = (record: any) => record?.status || record?.effective_status || record?._costTopStatus || 'new';
+  const getDisplayStatus = (record: any) => {
+    const rfqStatus = record?.effective_status || record?.status;
+    if (rfqStatus) return normalizeRfqWorkflowStatus(rfqStatus);
+    return record?._costTopStatus || 'new';
+  };
 
   const COST_ITEM_STATUS_ORDER = ['new', 'sent', 'ordered', 'confirmed', 'in_design', 'pending_customer_approval', 'pending_internal_approval', 'in_production', 'ready', 'in_delivery', 'delivered', 'rejected'];
   const COST_STATUS_META: Record<string, { color: string; text: string }> = {
@@ -959,8 +970,9 @@ const RFQs: React.FC = () => {
                   rfq.id !== rfqId ? rfq : { ...rfq, status: appliedStatus, effective_status: appliedStatus, effective_status_label: appliedLabel }
                 ));
                 loadData();
-              } catch {
-                message.error('Hiba a státusz frissítésekor');
+              } catch (e: any) {
+                const backendError = e?.response?.data?.error || e?.response?.data?.detail;
+                message.error(backendError || 'Hiba a státusz frissítésekor');
               }
             }}
           >
@@ -1093,8 +1105,8 @@ const RFQs: React.FC = () => {
       const rfqContactNames = rfq.contact_names || (rfq.contacts || []).map((c: any) => c.name).filter(Boolean).join(', ');
       const rfqIsPrivate = !rfq.company?.name && !rfq.company_name && !(rfq.contacts || []).some((c: any) => c.company?.name || c.company_name);
       const itemStatus = rfq.status === 'ordered'
-        ? (firstItem?.is_ordered ? (rfq.effective_status || 'ordered') : 'quoted')
-        : rfq.status;
+        ? (firstItem?.is_ordered ? normalizeRfqWorkflowStatus(rfq.effective_status || 'ordered') : 'quoted')
+        : normalizeRfqWorkflowStatus(rfq.status);
       const rawCostStatuses: string[] = ((firstItem?.cost_items_statuses || []) as any[])
         .map((ci: any) => ci.status)
         .filter((s: string) => COST_ITEM_STATUS_ORDER.includes(s));
@@ -1143,8 +1155,10 @@ const RFQs: React.FC = () => {
       });
     });
     // Apply status filter at item level (based on derived cost item status or rfq status)
+    // Aktív szöveges keresésnél figyelmen kívül hagyjuk a státusz-szűrőt,
+    // hogy bármilyen státuszú ajánlat megtalálható legyen szám/név alapján.
     const activeFilter = statusFilter.length > 0 ? statusFilter : ['mind'];
-    if (!activeFilter.includes('mind')) {
+    if (!activeFilter.includes('mind') && !query?.trim()) {
       const effectiveStatuses = new Set<string>();
       for (const s of activeFilter) {
         const expanded = STATUS_COMBOS[s as keyof typeof STATUS_COMBOS];
@@ -1152,12 +1166,14 @@ const RFQs: React.FC = () => {
         else effectiveStatuses.add(s);
       }
       return res.filter((item: any) => {
-        const itemStatus = item.status || item.effective_status || item._costTopStatus || 'new';
+        const itemStatus = item.status
+          ? normalizeRfqWorkflowStatus(item.status)
+          : (item.effective_status ? normalizeRfqWorkflowStatus(item.effective_status) : (item._costTopStatus || 'new'));
         return effectiveStatuses.has(itemStatus);
       });
     }
     return res;
-  }, [filtered, statusFilter, costStatusOverrides]);
+  }, [filtered, statusFilter, costStatusOverrides, query]);
 
   // Load new IDs from backend whenever displayed items change
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -3022,8 +3038,8 @@ const RFQs: React.FC = () => {
                     className="rfqs-status-select"
                     mode="multiple"
                     placeholder="Státusz szűrő"
-                    value={statusFilter}
-                    onChange={handleStatusFilterChange}
+                    value={Array.isArray(statusFilter) ? statusFilter : ['mind']}
+                    onChange={(values: any) => handleStatusFilterChange(Array.isArray(values) ? values.map(String) : [])}
                     style={{ width: 220 }}
                     popupMatchSelectWidth={false}
                     maxTagCount="responsive"
@@ -3037,7 +3053,7 @@ const RFQs: React.FC = () => {
                     </Select.OptGroup>
                     <Select.OptGroup label="Egyéni">
                       <Select.Option value="new">Új</Select.Option>
-                      <Select.Option value="sent">Kiküldve</Select.Option>
+                      <Select.Option value="quoted">Kiküldve</Select.Option>
                       <Select.Option value="ordered">Megrendelve</Select.Option>
                       <Select.Option value="confirmed">Megerősítve</Select.Option>
                       <Select.Option value="in_design">Tervezés alatt</Select.Option>
@@ -3109,8 +3125,8 @@ const RFQs: React.FC = () => {
                     className="rfqs-status-select"
                     mode="multiple"
                     placeholder="Státusz szűrő"
-                    value={statusFilter}
-                    onChange={handleStatusFilterChange}
+                    value={Array.isArray(statusFilter) ? statusFilter : ['mind']}
+                    onChange={(values: any) => handleStatusFilterChange(Array.isArray(values) ? values.map(String) : [])}
                     style={{ width: '100%' }}
                     popupMatchSelectWidth={false}
                     maxTagCount="responsive"
@@ -3124,7 +3140,7 @@ const RFQs: React.FC = () => {
                     </Select.OptGroup>
                     <Select.OptGroup label="Egyéni">
                       <Select.Option value="new">Új</Select.Option>
-                      <Select.Option value="sent">Kiküldve</Select.Option>
+                      <Select.Option value="quoted">Kiküldve</Select.Option>
                       <Select.Option value="ordered">Megrendelve</Select.Option>
                       <Select.Option value="confirmed">Megerősítve</Select.Option>
                       <Select.Option value="in_design">Tervezés alatt</Select.Option>
@@ -3251,14 +3267,19 @@ const RFQs: React.FC = () => {
           expandedRowRender: renderExpandedItemRow,
           onExpand: (expanded: boolean, record: any) => {
             if (expanded) markRfqSeen(record);
-            // ?light=1 esetén a tétel-csatolmányok nincsenek előtöltve — igény szerint töltjük be
-            if (expanded && rfqItemAtts[record.id] === undefined) {
-              salesService.getQuoteRequestItemAttachments(record.id)
-                .then((data: any) => {
-                  const list = Array.isArray(data) ? data : (data?.results ?? []);
+            // ?light=1 esetén a tétel-csatolmányok nincsenek előtöltve. A teljes RFQ-ból
+            // töltjük vissza őket, mert a listanézetben lehet elavult vagy placeholder item id.
+            if (expanded && record?.id != null && rfqItemAtts[record.id] === undefined && record?.rfq_pk) {
+              salesService.getQuoteRequest(record.rfq_pk)
+                .then((full: any) => {
+                  const allItems = Array.isArray(full?.items) ? full.items : [];
+                  const matchedItem = allItems.find((item: any) => item?.id === record.id) || allItems[0] || null;
+                  const list = Array.isArray(matchedItem?.attachments) ? matchedItem.attachments : [];
                   setRfqItemAtts(prev => ({ ...prev, [record.id]: list }));
                 })
-                .catch(() => {});
+                .catch(() => {
+                  setRfqItemAtts(prev => ({ ...prev, [record.id]: [] }));
+                });
             }
           },
         }} />

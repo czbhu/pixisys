@@ -669,6 +669,7 @@ class QuoteRequestItemAttachment(models.Model):
     original_filename = models.CharField(max_length=255, blank=True, verbose_name='Eredeti fájlnév')
     remark = models.CharField(max_length=255, blank=True)
     is_documentation = models.BooleanField(default=False, verbose_name='Kész dokumentáció')
+    is_manufacturing_file = models.BooleanField(default=False, verbose_name='Gyártási file')
     storage_file_id = models.IntegerField(null=True, blank=True, verbose_name='Storage fájl ID')
     uploaded_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)

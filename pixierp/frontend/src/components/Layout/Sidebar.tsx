@@ -28,10 +28,11 @@ interface SidebarProps {
   onCollapse?: (collapsed: boolean) => void;
   onNavigate?: () => void;
   inviteCount?: number;
+  hasRfqAccess?: boolean;
   notificationCounts?: { [key: string]: number };
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse, onNavigate, inviteCount = 0, notificationCounts = {} }) => {
+const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse, onNavigate, inviteCount = 0, hasRfqAccess = false, notificationCounts = {} }) => {
   const [internalCollapsed, setInternalCollapsed] = useState(false);
   const [openKeys, setOpenKeys] = useState<string[]>([]);
   const [hasCashRegisterAccess, setHasCashRegisterAccess] = useState(true);
@@ -764,6 +765,12 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
   const hasAccess = (itemKey: string) => {
     if (itemKey === '/personal/cash-registers' && !hasCashRegisterAccess) {
       return false;
+    }
+
+    // Résztvevő/meghívott userek lássák az Árajánlatok és Meghívásaim menüt akkor is,
+    // ha nincs sales.rfqs alapjogosultságuk (egyedileg szignált RFQ-k).
+    if ((itemKey === '/sales/rfqs' || itemKey === '/sales/invitations') && hasRfqAccess) {
+      return true;
     }
 
     // 1. Always allow Dashboard and Personal

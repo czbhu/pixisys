@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { Modal, Tabs, Input, Table, Button, Form, InputNumber, Select, Space, message, Divider, Alert, Upload, Tooltip, Collapse, Drawer, Tag, Checkbox, Row, Col, Switch, AutoComplete, Typography, Popconfirm, Grid } from 'antd';
 import NumInput from '../NumInput';
-import { UploadOutlined, SyncOutlined, EditOutlined, SearchOutlined, PlusOutlined, DeleteOutlined, CopyOutlined, ExclamationCircleOutlined, UpOutlined, DownOutlined, LeftOutlined, RightOutlined, AppstoreOutlined, FolderOpenOutlined } from '@ant-design/icons';
+import { UploadOutlined, SyncOutlined, EditOutlined, SearchOutlined, PlusOutlined, DeleteOutlined, CopyOutlined, ExclamationCircleOutlined, UpOutlined, DownOutlined, LeftOutlined, RightOutlined, AppstoreOutlined, FolderOpenOutlined, ToolOutlined } from '@ant-design/icons';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CostDragHandle, CostDraggableRow, applyCostDnd, buildCostTreeMeta, CostTreeGuide } from '../Manufacturing/CostDnd';
@@ -81,6 +81,8 @@ interface ItemSelectorModalProps {
   initialManuPayload?: any;
   /** The quote_item id — used to load & display existing attachments in edit mode */
   quoteItemId?: number;
+  /** Called after an attachment's manufacturing flag is toggled, so parent can refresh its manufacturing panel */
+  onManufacturingMarked?: () => void;
   /** When true, shows a "Kinek a költsége?" (cost_type) select in the item form */
   showCostTypeField?: boolean;
   /** Order items to show a "Kapcsolódó tétel" selector in the item form */
@@ -129,7 +131,7 @@ const { Search } = Input;
 
 const defaultVat = 27;
 
-export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defaultType = 'product', onCancel, onAdd, allowCreate = true, mode = 'add', initialSelection, initialValues, initialFormulas, customer, rfqId, rfqCurrency, initialManuPayload, quoteItemId, showCostTypeField, orderItems, expandCosts, renderInline = false, hideCodeField = false, saveRef, onImpositionSaveToRfq }) => {
+export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defaultType = 'product', onCancel, onAdd, allowCreate = true, mode = 'add', initialSelection, initialValues, initialFormulas, customer, rfqId, rfqCurrency, initialManuPayload, quoteItemId, onManufacturingMarked, showCostTypeField, orderItems, expandCosts, renderInline = false, hideCodeField = false, saveRef, onImpositionSaveToRfq }) => {
   const navigate = useNavigate();
   const screens = Grid.useBreakpoint();
   const isMobile = !screens.md;
@@ -238,7 +240,6 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
     } else {
       setPendingFiles(prev => [...prev, file]);
     }
-    message.info('Kép beillesztve csatolmányként');
   }, [activeKey]);
   useClipboardImagePaste(handlePaste, !!open);
   // Currency state for the inline manu form
@@ -1121,13 +1122,32 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
               <div>
                 {existingAttachments.map((att: any) => (
                   <div key={att.id} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
-                    <Button type="text" danger size="small" icon={<DeleteOutlined />}
-                      onClick={async () => {
+                    <Popconfirm
+                      title="Biztosan töröljük ezt a fájlt?"
+                      okText="Igen"
+                      cancelText="Mégse"
+                      onConfirm={async () => {
                         if (!quoteItemId) return;
                         try { await salesService.deleteQuoteRequestItemAttachment(quoteItemId, att.id); setExistingAttachments(prev => prev.filter((a: any) => a.id !== att.id)); }
                         catch { message.error('Nem sikerült törölni'); }
                       }}
-                    />
+                    >
+                      <Button type="text" danger size="small" icon={<DeleteOutlined />} />
+                    </Popconfirm>
+                    <Tooltip title={att.is_manufacturing_file ? 'Gyártási file jelölés levétele' : 'Megjelölés gyártási file-ként'}>
+                      <Button type="text" size="small" icon={<ToolOutlined style={{ color: att.is_manufacturing_file ? '#fa8c16' : '#bfbfbf' }} />}
+                        onClick={async () => {
+                          if (!quoteItemId) return;
+                          const next = !att.is_manufacturing_file;
+                          try {
+                            await salesService.setQuoteRequestItemAttachmentManufacturing(quoteItemId, att.id, next);
+                            setExistingAttachments(prev => prev.map((a: any) => a.id === att.id ? { ...a, is_manufacturing_file: next } : a));
+                            onManufacturingMarked?.();
+                            message.success(next ? 'Megjelölve gyártási file-ként' : 'Gyártási file jelölés levéve');
+                          } catch { message.error('Nem sikerült módosítani'); }
+                        }}
+                      />
+                    </Tooltip>
                     {(() => {
                       const fn = att.original_filename || att.file?.split('/').pop() || `#${att.id}`;
                       const dotIdx = fn.lastIndexOf('.');
@@ -2869,13 +2889,32 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
                         <div>
                           {existingAttachments.map((att: any) => (
                             <div key={att.id} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
-                              <Button type="text" danger size="small" icon={<DeleteOutlined />}
-                                onClick={async () => {
+                              <Popconfirm
+                                title="Biztosan töröljük ezt a fájlt?"
+                                okText="Igen"
+                                cancelText="Mégse"
+                                onConfirm={async () => {
                                   if (!quoteItemId) return;
                                   try { await salesService.deleteQuoteRequestItemAttachment(quoteItemId, att.id); setExistingAttachments(prev => prev.filter((a: any) => a.id !== att.id)); }
                                   catch { message.error('Nem sikerült törölni'); }
                                 }}
-                              />
+                              >
+                                <Button type="text" danger size="small" icon={<DeleteOutlined />} />
+                              </Popconfirm>
+                              <Tooltip title={att.is_manufacturing_file ? 'Gyártási file jelölés levétele' : 'Megjelölés gyártási file-ként'}>
+                                <Button type="text" size="small" icon={<ToolOutlined style={{ color: att.is_manufacturing_file ? '#fa8c16' : '#bfbfbf' }} />}
+                                  onClick={async () => {
+                                    if (!quoteItemId) return;
+                                    const next = !att.is_manufacturing_file;
+                                    try {
+                                      await salesService.setQuoteRequestItemAttachmentManufacturing(quoteItemId, att.id, next);
+                                      setExistingAttachments(prev => prev.map((a: any) => a.id === att.id ? { ...a, is_manufacturing_file: next } : a));
+                                      onManufacturingMarked?.();
+                                      message.success(next ? 'Megjelölve gyártási file-ként' : 'Gyártási file jelölés levéve');
+                                    } catch { message.error('Nem sikerült módosítani'); }
+                                  }}
+                                />
+                              </Tooltip>
                               {(() => {
                                 const fn = att.original_filename || att.file?.split('/').pop() || `#${att.id}`;
                                 const dotIdx = fn.lastIndexOf('.');

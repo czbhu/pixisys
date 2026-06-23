@@ -14,6 +14,10 @@
 /* Status-based row background colors (used by RFQs main table, sub-items, and ProductSubItemsTable) */
 .ant-table-tbody tr.rfq-row-sent > td { background: #ededed !important; }
 .ant-table-tbody tr.rfq-row-sent:hover > td { background: #dedede !important; }
+/* A getDisplayStatus a 'sent' effective státuszt 'quoted'-re normalizálja (workflow lépés),
+   ezért a kiküldött ("Kiküldve") sorok osztálya rfq-row-quoted — ugyanazzal a szürke háttérrel. */
+.ant-table-tbody tr.rfq-row-quoted > td { background: #ededed !important; }
+.ant-table-tbody tr.rfq-row-quoted:hover > td { background: #dedede !important; }
 .ant-table-tbody tr.rfq-row-ordered > td { background: #fffbd1 !important; }
 .ant-table-tbody tr.rfq-row-ordered:hover > td { background: #fff3b0 !important; }
 .ant-table-tbody tr.rfq-row-confirmed > td { background: #fff7aa !important; }

@@ -10,7 +10,8 @@ router.register(r'services', views.ServiceViewSet)
 router.register(r'quote-requests', views.QuoteRequestViewSet, basename='quoterequest')
 router.register(r'quote-request-items', views.QuoteRequestItemViewSet)
 router.register(r'quotes', views.QuoteViewSet)
-router.register(r'quote-items', views.QuoteItemViewSet)
+# deprecated: 2026-06-23 — a 'quote-items' route (QuoteItemViewSet) eltávolítva:
+# használaton kívül volt, jogosultság-szűrés nélkül adta vissza az összes RFQ-t (biztonsági rés).
 router.register(r'orders', views.OrderViewSet)
 router.register(r'order-items', views.OrderItemViewSet)
 router.register(r'customer-orders', views.CustomerOrderViewSet)

@@ -48,6 +48,7 @@ interface WorkLogDetail {
     id: number;
     order_number: string;
     order_id: number;
+    order_label?: string;
     rfq_number?: string;
     customer_name: string;
     quote_title: string;
@@ -62,7 +63,8 @@ interface WorkLogDetail {
 
 interface ActiveWork {
     order_number: string;
-    order_id: number;
+    order_id: number | null;
+    order_label?: string;
     rfq_number?: string;
     customer_name: string;
     quote_title: string;
@@ -135,12 +137,16 @@ const WorkerDailyTable: React.FC<{ logs: WorkLogDetail[]; navigate: ReturnType<t
             title: 'Megrendelés',
             key: 'order',
             render: (_: any, r: WorkLogDetail) => (
-                <a
-                    onClick={() => window.open(`/sales/rfqs/${r.rfq_number || r.order_number}`, '_blank', 'noopener,noreferrer')}
-                    style={{ fontSize: 12 }}
-                >
-                    <span style={{ fontWeight: 500 }}>{r.rfq_number || r.order_number || '—'}</span>
-                </a>
+                (r.rfq_number || r.order_number) ? (
+                    <a
+                        onClick={() => window.open(`/sales/rfqs/${r.rfq_number || r.order_number}`, '_blank', 'noopener,noreferrer')}
+                        style={{ fontSize: 12 }}
+                    >
+                        <span style={{ fontWeight: 500 }}>{r.rfq_number || r.order_number}</span>
+                    </a>
+                ) : (
+                    <Text style={{ fontSize: 12 }}>{r.order_label || r.workflow_name || 'Egyéb'}</Text>
+                )
             ),
         },
         {
@@ -157,7 +163,7 @@ const WorkerDailyTable: React.FC<{ logs: WorkLogDetail[]; navigate: ReturnType<t
             title: 'Tétel',
             dataIndex: 'item_name',
             key: 'item_name',
-            render: (v: string, r: WorkLogDetail) => <Text style={{ fontSize: 12 }}>{v || r.workflow_name || '—'}</Text>,
+            render: (v: string, r: WorkLogDetail) => <Text style={{ fontSize: 12 }}>{v || r.order_label || r.workflow_name || 'Egyéb'}</Text>,
         },
         {
             title: 'Altétel',
@@ -166,7 +172,7 @@ const WorkerDailyTable: React.FC<{ logs: WorkLogDetail[]; navigate: ReturnType<t
             render: (v: string, r: WorkLogDetail) => (
                 <Space size={4}>
                     {r.is_running && <Badge status="processing" />}
-                    <Text style={{ fontSize: 12 }}>{v || r.workflow_name || '—'}</Text>
+                    <Text style={{ fontSize: 12 }}>{v || r.workflow_name || r.order_label || 'Egyéb'}</Text>
                 </Space>
             ),
         },
@@ -268,12 +274,16 @@ const ManufacturingDashboard: React.FC<{
                     <Text strong>{name}</Text>
                     {r.active_work && (
                         <Text style={{ fontSize: 12, color: '#1677ff' }}>
-                            — <a
-                                onClick={() => window.open(`/sales/rfqs/${r.active_work!.rfq_number || r.active_work!.order_number}`, '_blank', 'noopener,noreferrer')}
-                                style={{ fontSize: 12 }}
-                            >
-                                {r.active_work.rfq_number || r.active_work.order_number}
-                            </a>
+                            — {(r.active_work.rfq_number || r.active_work.order_number) ? (
+                                <a
+                                    onClick={() => window.open(`/sales/rfqs/${r.active_work!.rfq_number || r.active_work!.order_number}`, '_blank', 'noopener,noreferrer')}
+                                    style={{ fontSize: 12 }}
+                                >
+                                    {r.active_work.rfq_number || r.active_work.order_number}
+                                </a>
+                            ) : (
+                                (r.active_work.order_label || 'Egyéb')
+                            )}
                             {r.active_work.customer_name && ` (${r.active_work.customer_name}`}
                             {r.active_work.quote_title && ` — ${r.active_work.quote_title}`}
                             {r.active_work.customer_name && ')'}
@@ -392,9 +402,13 @@ const ManufacturingDashboard: React.FC<{
                                                     {w.active_work && (
                                                         <Text
                                                             style={{ fontSize: 12, color: '#1677ff', cursor: 'pointer' }}
-                                                            onClick={() => navigate(`/sales/customer-orders/${w.active_work!.order_id}`)}
+                                                            onClick={() => {
+                                                                if (w.active_work!.order_id) {
+                                                                    navigate(`/sales/customer-orders/${w.active_work!.order_id}`);
+                                                                }
+                                                            }}
                                                         >
-                                                            — {w.active_work.order_number}
+                                                            — {w.active_work.order_number || w.active_work.order_label || 'Egyéb'}
                                                         </Text>
                                                     )}
                                                 </Space>
@@ -406,11 +420,14 @@ const ManufacturingDashboard: React.FC<{
                                                             w.active_work.customer_name,
                                                             w.active_work.quote_title,
                                                         ].filter(Boolean).join(' — ')}
-                                                        {w.active_work.order_number && (
+                                                        {w.active_work.order_number && w.active_work.order_id && (
                                                             <> — <a
                                                                 style={{ color: '#1677ff' }}
                                                                 onClick={() => navigate(`/sales/customer-orders/${w.active_work!.order_id}`)}
                                                             >{w.active_work.order_number}</a></>
+                                                        )}
+                                                        {!w.active_work.order_number && w.active_work.order_label && (
+                                                            <> — {w.active_work.order_label}</>
                                                         )}
                                                         {(w.active_work.sub_item_name || w.active_work.workflow_name) && (
                                                             <> — {w.active_work.sub_item_name || w.active_work.workflow_name}</>

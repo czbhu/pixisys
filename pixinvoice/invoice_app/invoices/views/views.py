@@ -123,6 +123,11 @@ DEFAULT_EMAIL_TEMPLATE_MAP = {
         'subject_template': 'Számla {invoice_number}',
         'body_template': 'Tisztelt {customer_name}!\n\nKüldjük a(z) {invoice_number} számú számlát PDF csatolmányként.\n\nÜdvözlettel,\n{company_name}\n{signature_html}',
     },
+    EmailTemplate.TEMPLATE_PROFORMA_SEND: {
+        'name': 'Díjbekérő küldése',
+        'subject_template': 'Díjbekérő {invoice_number}',
+        'body_template': 'Tisztelt {customer_name}!\n\nKüldjük a(z) {invoice_number} számú díjbekérőt PDF csatolmányként.\n\nÜdvözlettel,\n{company_name}\n{signature_html}',
+    },
     EmailTemplate.TEMPLATE_ARREARS: {
         'name': 'Kintlévőségi',
         'subject_template': 'Kintlévőség értesítő - lejárt számlák',
@@ -160,6 +165,11 @@ DEFAULT_EMAIL_TEMPLATE_MAP_EN = {
         'name': 'Invoice Sending',
         'subject_template': 'Invoice {invoice_number}',
         'body_template': 'Dear {customer_name},<br><br>Please find attached invoice {invoice_number}.<br><br>Best regards,<br>{company_name}<br>{signature_html}',
+    },
+    EmailTemplate.TEMPLATE_PROFORMA_SEND: {
+        'name': 'Proforma Sending',
+        'subject_template': 'Proforma {invoice_number}',
+        'body_template': 'Dear {customer_name},<br><br>Please find attached proforma {invoice_number}.<br><br>Best regards,<br>{company_name}<br>{signature_html}',
     },
     EmailTemplate.TEMPLATE_ARREARS: {
         'name': 'Arrears Notice',
@@ -219,6 +229,25 @@ def get_company_email_template(company, template_type, language='hu'):
 
     defaults_map = DEFAULT_EMAIL_TEMPLATE_MAP_EN if lang == 'en' else DEFAULT_EMAIL_TEMPLATE_MAP
     defaults = defaults_map.get(template_type, {})
+
+    # Backward compatibility: if dedicated proforma template is missing,
+    # derive it from invoice template by replacing wording.
+    if template_type == EmailTemplate.TEMPLATE_PROFORMA_SEND and not tpl:
+        invoice_tpl = get_company_email_template(company, EmailTemplate.TEMPLATE_INVOICE_SEND, language=lang)
+        return {
+            'subject_template': (invoice_tpl.get('subject_template') or '')
+                .replace('Számla', 'Díjbekérő')
+                .replace('számla', 'díjbekérő')
+                .replace('Invoice', 'Proforma')
+                .replace('invoice', 'proforma'),
+            'body_template': (invoice_tpl.get('body_template') or '')
+                .replace('Számla', 'Díjbekérő')
+                .replace('számla', 'díjbekérő')
+                .replace('számlát', 'díjbekérőt')
+                .replace('számlákat', 'díjbekérőket')
+                .replace('Invoice', 'Proforma')
+                .replace('invoice', 'proforma'),
+        }
 
     if template_type == EmailTemplate.TEMPLATE_INVOICE_SEND:
         if tpl:
@@ -9935,6 +9964,7 @@ class EmailTemplateViewSet(viewsets.ModelViewSet):
         obj = self.get_object()
         required_types = {
             EmailTemplate.TEMPLATE_INVOICE_SEND,
+            EmailTemplate.TEMPLATE_PROFORMA_SEND,
             EmailTemplate.TEMPLATE_ARREARS,
             EmailTemplate.TEMPLATE_REMINDER_1,
             EmailTemplate.TEMPLATE_REMINDER_2,
@@ -14111,7 +14141,7 @@ class ProformaViewSet(viewsets.ModelViewSet):
             company = pf.company
             customer = pf.customer
             default_signature_html = get_default_signature_html(company)
-            tpl = get_company_email_template(company, EmailTemplate.TEMPLATE_INVOICE_SEND, 'hu')
+            tpl = get_company_email_template(company, EmailTemplate.TEMPLATE_PROFORMA_SEND, 'hu')
 
             def render_curly(tpl_str, ctx_dict):
                 out = str(tpl_str or '')

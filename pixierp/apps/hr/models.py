@@ -127,29 +127,21 @@ class Employee(BaseModel):
         return f"{self.user.get_full_name()} ({self.employee_id})"
     
     def get_all_roles(self):
-        """Összes szerepkör: CSAK osztályok szerepkörei (Department.roles)
-        Egyéni UserRole-ok NEM HASZNÁLTAK"""
+        """Összes szerepkör: a felhasználó összes osztályának összes szerepköre.
+
+        Ha több osztályban van, az osztályok szerepkörei összeadódnak
+        ("is-is" logika, egyesített jogosultságkészlet).
+        Egyéni UserRole-ok itt nem szerepelnek.
+        """
         from apps.core.models import Role
-        
-        role_ids = set()
-        
-        # CSAK osztályok szerepkörei
-        for department in self.departments.all():
-            for role in department.roles.all():
-                role_ids.add(role.id)
-        
-        return Role.objects.filter(id__in=role_ids)
+
+        return Role.objects.filter(departments__employees=self).distinct()
     
     def get_department_roles(self):
-        """Csak az osztályok szerepkörei"""
+        """Csak az osztályok szerepkörei (összes érintett osztályból egyesítve)."""
         from apps.core.models import Role
-        
-        role_ids = set()
-        for department in self.departments.all():
-            for role in department.roles.all():
-                role_ids.add(role.id)
-        
-        return Role.objects.filter(id__in=role_ids)
+
+        return Role.objects.filter(departments__employees=self).distinct()
     
     def get_individual_roles(self):
         """Csak az egyéni UserRole-ok"""
