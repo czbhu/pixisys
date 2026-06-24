@@ -450,7 +450,7 @@ const RFQs: React.FC = () => {
             style={{ width: 320 }}
             onChange={e => setRfqLevelRemark(prev => ({ ...prev, [rfqId]: e.target.value }))}
           />
-          <div onMouseEnter={() => { lastPasteTargetRef.current = { type: 'rfq', id: rfqId }; }}>
+          <div onMouseEnter={() => { lastPasteTargetRef.current = { type: 'rfq', id: rfqId }; }} onMouseLeave={() => { if (lastPasteTargetRef.current?.id === rfqId) lastPasteTargetRef.current = null; }}>
             <Upload.Dragger
               multiple
               showUploadList={false}
@@ -598,7 +598,7 @@ const RFQs: React.FC = () => {
                       style={{ width: 200, marginBottom: 4 }}
                       onChange={e => setRfqItemRemark(prev => ({ ...prev, [itemId]: e.target.value }))}
                     />
-                    <div onMouseEnter={() => { lastPasteTargetRef.current = { type: 'item', id: itemId }; }}>
+                    <div onMouseEnter={() => { lastPasteTargetRef.current = { type: 'item', id: itemId }; }} onMouseLeave={() => { if (lastPasteTargetRef.current?.id === itemId) lastPasteTargetRef.current = null; }}>
                       <Upload.Dragger
                         multiple
                         showUploadList={false}
@@ -1311,7 +1311,7 @@ const RFQs: React.FC = () => {
             style={{ width: 200, marginBottom: 4 }}
             onChange={e => setRfqItemRemark(prev => ({ ...prev, [itemId]: e.target.value }))}
           />
-          <div onMouseEnter={() => { lastPasteTargetRef.current = { type: 'item', id: itemId }; }}>
+          <div onMouseEnter={() => { lastPasteTargetRef.current = { type: 'item', id: itemId }; }} onMouseLeave={() => { if (lastPasteTargetRef.current?.id === itemId) lastPasteTargetRef.current = null; }}>
             <Upload.Dragger
               multiple
               showUploadList={false}
@@ -2833,10 +2833,22 @@ const RFQs: React.FC = () => {
         }));
 
         const rfqNumbers = group.rows.map(({ row }: any) => row.rfq_number || row.rfq_id);
+        // A pixinvoice a számla mentése után a customer-orders/{id}/update_invoice_number/ végpontot
+        // hívja vissza erp_order_ids alapján — ezért MEGRENDELÉS (CustomerOrder) id-kat kell küldeni,
+        // nem RFQ id-kat. (Korábban erp_rfq_ids ment -> a visszaírás nem futott -> nem lett Kiszámlázva.)
+        const erpOrderIds = Array.from(new Set(
+          group.rows.flatMap(({ row, rfq }: any) => {
+            const ids: any[] = [];
+            if (row?.customer_order_id != null) ids.push(row.customer_order_id);
+            ((rfq?.items || []) as any[]).forEach((it: any) => { if (it?.customer_order_id != null) ids.push(it.customer_order_id); });
+            return ids;
+          })
+        )).filter((x: any) => x != null);
         const invoiceData = {
           customer: customerData,
           items: invoiceItems,
           notes: `ERP árajánlat: ${rfqNumbers.join(', ')}`,
+          erp_order_ids: erpOrderIds,
           erp_rfq_ids: group.rows.map(({ row }: any) => row.rfq_id),
           delivery_date: dayjs().format('YYYY-MM-DD'),
         };

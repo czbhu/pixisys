@@ -11342,6 +11342,15 @@ class BankStatementViewSet(viewsets.ModelViewSet):
             qs = qs.filter(company_id=company_id)
         if bank_account_id:
             qs = qs.filter(bank_account_id=bank_account_id)
+        # A nested items szerializáció (invoice/incoming_invoice/customer) különben
+        # statementenként N+1 query-t okoz -> nagyon lassú lista. Prefetch + select_related
+        # megszünteti (50 statement: 1.9s/488 query -> 0.26s/0 query).
+        qs = qs.prefetch_related(
+            models.Prefetch(
+                'items',
+                queryset=BankStatementItem.objects.select_related('invoice', 'incoming_invoice', 'customer'),
+            )
+        )
         return qs.order_by('-statement_date', '-created_at')
 
     def retrieve(self, request, *args, **kwargs):
@@ -12486,44 +12495,80 @@ class BankStatementViewSet(viewsets.ModelViewSet):
             storno_like = is_storno_like(getattr(inv, 'invoice_operation', None), storno_flag)
             return -abs(outstanding) if storno_like else outstanding
 
-        company_tax_base = re.sub(r'\D+', '', str(getattr(company, 'tax_number', None) or getattr(company, 'full_tax_number', None) or getattr(company, 'eu_tax_number', None) or ''))
-        company_name = str(getattr(company, 'name', None) or '').strip()
-        incoming_base_qs = IncomingInvoiceDigest.objects.filter(company=company)
-        if company_tax_base:
-            incoming_external_outgoing_qs = incoming_base_qs.filter(
-                Q(supplier_tax_number__icontains=company_tax_base) | Q(supplier_name__icontains=company_name)
-            )
-            incoming_supplier_qs = incoming_base_qs.filter(
-                Q(customer_tax_number__icontains=company_tax_base) | Q(customer_tax_number__isnull=True) | Q(customer_tax_number='')
-            )
-        elif company_name:
-            incoming_external_outgoing_qs = incoming_base_qs.filter(supplier_name__icontains=company_name)
-            incoming_supplier_qs = incoming_base_qs.exclude(supplier_name__icontains=company_name)
-        else:
-            incoming_external_outgoing_qs = incoming_base_qs.none()
-            incoming_supplier_qs = incoming_base_qs
-        # Map accounts to customers
-        acct_to_customer = {}
-        account_cache = []
-        account_qs = CustomerBankAccount.objects.select_related('customer')
-        for acc in account_qs:
-            iban_alnum = norm_alnum(acc.iban)
-            num_alnum = norm_alnum(acc.account_number)
-            iban_digits = norm_digits(iban_alnum)
-            num_digits = norm_digits(num_alnum)
-            if iban_alnum:
-                acct_to_customer[iban_alnum] = acc.customer
-            if num_alnum:
-                acct_to_customer[num_alnum] = acc.customer
-            if iban_digits:
-                acct_to_customer[iban_digits] = acc.customer
-            if num_digits:
-                acct_to_customer[num_digits] = acc.customer
-            account_cache.append((acc.customer, iban_alnum, num_alnum, iban_digits, num_digits))
-
-        # Preload customers once for fuzzy matching
-        all_customers = list(Customer.objects.only('id', 'name'))
-        customer_by_id = {str(c.id): c for c in all_customers}
+        # --- Company-szintű előtöltések (cache-elve az egész import kérésre) ---
+        # Az import_stm egy kérésben loopban hívja a _propose_matches-t statementenként;
+        # ezek a preload-ok (ügyfelek, bankszámlák, recent számlák) company-szintűek, ezért
+        # csak EGYSZER számoljuk ki és újrahasználjuk -> sok-statementes fájlnál nincs 504.
+        if not hasattr(self, '_pm_company_cache'):
+            self._pm_company_cache = {}
+        _ctx = self._pm_company_cache.get(str(company.id))
+        if _ctx is None:
+            company_tax_base = re.sub(r'\D+', '', str(getattr(company, 'tax_number', None) or getattr(company, 'full_tax_number', None) or getattr(company, 'eu_tax_number', None) or ''))
+            company_name = str(getattr(company, 'name', None) or '').strip()
+            incoming_base_qs = IncomingInvoiceDigest.objects.filter(company=company)
+            if company_tax_base:
+                incoming_external_outgoing_qs = incoming_base_qs.filter(
+                    Q(supplier_tax_number__icontains=company_tax_base) | Q(supplier_name__icontains=company_name)
+                )
+                incoming_supplier_qs = incoming_base_qs.filter(
+                    Q(customer_tax_number__icontains=company_tax_base) | Q(customer_tax_number__isnull=True) | Q(customer_tax_number='')
+                )
+            elif company_name:
+                incoming_external_outgoing_qs = incoming_base_qs.filter(supplier_name__icontains=company_name)
+                incoming_supplier_qs = incoming_base_qs.exclude(supplier_name__icontains=company_name)
+            else:
+                incoming_external_outgoing_qs = incoming_base_qs.none()
+                incoming_supplier_qs = incoming_base_qs
+            # Map accounts to customers
+            acct_to_customer = {}
+            account_cache = []
+            account_qs = CustomerBankAccount.objects.select_related('customer')
+            for acc in account_qs:
+                iban_alnum = norm_alnum(acc.iban)
+                num_alnum = norm_alnum(acc.account_number)
+                iban_digits = norm_digits(iban_alnum)
+                num_digits = norm_digits(num_alnum)
+                if iban_alnum:
+                    acct_to_customer[iban_alnum] = acc.customer
+                if num_alnum:
+                    acct_to_customer[num_alnum] = acc.customer
+                if iban_digits:
+                    acct_to_customer[iban_digits] = acc.customer
+                if num_digits:
+                    acct_to_customer[num_digits] = acc.customer
+                account_cache.append((acc.customer, iban_alnum, num_alnum, iban_digits, num_digits))
+            # Preload customers once for fuzzy matching + normalizált nevek (drága strip_accents)
+            all_customers = list(Customer.objects.only('id', 'name'))
+            customer_by_id = {str(c.id): c for c in all_customers}
+            all_customers_norm = [(c, norm_name(c.name)) for c in all_customers]
+            # Recent invoices amount-alapú párosításhoz (prefetch items: total_gross_amount N+1 elkerülése)
+            _recent_outgoing = list(Invoice.objects.filter(company=company).order_by('-issue_date').select_related('customer').prefetch_related('items')[:200])
+            _recent_ext_incoming = list(incoming_external_outgoing_qs.order_by('-invoice_issue_date')[:300])
+            _recent_sup_incoming = list(incoming_supplier_qs.order_by('-invoice_issue_date')[:200])
+            _ctx = {
+                'company_tax_base': company_tax_base, 'company_name': company_name,
+                'incoming_external_outgoing_qs': incoming_external_outgoing_qs,
+                'incoming_supplier_qs': incoming_supplier_qs,
+                'acct_to_customer': acct_to_customer, 'account_cache': account_cache,
+                'all_customers': all_customers, 'customer_by_id': customer_by_id,
+                'all_customers_norm': all_customers_norm,
+                '_recent_outgoing': _recent_outgoing,
+                '_recent_ext_incoming': _recent_ext_incoming,
+                '_recent_sup_incoming': _recent_sup_incoming,
+            }
+            self._pm_company_cache[str(company.id)] = _ctx
+        company_tax_base = _ctx['company_tax_base']
+        company_name = _ctx['company_name']
+        incoming_external_outgoing_qs = _ctx['incoming_external_outgoing_qs']
+        incoming_supplier_qs = _ctx['incoming_supplier_qs']
+        acct_to_customer = _ctx['acct_to_customer']
+        account_cache = _ctx['account_cache']
+        all_customers = _ctx['all_customers']
+        customer_by_id = _ctx['customer_by_id']
+        all_customers_norm = _ctx['all_customers_norm']
+        _recent_outgoing = _ctx['_recent_outgoing']
+        _recent_ext_incoming = _ctx['_recent_ext_incoming']
+        _recent_sup_incoming = _ctx['_recent_sup_incoming']
 
         # --- Batch-preload invoices for the whole statement to avoid per-item DB queries ---
         # Collect all unique tokens across all items first, then query once
@@ -12557,7 +12602,7 @@ class BankStatementViewSet(viewsets.ModelViewSet):
             out_q = _Q2()
             for tok in raw_token_list:
                 out_q |= _Q2(invoice_number__icontains=tok)
-            outgoing_qs = list(Invoice.objects.filter(company=company).filter(out_q).order_by('-issue_date').select_related('customer')[:500])
+            outgoing_qs = list(Invoice.objects.filter(company=company).filter(out_q).order_by('-issue_date').select_related('customer').prefetch_related('items')[:500])
             for inv in outgoing_qs:
                 for tok in raw_token_list:
                     if tok.upper() in (inv.invoice_number or '').upper():
@@ -12573,10 +12618,7 @@ class BankStatementViewSet(viewsets.ModelViewSet):
                 for tok in raw_token_list:
                     if tok.upper() in (inv.invoice_number or '').upper():
                         incoming_sup_by_token.setdefault(tok, []).append(inv)
-        # Preload recent invoices for amount-based matching (fallback, no token hit)
-        _recent_outgoing = list(Invoice.objects.filter(company=company).order_by('-issue_date').select_related('customer')[:200])
-        _recent_ext_incoming = list(incoming_external_outgoing_qs.order_by('-invoice_issue_date')[:300])
-        _recent_sup_incoming = list(incoming_supplier_qs.order_by('-invoice_issue_date')[:200])
+        # A recent invoice / customer / account preload-ok a fenti company-szintű cache-ből jönnek.
         # --- End batch preload ---
 
         for idx, it in enumerate(items):
@@ -12594,12 +12636,20 @@ class BankStatementViewSet(viewsets.ModelViewSet):
             if not customer and it.get('counterparty_name'):
                 name = it['counterparty_name'].strip()
                 nname = norm_name(name)
-                # First pass: substring contains (diacritics-insensitive)
-                contains = [c for c in all_customers if nname and norm_name(c.name).find(nname[:20]) >= 0]
-                # Second pass: fuzzy ratio
+                # First pass: substring contains (diacritics-insensitive) — előre normalizált nevekkel
+                contains = [c for (c, cn) in all_customers_norm if nname and cn.find(nname[:20]) >= 0]
+                # Second pass: fuzzy ratio — egy SequenceMatcher újrafelhasználása (set_seq2 a konstans nname-re)
+                # real_quick_ratio()/quick_ratio() olcsó FELSŐ korlátok: ha < küszöb, a teljes ratio() biztosan
+                # az, így kihagyható a drága find_longest_match. Az eredmény azonos, csak sokkal gyorsabb.
                 scored = []
-                for c in all_customers[:1000]:
-                    ratio = difflib.SequenceMatcher(None, nname[:40], norm_name(c.name)[:40]).ratio()
+                _nn40 = nname[:40]
+                _matcher = difflib.SequenceMatcher(None)
+                _matcher.set_seq2(_nn40)
+                for (c, cn) in all_customers_norm[:1000]:
+                    _matcher.set_seq1(cn[:40])
+                    if _matcher.real_quick_ratio() < 0.85 or _matcher.quick_ratio() < 0.85:
+                        continue
+                    ratio = _matcher.ratio()
                     if ratio >= 0.85:
                         scored.append((ratio, c))
                 scored.sort(key=lambda x: x[0], reverse=True)

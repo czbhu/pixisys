@@ -1176,7 +1176,7 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         if not att_id:
             return Response({'error': 'attachment_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
         att = get_object_or_404(QuoteRequestAttachment, id=att_id, quote_request=qr)
-        att.delete()
+        att.soft_delete(user=request.user if request.user.is_authenticated else None)
         return Response({'status': 'ok'})
 
     @action(detail=True, methods=['patch'], url_path=r'attachments/(?P<att_id>\d+)/rename')
@@ -3501,8 +3501,7 @@ def public_delete_attachment(request, token: str, att_id: int):
     """Saját (session-kulccsal azonosított) csatolmány törlése"""
     qr = get_object_or_404(QuoteRequest, public_token=token)
     att = get_object_or_404(QuoteRequestAttachment, id=att_id, quote_request=qr, uploaded_by=None)
-    att.file.delete(save=False)
-    att.delete()
+    att.soft_delete(user=None)
     return Response(status=204)
 
 
@@ -3640,8 +3639,7 @@ class QuoteRequestItemViewSet(viewsets.ModelViewSet):
         if not att_id:
             return Response({'error': 'attachment_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
         att = get_object_or_404(QuoteRequestItemAttachment, id=att_id, quote_item=item)
-        att.file.delete(save=False)
-        att.delete()
+        att.soft_delete(user=request.user if request.user.is_authenticated else None)
         return Response({'status': 'ok'})
 
     @action(detail=True, methods=['post'])
@@ -6273,14 +6271,7 @@ class CustomerOrderItemViewSet(viewsets.ModelViewSet):
         item = self.get_object()
         qi = item.quote_item
         att = get_object_or_404(QuoteRequestItemAttachment, id=att_id, quote_item=qi)
-        if att.storage_file_id:
-            try:
-                from apps.core.models import StorageFile as SF
-                SF.objects.filter(id=att.storage_file_id).delete()
-            except Exception:
-                pass
-        att.file.delete(save=False)
-        att.delete()
+        att.soft_delete(user=request.user if request.user.is_authenticated else None)
         return Response({'status': 'ok'})
 
 

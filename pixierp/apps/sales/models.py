@@ -644,6 +644,18 @@ class QuoteRequestEmailLog(models.Model):
         verbose_name = 'Árajánlat e-mail napló'
         verbose_name_plural = 'Árajánlat e-mail naplók'
 
+class _ActiveManager(models.Manager):
+    """Csak nem törölt (deleted_at=None) rekordokat ad vissza."""
+    def get_queryset(self):
+        return super().get_queryset().filter(deleted_at__isnull=True)
+
+
+class _AllObjectsManager(models.Manager):
+    """Minden rekordot visszaad, törölteket is."""
+    def get_queryset(self):
+        return super().get_queryset()
+
+
 class QuoteRequestAttachment(models.Model):
     quote_request = models.ForeignKey(QuoteRequest, on_delete=models.CASCADE, related_name='attachments')
     file = models.FileField(upload_to='quote_requests/%Y/%m/%d/')
@@ -655,6 +667,12 @@ class QuoteRequestAttachment(models.Model):
     storage_file_id = models.IntegerField(null=True, blank=True, verbose_name='Storage fájl ID')
     uploaded_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    deleted_at = models.DateTimeField(null=True, blank=True, verbose_name='Törölve (soft)')
+    deleted_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True,
+                                   related_name='soft_deleted_quote_request_attachments')
+
+    objects = _ActiveManager()
+    all_objects = _AllObjectsManager()
 
     class Meta:
         verbose_name = "Ajánlat csatolmány"
@@ -662,6 +680,12 @@ class QuoteRequestAttachment(models.Model):
 
     def __str__(self):
         return f"Attachment for quote {self.quote_request_id}: {self.file.name}"
+
+    def soft_delete(self, user=None):
+        from django.utils import timezone
+        self.deleted_at = timezone.now()
+        self.deleted_by = user
+        self.save(update_fields=['deleted_at', 'deleted_by'])
 
 class QuoteRequestItemAttachment(models.Model):
     quote_item = models.ForeignKey(QuoteRequestItem, on_delete=models.CASCADE, related_name='attachments')
@@ -673,6 +697,12 @@ class QuoteRequestItemAttachment(models.Model):
     storage_file_id = models.IntegerField(null=True, blank=True, verbose_name='Storage fájl ID')
     uploaded_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    deleted_at = models.DateTimeField(null=True, blank=True, verbose_name='Törölve (soft)')
+    deleted_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True,
+                                   related_name='soft_deleted_quote_request_item_attachments')
+
+    objects = _ActiveManager()
+    all_objects = _AllObjectsManager()
 
     class Meta:
         verbose_name = "Ajánlat tétel csatolmány"
@@ -680,6 +710,12 @@ class QuoteRequestItemAttachment(models.Model):
 
     def __str__(self):
         return f"Attachment for item {self.quote_item_id}: {self.file.name}"
+
+    def soft_delete(self, user=None):
+        from django.utils import timezone
+        self.deleted_at = timezone.now()
+        self.deleted_by = user
+        self.save(update_fields=['deleted_at', 'deleted_by'])
 
 
 class QuoteRequestItemCostAttachment(models.Model):

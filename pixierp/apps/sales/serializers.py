@@ -597,6 +597,12 @@ class QuoteRequestSerializer(serializers.ModelSerializer):
         return obj.valid_until < timezone.now().date()
 
     def get_effective_status(self, obj):
+        if obj.status in self._ORDER_STATUS_LABELS and obj.status not in ('invoiced', 'cancelled'):
+            # Még ha az RFQ státusza is egy order-szerű közbülső állapot (pl. 'ready', 'delivered'),
+            # az aggregált 'invoiced' ekkor is megelőzi — különben a kiszámlázott tételek "Kész"-nek maradnak.
+            min_status, _ = self._aggregate_order_status(obj)
+            if min_status == 'invoiced':
+                return 'invoiced'
         if obj.status in self._ORDER_STATUS_LABELS:
             return obj.status
         # deprecated: 2026-06-23 — a QuoteRequest.status sosem 'sent'/'invoiced' (nincs a STATUS_CHOICES-ban),
@@ -620,6 +626,11 @@ class QuoteRequestSerializer(serializers.ModelSerializer):
         return obj.status
 
     def get_effective_status_label(self, obj):
+        if obj.status in self._ORDER_STATUS_LABELS and obj.status not in ('invoiced', 'cancelled'):
+            # Ha az összes megrendelés kiszámlázott, az 'invoiced' label megelőzi az obj.status label-jét.
+            min_status, is_partial = self._aggregate_order_status(obj)
+            if min_status == 'invoiced':
+                return self._ORDER_STATUS_LABELS['invoiced']
         if obj.status in self._ORDER_STATUS_LABELS:
             return self._ORDER_STATUS_LABELS[obj.status]
         min_status, is_partial = self._aggregate_order_status(obj)
