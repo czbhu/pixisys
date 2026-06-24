@@ -821,6 +821,23 @@ const RFQs: React.FC = () => {
     setStatusFilter(individual.length > 0 ? individual : ['mind']);
   };
 
+  // Ha egy kombináció van kiválasztva, a Select value-jába belekerülnek a tagjai is,
+  // hogy az egyéni státuszok ki legyenek jelölve a legördülőben (vizuális visszajelzés).
+  // A tagRender az egyéni státusz tag-eket elnyomja — csak a kombináció-kulcs tag jelenik meg.
+  const activeComboKey: string | null = useMemo(() => {
+    if (statusFilter.length === 1 && STATUS_COMBOS[statusFilter[0] as keyof typeof STATUS_COMBOS]) {
+      return statusFilter[0];
+    }
+    return null;
+  }, [statusFilter]);
+
+  const selectExpandedValue = useMemo(() => {
+    if (activeComboKey) {
+      return [activeComboKey, ...STATUS_COMBOS[activeComboKey as keyof typeof STATUS_COMBOS]];
+    }
+    return statusFilter;
+  }, [activeComboKey, statusFilter]);
+
   useEffect(() => {
     let filtered = rfqs || [];
 
@@ -3045,11 +3062,21 @@ const RFQs: React.FC = () => {
                     className="rfqs-status-select"
                     mode="multiple"
                     placeholder="Státusz szűrő"
-                    value={Array.isArray(statusFilter) ? statusFilter : ['mind']}
+                    value={selectExpandedValue}
                     onChange={(values: any) => handleStatusFilterChange(Array.isArray(values) ? values.map(String) : [])}
                     style={{ width: 220 }}
                     popupMatchSelectWidth={false}
                     maxTagCount="responsive"
+                    tagRender={(props) => {
+                      // Ha kombináció aktív, az egyéni státusz tag-eket elnyomjuk —
+                      // csak a kombináció-kulcs tag jelenik meg az inputban.
+                      if (activeComboKey && props.value !== activeComboKey) return <></>;
+                      return (
+                        <Tag closable={props.closable} onClose={props.onClose} style={{ marginRight: 2 }}>
+                          {props.label}
+                        </Tag>
+                      );
+                    }}
                   >
                     <Select.OptGroup label="Kombinációk (gyorskiválasztás)">
                       <Select.Option value="mind">Mind</Select.Option>
@@ -3132,11 +3159,19 @@ const RFQs: React.FC = () => {
                     className="rfqs-status-select"
                     mode="multiple"
                     placeholder="Státusz szűrő"
-                    value={Array.isArray(statusFilter) ? statusFilter : ['mind']}
+                    value={selectExpandedValue}
                     onChange={(values: any) => handleStatusFilterChange(Array.isArray(values) ? values.map(String) : [])}
                     style={{ width: '100%' }}
                     popupMatchSelectWidth={false}
                     maxTagCount="responsive"
+                    tagRender={(props) => {
+                      if (activeComboKey && props.value !== activeComboKey) return <></>;
+                      return (
+                        <Tag closable={props.closable} onClose={props.onClose} style={{ marginRight: 2 }}>
+                          {props.label}
+                        </Tag>
+                      );
+                    }}
                   >
                     <Select.OptGroup label="Kombinációk (gyorskiválasztás)">
                       <Select.Option value="mind">Mind</Select.Option>
