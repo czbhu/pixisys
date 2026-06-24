@@ -183,18 +183,11 @@ const RFQs: React.FC = () => {
       const saved = localStorage.getItem('rfqs_status_filter');
       if (!saved) return ['mind'];
       const parsed: string[] = JSON.parse(saved);
+      if (!Array.isArray(parsed) || parsed.length === 0) return ['mind'];
       if (parsed.includes('mind')) return ['mind'];
-      // Expand any legacy/combo keys that may have been stored
-      if (parsed.some(v => (STATUS_COMBO_KEYS as readonly string[]).includes(v))) {
-        const expanded = new Set<string>();
-        for (const v of parsed) {
-          const combo = STATUS_COMBOS[v];
-          if (combo) combo.forEach((s: string) => expanded.add(normalizeRfqWorkflowStatus(s)));
-          else expanded.add(normalizeRfqWorkflowStatus(v));
-        }
-        return expanded.size > 0 ? Array.from(expanded) : ['mind'];
-      }
-      return Array.from(new Set(parsed.map((v) => normalizeRfqWorkflowStatus(v))));
+      // Kombináció-kulcsot megtartjuk (hogy a Select a kombináció nevét mutassa, mint a "Mind");
+      // az egyedi státuszokat normalizáljuk. A szűrés a kombinációt futásidőben kibontja.
+      return parsed.map((v) => (STATUS_COMBO_KEYS as readonly string[]).includes(v) ? v : normalizeRfqWorkflowStatus(v));
     } catch {
       return ['mind'];
     }
@@ -818,8 +811,10 @@ const RFQs: React.FC = () => {
     const newlyAdded = newValues.filter(v => !statusFilter.includes(v));
     const newCombo = newlyAdded.find(v => (STATUS_COMBO_KEYS as readonly string[]).includes(v));
     if (newCombo) {
-      // Replace entire filter with this combo's expansion
-      setStatusFilter(STATUS_COMBOS[newCombo] ?? ['mind']); return;
+      // Kombináció kiválasztásakor a kombináció-kulcsot tároljuk (mint a "mind"),
+      // hogy a Select a kombináció nevét jelenítse meg, ne a kibontott egyedi státuszokat.
+      // A szűrés (flattenedItems) a kulcsot futásidőben kibontja.
+      setStatusFilter([newCombo]); return;
     }
     // Regular individual-status change — strip out any combo keys
     const individual = newValues.filter(v => v !== 'mind' && !(STATUS_COMBO_KEYS as readonly string[]).includes(v));
@@ -1155,10 +1150,10 @@ const RFQs: React.FC = () => {
       });
     });
     // Apply status filter at item level (based on derived cost item status or rfq status)
-    // Aktív szöveges keresésnél figyelmen kívül hagyjuk a státusz-szűrőt,
-    // hogy bármilyen státuszú ajánlat megtalálható legyen szám/név alapján.
+    // A státusz-szűrő a szöveges keresésre is érvényes (ÉS logika): a keresés a `filtered`-ben
+    // már lefutott, itt erre szűrünk tovább státusz szerint.
     const activeFilter = statusFilter.length > 0 ? statusFilter : ['mind'];
-    if (!activeFilter.includes('mind') && !query?.trim()) {
+    if (!activeFilter.includes('mind')) {
       const effectiveStatuses = new Set<string>();
       for (const s of activeFilter) {
         const expanded = STATUS_COMBOS[s as keyof typeof STATUS_COMBOS];
