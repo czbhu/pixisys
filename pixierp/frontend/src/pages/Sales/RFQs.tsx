@@ -670,22 +670,29 @@ const RFQs: React.FC = () => {
       message.warning('Jelölj ki legalább egy tételt a CSV exporthoz!');
       return;
     }
+    const SEP = ';';
     const source = flattenedItems.filter((r: any) => bulkSelectedKeys.includes(r.uniqueId));
     const rows = source.map((r: any) => ({
       'Dátum': r.issue_date ? dayjs(r.issue_date).format('YYYY-MM-DD') : '',
       'Ajánlat szám': r.rfq_number ?? '',
       'Tétel neve': r.product_name || r.manufacturing_product_name || r.service_name || r.name || '',
+      'Mennyiség': r.quantity != null ? String(Number(r.quantity)) : '',
+      'Egység': r.unit ?? '',
+      'Nettó egységár': r.net_unit_price != null ? Number(r.net_unit_price).toFixed(2) : (r.manufacturing_product_net_unit_price != null ? Number(r.manufacturing_product_net_unit_price).toFixed(2) : ''),
+      'Nettó összeg': (Number(r.discounted_net_total || r.net_total || (Number(r.quantity || 0) * Number(r.net_unit_price || r.manufacturing_product_net_unit_price || 0)))).toFixed(2),
+      'Pénznem': r.currency ?? '',
       'Leírás': stripHtml(r.description || r.manufacturing_product_description || r.product_description || ''),
       'Belső leírás': stripHtml(r.manufacturing_product_internal_description ?? ''),
-      'Megjegyzés': stripHtml(r.description ?? ''),
       'Ügyfél': r.company_name ?? '',
-      'Nettó összeg': (Number(r.discounted_net_total || r.net_total || (Number(r.quantity || 0) * Number(r.net_unit_price || r.manufacturing_product_net_unit_price || 0)))).toFixed(2),
       'Státusz': r.status ?? '',
     }));
     if (!rows.length) { message.warning('Nincs exportálható adat.'); return; }
     const headers = Object.keys(rows[0]);
-    const escape = (v: any) => { const s = String(v ?? ''); return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s; };
-    const csv = [headers.join(','), ...rows.map(r => headers.map(h => escape((r as any)[h])).join(','))].join('\n');
+    const escape = (v: any) => {
+      const s = String(v ?? '').replace(/\./g, ','); // tizedes pont → vessző
+      return s.includes(SEP) || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const csv = [headers.join(SEP), ...rows.map(r => headers.map(h => escape((r as any)[h])).join(SEP))].join('\n');
     const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a'); a.href = url; a.download = `arajanlatok_tetelek_${dayjs().format('YYYY-MM-DD')}.csv`; a.click();

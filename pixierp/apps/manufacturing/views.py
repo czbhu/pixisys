@@ -1489,8 +1489,14 @@ class ManufacturingCostItemViewSet(
             except Exception:
                 pass
             item_note = strip_html(coi.description or (coi.quote_item.description if coi.quote_item else '') or '')
+        item_internal_note = ''
+        if coi and getattr(coi, 'quote_item', None):
+            item_internal_note = strip_html(coi.quote_item.internal_description or '')
         if not item_note and direct_item is not None:
-            item_note = strip_html(get_direct_field(direct_item, 'description', 'internal_description') or '')
+            # Only customer-facing description — internal_description is handled separately
+            item_note = strip_html(get_direct_field(direct_item, 'description') or '')
+        if not item_internal_note and direct_item is not None:
+            item_internal_note = strip_html(get_direct_field(direct_item, 'internal_description') or '')
 
         # Fallback quantity when there is no resolved customer-order item
         # (e.g. worksheet generated from RFQ context or without sub-items).
@@ -1770,17 +1776,19 @@ class ManufacturingCostItemViewSet(
                     if restore_font:
                         p.setFont(restore_font, restore_size)
 
-            def draw_text_block(label, text, max_lines_external=6):
+            def draw_text_block(label, text, max_lines_external=None):
                 nonlocal y
                 lines = wrap_to_width(text, font_normal, 9, width - left - right_margin)
-                if not internal:
-                    lines = lines[:max_lines_external]
                 page_break_if_needed(0.5)
                 p.setFont(font_bold, 9)
                 p.drawString(left, y, label)
                 y -= 0.4 * cm
                 p.setFont(font_normal, 9)
+                # KÜLSŐ: a lap felső fele rendelkezésre álló terület — soronként ellenőrizzük, nem vágunk le keményen.
+                external_bottom = height / 2 + 1.2 * cm
                 for line in lines:
+                    if not internal and y < external_bottom:
+                        break  # elfogy a hely, nincs oldaltörés a KÜLSŐ-n
                     page_break_if_needed(0.4, restore_font=font_normal, restore_size=9)
                     p.drawString(left, y, line)
                     y -= 0.38 * cm
