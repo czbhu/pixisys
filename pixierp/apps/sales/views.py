@@ -162,7 +162,15 @@ def _apply_customer_order_status(order, new_status, changed_at=None):
     order.save()
 
     if new_status in RFQ_ORDER_SYNC_STATUSES:
-        active_items = list(order.items.exclude(status='cancelled').select_related('quote_item__manufacturing_product'))
+        # Fontos: order.items prefetch-elt queryset lehet only()-val (lásd get_queryset),
+        # ahol a quote_item FK defer-elt → select_related FieldError-t dobna.
+        # Ezért friss, explicit CustomerOrderItem querysettel kérjük le az itemeket.
+        active_items = list(
+            CustomerOrderItem.objects
+            .filter(customer_order=order)
+            .exclude(status='cancelled')
+            .select_related('quote_item__manufacturing_product')
+        )
         if active_items:
             CustomerOrderItem.objects.filter(id__in=[item.id for item in active_items]).update(status=new_status)
             mp_ids = sorted({

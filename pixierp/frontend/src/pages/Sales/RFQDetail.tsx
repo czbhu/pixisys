@@ -347,9 +347,19 @@ const RFQDetail: React.FC = () => {
     
     setManufacturingUploading((prev) => prev + 1);
     try {
-      await salesService.uploadQuoteRequestAttachment(targetId, file, manufacturingRemarkRef.current || undefined);
+      const newAtt = await salesService.uploadQuoteRequestAttachment(targetId, file, manufacturingRemarkRef.current || undefined);
+      // Optimista frissítés: a feltöltés válasza már tartalmazza a file_url-t,
+      // azonnal hozzáadjuk az állapothoz → a tooltip preview rögtön elérhető, nem kell "Mentés".
+      if (newAtt && newAtt.id) {
+        setManufacturingFiles(prev => [{
+          ...newAtt,
+          source: 'rfq',
+          row_key: `rfq-${newAtt.id}`,
+        }, ...prev]);
+      }
       message.success(`Feltöltve: ${file.name}`);
       setRfqPendingRemark('');
+      // Szinkronizáció a szerverrel (rendezi a sorrendet, egyéb frissítések)
       await refreshManufacturingFiles();
     } catch {
       message.error(`Nem sikerült feltölteni: ${file.name}`);
