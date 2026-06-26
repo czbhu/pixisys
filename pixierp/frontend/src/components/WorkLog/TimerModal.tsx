@@ -109,42 +109,94 @@ export const TimerModal: React.FC = () => {
 
     const loadOrders = async (all = false) => {
         try {
-            const params: any = { status: 'new,confirmed,in_production' };
+            // Tételsoronként lapítjuk ki az RFQ-kat (mint a RFQs lista)
+            const params: any = { page_size: 200 };
             if (!all) params.my_orders = 'true';
-            const res = await salesService.getCustomerOrders(params);
-            setOrders(res.results ?? res);
+            const res = await salesService.getQuoteRequestsPage(1, params.page_size, params);
+            const rfqs: any[] = res.results ?? (res as any) ?? [];
+            // Flatten: egy sor per tétel, RFQ mezőkkel kiegészítve
+            const rows: any[] = [];
+            rfqs.forEach((rfq: any) => {
+                if (['cancelled','archived','rejected'].includes(rfq.status)) return;
+                const companyName = rfq.company_name || rfq.company?.name || '';
+                const allItems: any[] = rfq.items || [];
+                const visibleItems = allItems.filter((it: any) => !it?.parent);
+                const displayItems = visibleItems.length > 0 ? visibleItems : allItems.length > 0 ? [allItems[0]] : [{
+                    id: null,
+                    item_name: rfq.primary_item_name || rfq.title || rfq.request_number,
+                    description: rfq.primary_item_description || '',
+                    quantity: rfq.primary_quantity ?? 1,
+                    unit: rfq.primary_unit || 'db',
+                    cost_items_data: [],
+                }];
+                displayItems.forEach((item: any) => {
+                    rows.push({
+                        // RFQ azonosítók
+                        id: rfq.id,
+                        rfq_pk: rfq.id,
+                        rfq_number: rfq.request_number || rfq.number,
+                        rfq_status: rfq.status,
+                        effective_status: rfq.effective_status,
+                        company_name: companyName,
+                        // Tétel adatok
+                        item_id: item.id,
+                        item_name: item.item_name || item.name || rfq.primary_item_name || rfq.title || rfq.request_number,
+                        quantity: item.quantity ?? rfq.primary_quantity ?? 1,
+                        unit: item.unit || rfq.primary_unit || 'db',
+                        description: item.description || rfq.primary_item_description || '',
+                        // Gyártási termék (cost items betöltéséhez)
+                        manufacturing_product: item.manufacturing_product,
+                        cost_items_data: item.cost_items_data || [],
+                        // Egyedi sor kulcs
+                        _rowKey: `${rfq.id}-${item.id ?? 0}`,
+                    });
+                });
+            });
+            setOrders(rows);
         } catch {}
     };
 
-    const loadItems = async (orderId: number) => {
-        try {
-            const order = await salesService.getCustomerOrder(orderId);
-            const loadedItems = order.items || [];
-            setItems(loadedItems);
-            if (loadedItems.length > 0 && !activeLog) {
-                const firstItem = loadedItems[0];
-                form.setFieldsValue({ item_id: firstItem.id });
-                await loadSubItems(firstItem);
-            }
-            return loadedItems;
-        } catch { return []; }
+    // Kiválasztott tétel cost item-jeit töltjük be a munkafolyamat dropdownhoz
+    const loadCostItemsForRow = async (row: any): Promise<any[]> => {
+        // 1. ManufacturingProduct cost items
+        const mpId = row?.manufacturing_product?.id ?? row?.manufacturing_product;
+        if (mpId) {
+            try {
+                const product = await manufacturingService.getProduct(mpId);
+                const costItems = (product.cost_items || []).filter((ci: any) => ci.name);
+                setSubItems(costItems);
+                return costItems;
+            } catch {}
+        }
+        // 2. Direct cost_items_data (JSON tömbben tárolt altételek)
+        const directCi: any[] = (row?.cost_items_data || []).filter((ci: any) => ci.name || ci.item_name);
+        if (directCi.length > 0) {
+            setSubItems(directCi);
+            return directCi;
+        }
+        setSubItems([]);
+        return [];
+    };
+
+    const loadItems = async (rfqId: number) => {
+        // Csak kompatibilitás miatt marad — a Stopper rows már tartalmazza az item adatokat
+        return [];
+    };
+
+    const loadSubItemsFromRfqItem = async (item: any): Promise<any[]> => {
+        return loadCostItemsForRow(item);
     };
 
     const loadSubItems = async (item: any): Promise<any[]> => {
-        const productId = item?.quote_item?.manufacturing_product;
-        if (!productId) { setSubItems([]); return []; }
-        try {
-            const product = await manufacturingService.getProduct(productId);
-            const costItems = (product.cost_items || []).filter((ci: any) => ci.name);
-            setSubItems(costItems);
-            return costItems;
-        } catch { setSubItems([]); return []; }
+        return loadCostItemsForRow(item);
     };
 
-    const selectOrder = (order: any) => {
-        setSelectedOrder(order);
-        setSelectedOrderId(order.id);
+    const selectOrder = (row: any) => {
+        setSelectedOrder(row);
+        setSelectedOrderId(row.rfq_pk ?? row.id);
         setIsOtherOrder(false);
+        // Azonnal betöltjük a cost item-eket
+        loadCostItemsForRow(row);
     };
 
     const resetSelection = () => {
@@ -165,15 +217,16 @@ export const TimerModal: React.FC = () => {
             loadOrders(showAllOrders);
             if (!activeLog) {
                 if (preselectedOrderId) {
-                    salesService.getCustomerOrder(preselectedOrderId).then(order => {
-                        setOrders(prev => prev.find((o: any) => o.id === order.id) ? prev : [...prev, order]);
-                        selectOrder(order);
-                        loadItems(preselectedOrderId).then(loadedItems => {
-                            if (preselectedItemId && loadedItems) {
-                                form.setFieldsValue({ item_id: preselectedItemId });
-                                const item = loadedItems.find((i: any) => i.id === preselectedItemId);
-                                if (item) loadSubItems(item);
-                            }
+                    // preselectedOrderId itt RFQ id lehet
+                    salesService.getQuoteRequest(String(preselectedOrderId)).then(rfq => {
+                        setOrders(prev => prev.find((o: any) => o.id === rfq.id) ? prev : [...prev, rfq]);
+                        selectOrder(rfq);
+                        loadItems(rfq.id);
+                    }).catch(() => {
+                        // fallback: CustomerOrder-ként próbáljuk
+                        salesService.getCustomerOrder(preselectedOrderId).then(order => {
+                            setOrders(prev => prev.find((o: any) => o.id === order.id) ? prev : [...prev, order]);
+                            selectOrder(order);
                         });
                     });
                 } else {
@@ -185,19 +238,47 @@ export const TimerModal: React.FC = () => {
 
     useEffect(() => {
         if (activeLog) {
-            const orderId = activeLog.customer_order;
-            const isOther = !orderId;
+            // RFQ-alapú log: quote_request van, nem customer_order
+            const rfqId = activeLog.quote_request;
+            const isOther = !rfqId && !activeLog.customer_order;
             setIsOtherOrder(isOther);
             setWorkflowName(activeLog.workflow_name || '');
             if (isOther) {
                 setOtherLabel((activeLog as any).order_label || '');
                 setSelectedOrder(null);
-            } else if (orderId) {
-                salesService.getCustomerOrder(orderId).then(order => {
+            } else if (rfqId) {
+                salesService.getQuoteRequest(String(rfqId)).then(rfq => {
+                    // Flatten az aktív log rfq_item-jéhez, vagy az első tételhez
+                    const allItems: any[] = rfq.items || [];
+                    const rfqItemId = activeLog.rfq_item;
+                    const matchedItem = rfqItemId
+                        ? allItems.find((it: any) => it.id === rfqItemId) || allItems[0]
+                        : allItems.find((it: any) => !it.parent) || allItems[0];
+                    const flatRow = {
+                        id: rfq.id,
+                        rfq_pk: rfq.id,
+                        rfq_number: rfq.request_number || rfq.number,
+                        company_name: rfq.company_name || rfq.company?.name || '',
+                        item_name: matchedItem?.item_name || matchedItem?.name || rfq.primary_item_name || rfq.title || '',
+                        quantity: matchedItem?.quantity ?? rfq.primary_quantity,
+                        unit: matchedItem?.unit || rfq.primary_unit || 'db',
+                        description: matchedItem?.description || '',
+                        manufacturing_product: matchedItem?.manufacturing_product,
+                        cost_items_data: matchedItem?.cost_items_data || [],
+                        _rowKey: `${rfq.id}-${matchedItem?.id ?? 0}`,
+                    };
+                    setOrders(prev => prev.find((o: any) => o._rowKey === flatRow._rowKey) ? prev : [flatRow, ...prev]);
+                    selectOrder(flatRow);
+                });
+                if (activeLog.rfq_item) {
+                    form.setFieldsValue({ item_id: activeLog.rfq_item });
+                }
+            } else if (activeLog.customer_order) {
+                salesService.getCustomerOrder(activeLog.customer_order).then(order => {
                     setOrders(prev => prev.find((o: any) => o.id === order.id) ? prev : [...prev, order]);
                     selectOrder(order);
                 });
-                loadItems(orderId).then(loadedItems => {
+                loadItems(activeLog.customer_order).then(loadedItems => {
                     if (activeLog.item) {
                         const item = loadedItems.find((i: any) => i.id === activeLog.item);
                         if (item) loadSubItems(item);
@@ -215,7 +296,8 @@ export const TimerModal: React.FC = () => {
             if (isOtherOrder) {
                 await startTimer(null, null, workflowName, null, helpUserId, otherLabel || '');
             } else {
-                await startTimer(selectedOrderId!, itemId, workflowName, null, helpUserId || null);
+                // RFQ-alapú: rfq_id-t küldünk, item_id a QuoteRequestItem id-je
+                await startTimer(null, itemId, workflowName, null, helpUserId || null, undefined, selectedOrderId, itemId);
             }
         } catch {}
     };
@@ -260,64 +342,65 @@ export const TimerModal: React.FC = () => {
         if (!pickerSearch.trim()) return orders;
         const q = norm(pickerSearch);
         return orders.filter(o =>
-            norm(o.order_number).includes(q) ||
-            norm(o.customer_name || '').includes(q) ||
-            norm(o.first_item_name || '').includes(q) ||
-            norm(stripHtml(o.first_item_description || '')).includes(q) ||
-            norm(stripHtml(o.first_item_internal_description || '')).includes(q)
+            norm(o.rfq_number || '').includes(q) ||
+            norm(o.company_name || '').includes(q) ||
+            norm(o.item_name || '').includes(q) ||
+            norm(stripHtml(o.description || '')).includes(q)
         );
     }, [orders, pickerSearch]);
 
-    const wfOptions = useMemo(() => [
-        ...subItems.map((si: any) => ({ value: si.name + (si.code ? ` [${si.code}]` : '') })),
-        ...workflowOptions.filter(w => !subItems.some((si: any) => si.name === w)).map(w => ({ value: w })),
-    ], [subItems, workflowOptions]);
+    const wfOptions = useMemo(() => {
+        const ciOptions = subItems.map((si: any) => ({
+            value: si.name + (si.code ? ` [${si.code}]` : ''),
+            label: si.name + (si.code ? ` [${si.code}]` : ''),
+        }));
+        const ciNames = new Set(subItems.map((si: any) => si.name));
+        const genericOptions = workflowOptions
+            .filter(w => !ciNames.has(w))
+            .map(w => ({ value: w, label: w }));
+        if (ciOptions.length > 0) {
+            return [
+                { label: <span style={{ fontWeight: 600, color: '#1677ff', fontSize: 12 }}>Altételek</span>, options: ciOptions },
+                ...(genericOptions.length > 0 ? [{ label: <span style={{ fontWeight: 600, color: '#888', fontSize: 12 }}>Egyéb</span>, options: genericOptions }] : []),
+            ];
+        }
+        return genericOptions;
+    }, [subItems, workflowOptions]);
 
     const pickerColumns: any[] = [
         {
-            title: 'Ajánlatszám', dataIndex: 'order_number', key: 'order_number', width: 120,
-            render: (v: string) => <span style={{ color: '#1677ff', fontWeight: 500 }}>{v}</span>,
+            title: 'Ajánlatszám', key: 'rfq_number', width: 110,
+            render: (_: any, r: any) => <span style={{ color: '#1677ff', fontWeight: 500 }}>{r.rfq_number}</span>,
         },
         {
-            title: 'Ügyfél', dataIndex: 'customer_name', key: 'customer_name', width: 150,
-            render: (v: string) => (
-                <Tooltip title={v} getPopupContainer={() => document.body}>
-                    <div style={{ fontWeight: 'bold', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical' as any, overflow: 'hidden' }}>{v || '—'}</div>
+            title: 'Ügyfél', key: 'company', width: 150,
+            render: (_: any, r: any) => (
+                <Tooltip title={r.company_name} getPopupContainer={() => document.body}>
+                    <div style={{ fontWeight: 'bold', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as any, overflow: 'hidden' }}>{r.company_name || '—'}</div>
                 </Tooltip>
             ),
         },
         {
-            title: 'Tétel neve', dataIndex: 'first_item_name', key: 'first_item_name', width: 160,
-            render: (v: string) => (
-                <Tooltip title={v} getPopupContainer={() => document.body}>
-                    <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v || '—'}</span>
+            title: 'Tétel neve', key: 'item_name', width: 170,
+            render: (_: any, r: any) => (
+                <Tooltip title={r.item_name} getPopupContainer={() => document.body}>
+                    <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.item_name || '—'}</span>
                 </Tooltip>
             ),
         },
         {
             title: 'Menny.', key: 'qty', width: 80,
-            render: (_: any, r: any) => r.first_item_quantity != null
-                ? `${Number(r.first_item_quantity).toLocaleString('hu-HU', { maximumFractionDigits: 4 })} ${r.first_item_unit || 'db'}`
+            render: (_: any, r: any) => r.quantity != null
+                ? `${Number(r.quantity).toLocaleString('hu-HU', { maximumFractionDigits: 4 })} ${r.unit || 'db'}`
                 : '—',
         },
         {
-            title: 'Leírás', key: 'desc', width: 200, ellipsis: false,
+            title: 'Leírás', key: 'desc', width: 220,
             render: (_: any, r: any) => {
-                const t = stripHtml(r.first_item_description || '');
+                const t = stripHtml(r.description || '');
                 return t ? (
                     <Tooltip title={<span style={{ whiteSpace: 'pre-wrap' }}>{t}</span>} getPopupContainer={() => document.body}>
                         <div style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical' as any, overflow: 'hidden', fontSize: 12, color: '#555', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{t}</div>
-                    </Tooltip>
-                ) : null;
-            },
-        },
-        {
-            title: 'Belső leírás', key: 'idesc', width: 180, ellipsis: false,
-            render: (_: any, r: any) => {
-                const t = stripHtml(r.first_item_internal_description || '');
-                return t ? (
-                    <Tooltip title={<span style={{ whiteSpace: 'pre-wrap' }}>{t}</span>} getPopupContainer={() => document.body}>
-                        <div style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical' as any, overflow: 'hidden', fontSize: 12, color: '#844', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{t}</div>
                     </Tooltip>
                 ) : null;
             },
@@ -329,10 +412,7 @@ export const TimerModal: React.FC = () => {
                     selectOrder(r);
                     setPickerOpen(false);
                     setPickerSearch('');
-                    form.setFieldsValue({ item_id: null });
-                    setSubItems([]);
                     setWorkflowName('');
-                    loadItems(r.id);
                 }}>Kiválaszt</Button>
             ),
         },
@@ -398,30 +478,24 @@ export const TimerModal: React.FC = () => {
                 <Form form={form} layout="vertical">
                     {!isOtherOrder ? (
                         <>
-                            {selectedOrder ? (
+                            {(selectedOrder || (disableInputs && activeLog)) ? (
                                 <div style={{ background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 6, padding: '10px 14px', marginBottom: 12 }}>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
                                         <div style={{ flex: 1, minWidth: 0 }}>
                                             <div style={{ fontWeight: 600, fontSize: 14 }}>
-                                                {selectedOrder.order_number}
-                                                {selectedOrder.customer_name && <span style={{ fontWeight: 400, color: '#555', marginLeft: 8 }}>{selectedOrder.customer_name}</span>}
+                                                {selectedOrder?.rfq_number || selectedOrder?.order_number || (activeLog as any)?.quote_request_number || (activeLog as any)?.customer_order_number || ''}
+                                                {(selectedOrder?.company_name || selectedOrder?.customer_name || (activeLog as any)?.customer_name) && (
+                                                    <span style={{ fontWeight: 400, color: '#555', marginLeft: 8 }}>
+                                                        {selectedOrder?.company_name || selectedOrder?.customer_name || (activeLog as any)?.customer_name}
+                                                    </span>
+                                                )}
                                             </div>
-                                            {selectedOrder.first_item_name && (
+                                            {(selectedOrder?.item_name || selectedOrder?.first_item_name || (activeLog as any)?.item_name) && (
                                                 <div style={{ fontSize: 13, color: '#389e0d', marginTop: 2 }}>
-                                                    {selectedOrder.first_item_name}
-                                                    {selectedOrder.first_item_quantity != null && (
-                                                        <span style={{ color: '#888', marginLeft: 6 }}>{selectedOrder.first_item_quantity} {selectedOrder.first_item_unit}</span>
+                                                    {selectedOrder?.item_name || selectedOrder?.first_item_name || (activeLog as any)?.item_name}
+                                                    {(selectedOrder?.quantity ?? selectedOrder?.first_item_quantity) != null && (
+                                                        <span style={{ color: '#888', marginLeft: 6 }}>{selectedOrder?.quantity ?? selectedOrder?.first_item_quantity} {selectedOrder?.unit || selectedOrder?.first_item_unit || 'db'}</span>
                                                     )}
-                                                </div>
-                                            )}
-                                            {stripHtml(selectedOrder.first_item_description || '') && (
-                                                <div style={{ fontSize: 12, color: '#888', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                                    {stripHtml(selectedOrder.first_item_description || '')}
-                                                </div>
-                                            )}
-                                            {stripHtml(selectedOrder.first_item_internal_description || '') && (
-                                                <div style={{ fontSize: 12, color: '#cf1322', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                                    {stripHtml(selectedOrder.first_item_internal_description || '')}
                                                 </div>
                                             )}
                                         </div>
@@ -468,9 +542,10 @@ export const TimerModal: React.FC = () => {
                                 value={workflowName}
                                 onChange={setWorkflowName}
                                 placeholder={subItems.length > 0 ? 'Válassz altételt vagy írj be…' : 'pl. Szerkesztés, Nyomtatás…'}
-                                options={wfOptions}
+                                options={wfOptions as any}
                                 filterOption={(inputValue, option) =>
-                                    (option!.value as string).toUpperCase().indexOf(inputValue.toUpperCase()) !== -1
+                                    option?.value != null &&
+                                    (option.value as string).toUpperCase().indexOf(inputValue.toUpperCase()) !== -1
                                 }
                             />
                         </Form.Item>
@@ -513,28 +588,26 @@ export const TimerModal: React.FC = () => {
                 {isMobile ? (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                         {filteredOrders.map((r: any) => {
-                            const desc = stripHtml(r.first_item_description || '');
-                            const intDesc = stripHtml(r.first_item_internal_description || '');
+                            const desc = stripHtml(r.description || r.first_item_description || '');
                             return (
-                                <div key={r.id} style={{ border: '1px solid #e8e8e8', borderRadius: 8, padding: '10px 12px', background: '#fafafa' }}>
+                                <div key={r._rowKey || r.id} style={{ border: '1px solid #e8e8e8', borderRadius: 8, padding: '10px 12px', background: '#fafafa' }}>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 4 }}>
                                         <div style={{ flex: 1 }}>
-                                            <span style={{ color: '#1677ff', fontWeight: 600, fontSize: 14 }}>{r.order_number}</span>
-                                            {r.customer_name && <span style={{ color: '#555', fontSize: 12, marginLeft: 6 }}>{r.customer_name}</span>}
+                                            <span style={{ color: '#1677ff', fontWeight: 600, fontSize: 14 }}>{r.rfq_number || r.order_number}</span>
+                                            {(r.company_name || r.customer_name) && <span style={{ color: '#555', fontSize: 12, marginLeft: 6 }}>{r.company_name || r.customer_name}</span>}
                                         </div>
                                         <Button size="small" type="primary" onClick={() => {
                                             selectOrder(r); setPickerOpen(false); setPickerSearch('');
-                                            form.setFieldsValue({ item_id: null }); setSubItems([]); setWorkflowName(''); loadItems(r.id);
+                                            setWorkflowName('');
                                         }}>Kiválaszt</Button>
                                     </div>
-                                    {r.first_item_name && (
+                                    {(r.item_name || r.first_item_name) && (
                                         <div style={{ fontWeight: 500, fontSize: 13, color: '#222', marginBottom: 2 }}>
-                                            {r.first_item_name}
-                                            {r.first_item_quantity != null && <span style={{ color: '#888', marginLeft: 6, fontWeight: 400 }}>{r.first_item_quantity} {r.first_item_unit || 'db'}</span>}
+                                            {r.item_name || r.first_item_name}
+                                            {(r.quantity ?? r.first_item_quantity) != null && <span style={{ color: '#888', marginLeft: 6, fontWeight: 400 }}>{r.quantity ?? r.first_item_quantity} {r.unit || r.first_item_unit || 'db'}</span>}
                                         </div>
                                     )}
                                     {desc && <div style={{ fontSize: 12, color: '#555', marginTop: 2, display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical' as any, overflow: 'hidden', wordBreak: 'break-word' }}>{desc}</div>}
-                                    {intDesc && <div style={{ fontSize: 12, color: '#844', marginTop: 2, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as any, overflow: 'hidden', wordBreak: 'break-word' }}>{intDesc}</div>}
                                 </div>
                             );
                         })}

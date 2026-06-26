@@ -747,15 +747,33 @@ export const ProductSubItemsTable: React.FC<Props> = ({
                 <div style={{ color: '#bbb', fontSize: 12 }}>Nincs csatolmány</div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                  {atts.map((att: any) => (
+                  {atts.map((att: any) => {
+                    const fn = att.original_filename || att.file_url?.split('/').pop() || `#${att.id}`;
+                    const fileUrl = att.file_url;
+                    const isImage = !!fileUrl && /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(fn);
+                    const isPdfFile = !!fileUrl && (/\.pdf$/i.test(fn) || /\.pdf(\?|$)/i.test(fileUrl));
+                    const tooltipContent = isImage ? (
+                      <div style={{ maxWidth: 260 }}>
+                        <img src={fileUrl} alt={fn} style={{ maxWidth: 240, maxHeight: 180, display: 'block', marginBottom: 4, borderRadius: 4 }} />
+                        <div style={{ fontSize: 11, color: '#bbb', wordBreak: 'break-all' }}>{fn}</div>
+                      </div>
+                    ) : isPdfFile ? (
+                      <div style={{ width: 260 }}>
+                        <iframe title={fn} src={fileUrl} style={{ width: 240, height: 180, border: 0, display: 'block', marginBottom: 4, borderRadius: 4 }} />
+                        <div style={{ fontSize: 11, color: '#bbb', wordBreak: 'break-all' }}>{fn}</div>
+                      </div>
+                    ) : fn;
+                    return (
                     <Space key={att.id} size={4} align="center">
+                      <Tooltip placement="top" title={tooltipContent}>
                       <a
-                        href={att.file_url}
+                        href={fileUrl}
                         target="_blank"
                         rel="noopener noreferrer"
                         style={{ fontSize: 12 }}
-                        onClick={(e) => { if (isPdf(att.file_url)) { e.preventDefault(); openPdfPreview(att.file_url); } }}
-                      >{att.original_filename}</a>
+                        onClick={(e) => { if (isPdfFile) { e.preventDefault(); openPdfPreview(fileUrl); } }}
+                      >{fn}</a>
+                      </Tooltip>
                       {att.file_size ? <span style={{ fontSize: 11, color: '#999' }}>{formatBytes(att.file_size)}</span> : null}
                       {editingSubAttRemarkId === att.id ? (
                         <Space size={4}>
@@ -809,7 +827,8 @@ export const ProductSubItemsTable: React.FC<Props> = ({
                         }}
                       />
                     </Space>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </Space>

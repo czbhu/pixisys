@@ -598,11 +598,15 @@ class QuoteRequestSerializer(serializers.ModelSerializer):
 
     def get_effective_status(self, obj):
         if obj.status in self._ORDER_STATUS_LABELS and obj.status not in ('invoiced', 'cancelled'):
-            # Még ha az RFQ státusza is egy order-szerű közbülső állapot (pl. 'ready', 'delivered'),
-            # az aggregált 'invoiced' ekkor is megelőzi — különben a kiszámlázott tételek "Kész"-nek maradnak.
+            # Még ha az RFQ státusza is egy order-szerű közbülső állapot (pl. 'ready', 'in_production'),
+            # az aggregált státusz megelőzi ha magasabb rangú — pl. ha a szállítás megtörtént,
+            # az 'in_delivery'/'delivered'/'invoiced' felülírja a régebb beragadt 'in_production'-t.
             min_status, _ = self._aggregate_order_status(obj)
-            if min_status == 'invoiced':
-                return 'invoiced'
+            if min_status and min_status not in ('new',):
+                obj_rank = self._ORDER_STATUS_RANK.get(obj.status, -1)
+                agg_rank = self._ORDER_STATUS_RANK.get(min_status, -1)
+                if agg_rank > obj_rank:
+                    return min_status
         if obj.status in self._ORDER_STATUS_LABELS:
             return obj.status
         # deprecated: 2026-06-23 — a QuoteRequest.status sosem 'sent'/'invoiced' (nincs a STATUS_CHOICES-ban),
@@ -627,10 +631,13 @@ class QuoteRequestSerializer(serializers.ModelSerializer):
 
     def get_effective_status_label(self, obj):
         if obj.status in self._ORDER_STATUS_LABELS and obj.status not in ('invoiced', 'cancelled'):
-            # Ha az összes megrendelés kiszámlázott, az 'invoiced' label megelőzi az obj.status label-jét.
+            # Ha az aggregált státusz magasabb rangú mint az RFQ saját státusza, az kerül megjelenítésre.
             min_status, is_partial = self._aggregate_order_status(obj)
-            if min_status == 'invoiced':
-                return self._ORDER_STATUS_LABELS['invoiced']
+            if min_status and min_status not in ('new',):
+                obj_rank = self._ORDER_STATUS_RANK.get(obj.status, -1)
+                agg_rank = self._ORDER_STATUS_RANK.get(min_status, -1)
+                if agg_rank > obj_rank:
+                    return self._ORDER_STATUS_LABELS.get(min_status, min_status)
         if obj.status in self._ORDER_STATUS_LABELS:
             return self._ORDER_STATUS_LABELS[obj.status]
         min_status, is_partial = self._aggregate_order_status(obj)
@@ -1562,6 +1569,7 @@ class QuoteRequestCostSerializer(serializers.ModelSerializer):
 class WorkLogSerializer(serializers.ModelSerializer):
     user_name = serializers.CharField(source='user.get_full_name', read_only=True)
     customer_order_number = serializers.SerializerMethodField()
+    quote_request_number = serializers.SerializerMethodField()
     customer_name = serializers.SerializerMethodField()
     item_name = serializers.SerializerMethodField()
     sub_item_name = serializers.SerializerMethodField()
@@ -1581,8 +1589,21 @@ class WorkLogSerializer(serializers.ModelSerializer):
             pass
         return obj.order_label or None
 
+    def get_quote_request_number(self, obj):
+        try:
+            if obj.quote_request_id:
+                return obj.quote_request.request_number
+            if obj.customer_order and obj.customer_order.quote_request_id:
+                return obj.customer_order.quote_request.request_number
+        except Exception:
+            pass
+        return None
+
     def get_customer_name(self, obj):
         try:
+            # Try via quote_request first
+            if obj.quote_request_id and obj.quote_request.company_id:
+                return obj.quote_request.company.name
             if obj.customer_order and obj.customer_order.quote_request and obj.customer_order.quote_request.company:
                 return obj.customer_order.quote_request.company.name
         except Exception:

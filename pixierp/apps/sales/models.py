@@ -886,8 +886,10 @@ class WorkLog(models.Model):
     """Munka idő nyilvántartás (Stopper)"""
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='work_logs', verbose_name="Felhasználó")
     customer_order = models.ForeignKey(CustomerOrder, on_delete=models.CASCADE, related_name='work_logs', verbose_name="Megrendelés", null=True, blank=True)
+    quote_request = models.ForeignKey(QuoteRequest, on_delete=models.SET_NULL, related_name='work_logs', verbose_name="Árajánlat", null=True, blank=True)
     order_label = models.CharField(max_length=300, blank=True, default='', verbose_name="Megrendelés megnevezése (szabad szöveges)")
     item = models.ForeignKey(CustomerOrderItem, on_delete=models.SET_NULL, null=True, blank=True, verbose_name="Tétel")
+    rfq_item = models.ForeignKey('QuoteRequestItem', on_delete=models.SET_NULL, null=True, blank=True, verbose_name="RFQ Tétel")
     sub_item = models.ForeignKey(
         'manufacturing.ManufacturingCostItem',
         on_delete=models.SET_NULL,
@@ -905,7 +907,9 @@ class WorkLog(models.Model):
         ordering = ['-started_at']
 
     def __str__(self):
-        return f"{self.user} - {self.customer_order.order_number} - {self.workflow_name}"
+        ref = (self.customer_order.order_number if self.customer_order_id else
+               (self.quote_request.request_number if self.quote_request_id else self.order_label or '?'))
+        return f"{self.user} - {ref} - {self.workflow_name}"
 
 class ChatThread(models.Model):
     """Chat beszélgetés Árajánlat vagy Megrendelés kapcsán"""

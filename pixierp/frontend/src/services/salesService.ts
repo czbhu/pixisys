@@ -154,8 +154,9 @@ export const salesService = {
       return data;
     },
 
-    async getQuoteRequestsPage(page: number = 1, pageSize: number = 50) {
-      const response = await api.get(`/sales/quote-requests/?light=1&page=${page}&page_size=${pageSize}`);
+    async getQuoteRequestsPage(page: number = 1, pageSize: number = 50, extraParams?: Record<string, any>) {
+      const qs = new URLSearchParams({ light: '1', page: String(page), page_size: String(pageSize), ...(extraParams || {}) });
+      const response = await api.get(`/sales/quote-requests/?${qs.toString()}`);
       return response.data as { count: number; next: string | null; previous: string | null; results: any[] };
     },
     async createDemand(data: Partial<{ title: string; description: string; deadline: string; company_id: number; contact_ids: number[]; currency_code: string }>) {
@@ -646,7 +647,7 @@ export const salesService = {
         const response = await api.get('/hr/attendances/dashboard_workers/', { params: date ? { date } : undefined });
         return response.data;
     },
-    async startWorkLog(data: { order_id?: number | null; order_label?: string; item_id?: number | null; workflow_name?: string; sub_item_id?: number | null; for_user_id?: number | null }) {
+    async startWorkLog(data: { order_id?: number | null; rfq_id?: number | null; rfq_item_id?: number | null; order_label?: string; item_id?: number | null; workflow_name?: string; sub_item_id?: number | null; for_user_id?: number | null }) {
         const response = await api.post('/sales/work-logs/start/', data);
         return response.data;
     },

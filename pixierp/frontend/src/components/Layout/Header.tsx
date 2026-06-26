@@ -624,13 +624,15 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick, isMobile = false, inviteCo
                     }}
                 >
                     {activeLog ? (
-                        <>
-                            <div style={{ fontSize: 12, color: '#1890ff' }}>{activeLog.customer_order_number}</div>
-                            <div style={{ fontWeight: 'bold', fontSize: 16, color: '#faad14' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 1 }}>
+                            <div style={{ fontSize: 11, color: '#555', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'right' }}>
+                                {activeLog.quote_request_number || activeLog.customer_order_number || activeLog.order_label || ''}
+                            </div>
+                            <div style={{ fontWeight: 'bold', fontSize: 15, color: '#faad14', whiteSpace: 'nowrap' }}>
                                 <ClockCircleOutlined /> {formatTime(elapsedSeconds)}
                             </div>
-                            <div style={{ fontSize: 10, color: '#888' }}>{activeLog.workflow_name || 'Ismeretlen'}</div>
-                        </>
+                            <div style={{ fontSize: 10, color: '#888', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'right' }}>{activeLog.workflow_name || 'Ismeretlen'}</div>
+                        </div>
                     ) : (
                         <Button type="text" icon={<ClockCircleOutlined />}>{!isMobile && 'Stopper'}</Button>
                     )}

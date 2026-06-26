@@ -6,7 +6,10 @@ import { useAuth } from './AuthContext';
 interface WorkLog {
   id: number;
   customer_order: number | null;
+  quote_request: number | null;
+  quote_request_number?: string;
   item: number | null;
+  rfq_item: number | null;
   sub_item?: number | null;
   workflow_name: string;
   order_label?: string;
@@ -20,7 +23,7 @@ interface TimeTrackerContextType {
   activeLog: WorkLog | null;
   elapsedSeconds: number;
   refreshActiveLog: () => Promise<void>;
-  startTimer: (orderId?: number | null, itemId?: number | null, workflowName?: string, subItemId?: number | null, forUserId?: number | null, orderLabel?: string) => Promise<void>;
+  startTimer: (orderId?: number | null, itemId?: number | null, workflowName?: string, subItemId?: number | null, forUserId?: number | null, orderLabel?: string, rfqId?: number | null, rfqItemId?: number | null) => Promise<void>;
   stopTimer: () => Promise<void>;
   modalOpen: boolean;
   setModalOpen: (open: boolean) => void;
@@ -83,9 +86,9 @@ export const TimeTrackerProvider: React.FC<{ children: React.ReactNode }> = ({ c
     return () => clearInterval(interval);
   }, [activeLog]);
 
-  const startTimer = async (orderId?: number | null, itemId?: number | null, workflowName?: string, subItemId?: number | null, forUserId?: number | null, orderLabel?: string) => {
+  const startTimer = async (orderId?: number | null, itemId?: number | null, workflowName?: string, subItemId?: number | null, forUserId?: number | null, orderLabel?: string, rfqId?: number | null, rfqItemId?: number | null) => {
     try {
-      await salesService.startWorkLog({ order_id: orderId, order_label: orderLabel, item_id: itemId, workflow_name: workflowName, sub_item_id: subItemId, for_user_id: forUserId });
+      await salesService.startWorkLog({ order_id: orderId, rfq_id: rfqId, rfq_item_id: rfqItemId, order_label: orderLabel, item_id: itemId, workflow_name: workflowName, sub_item_id: subItemId, for_user_id: forUserId });
       await refreshActiveLog();
       message.success(forUserId ? 'Stopper elindítva (másnak)' : 'Stopper elindítva');
     } catch (e) {

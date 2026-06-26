@@ -1550,7 +1550,8 @@ const RFQs: React.FC = () => {
 
       // Common header update payload (company, contacts, project, currency…)
       const baseUpdateData: any = {
-        contact_ids: values.contact_ids || [],
+        // labelInValue miatt a contact_ids [{value,label}] formátumban jön → kinyerjük az ID-kat
+        contact_ids: (values.contact_ids || []).map((c: any) => (typeof c === 'object' && c !== null) ? c.value : c),
         currency_code: currency,
         project_id: values.project_id ?? null,
         internal_description: values.internal_description || '',
@@ -1603,6 +1604,26 @@ const RFQs: React.FC = () => {
             }
           } else {
             let manuRefId = it.ref_id;
+            // _fromCopy + ref_id=null: közvetlen (direkt) tétel — createDirectManufacturingItem-tel hozzuk létre
+            if (!manuRefId && (it as any)._fromCopy) {
+              try {
+                await salesService.createDirectManufacturingItem(rfqId, {
+                  name: it.name || '',
+                  quantity: it.quantity,
+                  description: it.description || '',
+                  internal_description: (it as any).internal_description || '',
+                  quantity_unit: it.unit || 'db',
+                  net_unit_price: it.net_unit_price || 0,
+                  vat_rate: it.vat_rate || 27,
+                  discount_percent: (it as any).discount_percent || 0,
+                  discount_amount: (it as any).discount_amount || 0,
+                  cost_items: (it as any).cost_items_data || [],
+                });
+              } catch {
+                message.error(`Tétel létrehozása sikertelen: ${it.name}`);
+              }
+              return;
+            }
             if (it.ref_id > 0) {
               // Duplicate the manufacturing product so the copy is fully independent
               try {
@@ -2009,54 +2030,38 @@ const RFQs: React.FC = () => {
   };
 
   const openCreateFromCopy = async (rfqRecord: any, sourceItem?: any) => {
-    // Single-item copy: open a dedicated modal, skip the full create form
+    // Single-item copy: új lapon nyitja meg az ajánlatkészítő formt (mint a "+ Új" gomb),
+    // a másolt tétel előre kitöltve — nem modal, hanem teljes körű szerkesztési felület.
     if (sourceItem) {
-      setCopySourceItem(sourceItem);
-      setCopySourceRfq(rfqRecord);
-      if (rfqRecord.currency_code) setCurrency(rfqRecord.currency_code.toUpperCase());
-      const today = dayjs();
-      setCopyItemIssueDate(today);
-      setCopyItemDeadline(null);
-      setCopyItemValidityDays(rfqRecord.validity_days || 30);
-      setCopyItemProjectId(rfqRecord.project ?? rfqRecord.project_id ?? null);
-      setCopyItemCompanyId(rfqRecord.company?.id ?? null);
-      const rfqContacts: any[] = rfqRecord.contacts || [];
-      setCopyItemContactIds(rfqContacts.map((c: any) => c.id));
-      setCopyItemContacts(rfqContacts);
-      const uName = user?.first_name && user?.last_name ? `${user.last_name} ${user.first_name}` : user?.username || '';
-      setCopyItemUserName(uName);
-      // Felhasználók betöltése a select-hez
-      try { const us = await salesService.listUsers(); setAllUsers(us); } catch {}
-      // Open modal immediately — fetch data in background
-      setCopyItemLoading(true);
-      setCopyItemModalOpen(true);
-      const companyId = rfqRecord.company?.id;
-      try {
-        const [currs, nn, companyList] = await Promise.all([
-          manufacturingService.getCurrencies(),
-          salesService.getNextQuoteRequestNumber(today.format('YYYY-MM-DD')),
-          crmService.getCompanies({ is_customer: true, compact: true }).catch(() => []),
-        ]);
-        setCurrencyList(currs);
-        const def = currs.find((c: any) => c.is_default);
-        if (def?.code && !rfqRecord.currency_code) setCurrency(def.code.toUpperCase());
-        setCopyItemNextNumber(nn.number || '');
-        const all: any[] = ((companyList as any).results ?? companyList) || [];
-        if (companyId && !all.find((c: any) => String(c.id) === String(companyId))) {
-          try { const co = await crmService.getCompany(companyId); all.unshift(co); } catch {}
-        }
-        setCompanies(all);
-        if (companyId) {
-          const cl = await crmService.getContactsByCompany(companyId);
-          const loaded: any[] = (cl.results ?? cl) || [];
-          setCopyItemContacts(prev => {
-            const existing = new Set(prev.map((c: any) => String(c.id)));
-            const toAdd = loaded.filter((c: any) => !existing.has(String(c.id)));
-            return toAdd.length ? [...prev, ...toAdd] : prev;
-          });
-        }
-      } catch {}
-      setCopyItemLoading(false);
+      const mappedItem = {
+        id: Date.now(),
+        item_type: sourceItem.item_type || 'manufacturing',
+        ref_id: sourceItem.product?.id ?? sourceItem.manufacturing_product?.id ?? sourceItem.service?.id ?? null,
+        name: sourceItem.item_name || sourceItem.product_name || sourceItem.manufacturing_product_name || sourceItem.service_name || '',
+        quantity: Number(sourceItem.quantity) || 1,
+        unit: sourceItem.unit || 'db',
+        net_unit_price: Number(sourceItem.net_unit_price) || 0,
+        vat_rate: sourceItem.vat_rate ?? 27,
+        description: sourceItem.description || '',
+        internal_description: sourceItem.internal_description || sourceItem.manufacturing_product_internal_description || '',
+        cost_items_data: sourceItem.cost_items_data || [],
+        discount_percent: sourceItem.discount_percent ?? 0,
+        discount_amount: sourceItem.discount_amount ?? 0,
+        _fromCopy: true,
+      };
+      const payload = {
+        item: mappedItem,
+        rfq: {
+          company_id: rfqRecord.company?.id ?? null,
+          contacts: (rfqRecord.contacts || []).map((c: any) => ({ id: c.id, full_name: c.full_name || c.name || '' })),
+          contact_ids: (rfqRecord.contacts || []).map((c: any) => c.id),
+          currency_code: rfqRecord.currency_code || 'HUF',
+          project_id: rfqRecord.project ?? rfqRecord.project_id ?? null,
+          validity_days: rfqRecord.validity_days || 30,
+        },
+      };
+      try { localStorage.setItem('rfq_item_copy_payload', JSON.stringify(payload)); } catch {}
+      window.open('/sales/rfqs?create=true&from_item_copy=1', '_blank');
       return;
     }
     form.resetFields();
@@ -2144,7 +2149,7 @@ const RFQs: React.FC = () => {
       description: rfqRecord.description || '',
     };
     if (companyId) formValues.company_id = companyId;
-    if (rfqRecord.contacts?.length) formValues.contact_ids = rfqRecord.contacts.map((c: any) => c.id);
+    if (rfqRecord.contacts?.length) formValues.contact_ids = rfqRecord.contacts.map((c: any) => ({ value: c.id, label: c.full_name || c.name || '' }));
     setPendingFormValues(formValues);
   };
 
@@ -2262,6 +2267,85 @@ const RFQs: React.FC = () => {
        openCreate();
     }
   }, [searchParams, loading]); // eslint-disable-line
+
+  // Ha az oldal ?create=true&from_item_copy=1 paraméterrel nyílt meg (új lapon való tétel-másolás),
+  // akkor a create form megnyílása után alkalmazzuk a localStorage-ból kiolvasott másolási payloadot.
+  useEffect(() => {
+    if (!createOpen) return;
+    if (searchParams.get('from_item_copy') !== '1') return;
+    try {
+      const raw = localStorage.getItem('rfq_item_copy_payload');
+      if (!raw) return;
+      const payload = JSON.parse(raw);
+      localStorage.removeItem('rfq_item_copy_payload');
+      if (payload.item) setNewItems([payload.item]);
+      if (payload.rfq) {
+        if (payload.rfq.validity_days) setValidityDays(payload.rfq.validity_days);
+        if (payload.rfq.currency_code) setCurrency(payload.rfq.currency_code.toUpperCase());
+
+        const companyId = payload.rfq.company_id;
+        const contactIds: number[] = payload.rfq.contact_ids || [];
+
+        // Közvetlenül hívjuk form.setFieldsValue a betöltés után, kétlépéses várakozással:
+        // 1. requestAnimationFrame: React commit phase után
+        // 2. setTimeout(80): Ant Design Select belső option-cache frissül → névvel jelenik meg
+        const applyFormValues = (_loadedContacts: any[]) => {
+          // labelInValue formátum: {value, label} — a label az eltárolt névből jön,
+          // így nem kell az options listából keresni → azonnal névvel jelenik meg.
+          const storedContacts: any[] = payload.rfq.contacts || [];
+          const contactLabeled = contactIds.map((id: number) => {
+            const stored = storedContacts.find((c: any) => c.id === id || String(c.id) === String(id));
+            const loaded = _loadedContacts.find((c: any) => c.id === id || String(c.id) === String(id));
+            const label = loaded?.full_name || loaded?.name || stored?.full_name || stored?.name || String(id);
+            return { value: id, label };
+          });
+          requestAnimationFrame(() => {
+            setTimeout(() => {
+              const fv: Record<string, any> = {};
+              if (companyId) fv.company_id = companyId;
+              if (contactLabeled.length) fv.contact_ids = contactLabeled;
+              if (payload.rfq.project_id) fv.project_id = payload.rfq.project_id;
+              form.setFieldsValue(fv);
+            }, 0);
+          });
+        };
+
+        if (companyId) {
+          (async () => {
+            let loadedContacts: any[] = [];
+            try {
+              const [companyList, contactList] = await Promise.all([
+                crmService.getCompanies({ is_customer: true, compact: true }).catch(() => []),
+                crmService.getContactsByCompany(companyId).catch(() => []),
+              ]);
+              const all: any[] = ((companyList as any).results ?? companyList) || [];
+              if (!all.find((c: any) => String(c.id) === String(companyId))) {
+                try { const co = await crmService.getCompany(companyId); all.unshift(co); } catch {}
+              }
+              loadedContacts = ((contactList as any).results ?? contactList) || [];
+              setCompanies(all);
+              setContacts(loadedContacts);
+            } catch {}
+            applyFormValues(loadedContacts);
+          })();
+        } else if (contactIds.length > 0) {
+          (async () => {
+            let loadedContacts: any[] = [];
+            try {
+              const results = await Promise.all(
+                contactIds.map((id: number) => crmService.getContact(id).catch(() => null))
+              );
+              loadedContacts = results.filter(Boolean);
+              setContacts(loadedContacts);
+            } catch {}
+            applyFormValues(loadedContacts);
+          })();
+        } else {
+          applyFormValues([]);
+        }
+      }
+    } catch {}
+  }, [createOpen]); // eslint-disable-line
 
   useEffect(() => {
     let channel: BroadcastChannel | null = null;
@@ -3713,7 +3797,7 @@ const RFQs: React.FC = () => {
         open={createOpen}
         onOk={handleCreate}
         onCancel={handleCancel}
-        okText="Létrehozás"
+        okText={newItems.length > 1 ? `Létrehozás (${newItems.length} ajánlat)` : 'Létrehozás'}
         cancelText="Mégse"
         okButtonProps={{ loading: creating }}
         closable={!creating}
@@ -3982,6 +4066,7 @@ const RFQs: React.FC = () => {
                   <Form.Item name="contact_ids" noStyle>
                   <Select 
                     mode="multiple" 
+                    labelInValue
                     allowClear 
                     showSearch 
                     optionFilterProp="label"
@@ -4291,6 +4376,7 @@ const RFQs: React.FC = () => {
                   <Form.Item name="contact_ids" noStyle>
                   <Select 
                     mode="multiple" 
+                    labelInValue
                     allowClear 
                     showSearch 
                     optionFilterProp="label"
@@ -4478,14 +4564,13 @@ const RFQs: React.FC = () => {
             </Checkbox>
           </div>
           <Space wrap>
-            <Tooltip title={newItems.length >= 1 ? 'Minden tételből külön árajánlat készül — a mentés után adj hozzá további tételt egy új árajánlatban' : ''}>
+            <Tooltip title={newItems.length >= 1 ? 'Minden tételből külön árajánlat készül mentéskor' : ''}>
               <Button
                 type="primary"
                 icon={<PlusOutlined />}
                 onClick={() => { setEditIdx(null); setSelectorType('manufacturing'); setSelectorOpen(true); }}
-                disabled={newItems.length >= 1}
               >
-                Tétel hozzáadása{newItems.length >= 1 ? ' (1 tétel / árajánlat)' : ''}
+                Tétel hozzáadása{newItems.length >= 1 ? ` (${newItems.length + 1}. ajánlat)` : ''}
               </Button>
             </Tooltip>
             <Button icon={<HistoryOutlined />} onClick={openHistoryModal} title="Korábbi tételek betöltése">Korábbi tételek</Button>

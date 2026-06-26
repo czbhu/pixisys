@@ -1036,9 +1036,17 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             row['source'] = 'rfq'
             row['row_key'] = f"rfq-{row['id']}"
             result.append(row)
-        # Tétel-szintű, gyártási file-ként megjelölt csatolmányok beolvasztása
+        # Tétel-szintű csatolmányok beolvasztása:
+        # - gyártási file-ként megjelöltek (is_manufacturing_file=True): mindig mutatjuk
+        # - publikus feltöltések (uploaded_by=None): ügyfél töltötte fel → mindig mutatjuk
+        # - egyéb: csak manufacturing=1 lekérdezésnél
+        from django.db.models import Q
+        if only_manufacturing:
+            item_filter = Q(is_manufacturing_file=True)
+        else:
+            item_filter = Q(is_manufacturing_file=True) | Q(uploaded_by__isnull=True)
         item_atts = QuoteRequestItemAttachment.objects.filter(
-            quote_item__quote_request=qr, is_manufacturing_file=True
+            Q(quote_item__quote_request=qr) & item_filter
         ).select_related('quote_item', 'uploaded_by').order_by('-created_at')
         for att in item_atts:
             ser = QuoteRequestItemAttachmentSerializer(att, context={'request': request}).data
@@ -1379,6 +1387,10 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                 cost_items_data=cost_items if isinstance(cost_items, list) else [],
             )
             QuoteLog.objects.create(quote=qr, user=request.user, action=f'Egyedi tétel létrehozva: {name}')
+            try:
+                _sync_rfq_primary_snapshot(qr)
+            except Exception:
+                pass
             return Response(QuoteRequestItemSerializer(item, context={'request': request}).data, status=status.HTTP_201_CREATED)
 
         # ── RÉGI METÓDUS (kivezetés alatt): ManufacturingProduct + QuoteRequestItem ──
@@ -1868,6 +1880,25 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             qr.status = 'quoted'
             qr.save(update_fields=['status'])
         QuoteLog.objects.create(quote=qr, user=request.user, action='Ajánlat kiküldve e-mailben')
+
+        # Kombinált küldés esetén az additional RFQ-k is kapjanak EmailLog bejegyzést
+        # és státuszváltást — különben csak az elsődleges ajánlat kerül "Kiküldve" státuszba.
+        for extra_qr in _combined_qrs:
+            if extra_qr.id == qr.id:
+                continue
+            QuoteRequestEmailLog.objects.create(
+                quote_request=extra_qr,
+                to=to,
+                cc=cc or '',
+                subject=subject,
+                body_preview=(body_core[:500] if body_core else ''),
+                sent_by=request.user if request.user.is_authenticated else None,
+            )
+            if extra_qr.status in ('new', 'in_progress'):
+                extra_qr.status = 'quoted'
+                extra_qr.save(update_fields=['status'])
+            QuoteLog.objects.create(quote=extra_qr, user=request.user, action='Ajánlat kiküldve e-mailben (kombinált)')
+
         return Response({'status': 'sent'})
 
     @action(detail=True, methods=['post'])
@@ -3851,10 +3882,24 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
 
         # Filter for "My Orders" - invited and accepted
         if self.request.query_params.get('my_orders') == 'true':
+            # HR-osztály alapú szűrés: a felhasználó osztályának van cost item-je a megrendelésben
+            user_dept_ids = []
+            try:
+                from apps.hr.models import Employee
+                emp = Employee.objects.filter(user=self.request.user).first()
+                if emp:
+                    user_dept_ids = list(emp.departments.values_list('id', flat=True))
+            except Exception:
+                pass
+            dept_q = (
+                Q(items__quote_item__manufacturing_product__cost_items__department_id__in=user_dept_ids)
+                if user_dept_ids else Q()
+            )
             qs = qs.filter(
                  Q(quote_request__invitations__invitee=self.request.user, quote_request__invitations__status='accepted') |
                  Q(created_by=self.request.user) |
-                 Q(quote_request__assignees=self.request.user)
+                 Q(quote_request__assignees=self.request.user) |
+                 dept_q
             ).distinct()
 
         # Invoice number filtering:
@@ -6766,11 +6811,16 @@ class WorkLogViewSet(viewsets.ModelViewSet):
         if rfq_id:
             # Accept both integer PK and number/request_number slug
             if str(rfq_id).isdigit():
-                qs = qs.filter(customer_order__quote_request_id=rfq_id)
+                qs = qs.filter(
+                    Q(customer_order__quote_request_id=rfq_id) |
+                    Q(quote_request_id=rfq_id)
+                )
             else:
                 qs = qs.filter(
                     Q(customer_order__quote_request__number=rfq_id) |
-                    Q(customer_order__quote_request__request_number=rfq_id)
+                    Q(customer_order__quote_request__request_number=rfq_id) |
+                    Q(quote_request__number=rfq_id) |
+                    Q(quote_request__request_number=rfq_id)
                 )
         if item_id:
             qs = qs.filter(item_id=item_id)
@@ -6831,16 +6881,18 @@ class WorkLogViewSet(viewsets.ModelViewSet):
     
     @action(detail=False, methods=['post'])
     def start(self, request):
-        """Start a new timer. Supports for_user_id (help colleague) and order_label (free-text Egyéb)."""
+        """Start a new timer. Supports for_user_id (help colleague), order_label (free-text Egyéb) and rfq_id (RFQ-level)."""
         order_id = request.data.get('order_id')
+        rfq_id = request.data.get('rfq_id')  # RFQ-alapú stopper (CustomerOrder nélkül)
+        rfq_item_id = request.data.get('rfq_item_id')
         order_label = request.data.get('order_label', '')
         item_id = request.data.get('item_id')
         workflow_name = request.data.get('workflow_name', '')
         sub_item_id = request.data.get('sub_item_id')
         for_user_id = request.data.get('for_user_id')
 
-        if not order_id and not order_label:
-            return Response({'error': 'order_id or order_label required'}, status=400)
+        if not order_id and not rfq_id and not order_label:
+            return Response({'error': 'order_id, rfq_id or order_label required'}, status=400)
 
         # Determine target user
         if for_user_id:
@@ -6864,8 +6916,10 @@ class WorkLogViewSet(viewsets.ModelViewSet):
         new_log = WorkLog.objects.create(
             user=target_user,
             customer_order_id=order_id if order_id else None,
+            quote_request_id=rfq_id if rfq_id else None,
             order_label=order_label or '',
             item_id=item_id if item_id else None,
+            rfq_item_id=rfq_item_id if rfq_item_id else None,
             sub_item_id=sub_item_id if sub_item_id else None,
             workflow_name=workflow_name,
             started_at=timezone.now()
@@ -7646,7 +7700,12 @@ class DeliveryNoteViewSet(viewsets.ModelViewSet):
         if not rfq_item_ids:
             return Response({'error': 'rfq_item_ids vagy rfq_ids kötelező'}, status=400)
 
-        DELIVERABLE_RFQ_STATUSES = ('ordered', 'confirmed', 'in_production', 'ready', 'in_delivery')
+        DELIVERABLE_RFQ_STATUSES = (
+            'ordered', 'confirmed', 'in_production', 'ready', 'in_delivery',
+            # Tervezési/gyártási fázisok — a felhasználó explicit kijelölte szállításra
+            'in_design', 'pending_customer_approval', 'pending_internal_approval',
+            'accepted', 'in_progress', 'quoted', 'new',
+        )
 
         items_data = []
         for rfq_item_id in rfq_item_ids:
@@ -7730,7 +7789,25 @@ class DeliveryNoteViewSet(viewsets.ModelViewSet):
                 })
 
         if not items_data:
-            return Response({'error': 'Nincs szállítható tétel a kiválasztott tételeknél (vagy már szállítva van)'}, status=400)
+            # Összegyűjtjük mi miatt nem volt szállítható tétel
+            reasons = []
+            for rfq_item_id in rfq_item_ids[:5]:
+                try:
+                    qi = QuoteRequestItem.objects.get(id=rfq_item_id)
+                    cois = CustomerOrderItem.objects.filter(quote_item=qi).exclude(customer_order__status='cancelled').exclude(status='cancelled')
+                    if not cois.exists():
+                        reasons.append(f'{qi.item_name or qi.id}: nincs aktív megrendelés')
+                    else:
+                        for coi in cois:
+                            from django.db.models import Sum as _Sum
+                            delivered = DeliveryNoteItem.objects.filter(customer_order_item=coi).aggregate(total=_Sum('quantity'))['total'] or 0
+                            remaining = float(coi.quantity) - float(delivered)
+                            if remaining <= 0:
+                                reasons.append(f'{qi.item_name or qi.id}: már kiszállítva ({delivered}/{coi.quantity})')
+                except QuoteRequestItem.DoesNotExist:
+                    pass
+            reason_str = '; '.join(reasons[:3]) if reasons else 'ismeretlen ok'
+            return Response({'error': f'Nincs szállítható tétel ({reason_str})'}, status=400)
 
         payload = {
             'delivery_date': delivery_date,
@@ -7753,6 +7830,27 @@ class DeliveryNoteViewSet(viewsets.ModelViewSet):
 
         try:
             created_note = serializer.instance
+            # Szállítólevél létrehozásakor azonnal frissítjük a COI státuszokat és a megrendelés státuszát,
+            # hogy az RFQ listában is megjelenjen a "Szállítás alatt" állapot (ne maradjon "Gyártásban").
+            order_ids_to_sync = set()
+            for dn_item in created_note.items.all():
+                coi = dn_item.customer_order_item
+                if coi.status == 'cancelled':
+                    continue
+                ordered = float(coi.quantity)
+                delivered_total = float(DeliveryNoteItem.objects.filter(
+                    customer_order_item=coi
+                ).aggregate(total=models.Sum('quantity'))['total'] or 0)
+                if delivered_total >= ordered:
+                    if coi.status not in ('in_delivery', 'delivered'):
+                        coi.status = 'in_delivery'
+                        coi.save(update_fields=['status'])
+                elif coi.status not in ('in_delivery', 'delivered'):
+                    coi.status = 'in_delivery'
+                    coi.save(update_fields=['status'])
+                order_ids_to_sync.add(coi.customer_order_id)
+            for oid in order_ids_to_sync:
+                CustomerOrder.sync_status_from_items(oid)
             qr_ids = set(
                 created_note.items.values_list('customer_order_item__customer_order__quote_request_id', flat=True)
             )
@@ -7901,8 +7999,21 @@ class DeliveryNoteViewSet(viewsets.ModelViewSet):
                 'order_number': dn.delivery_note_number,
                 'delivery_started_at': d_val,
             },
+            # Átvételi pont adatok (atveteli_pont email sablonhoz)
+            'pickup_location_name': '',
+            'pickup_location_address': '',
+            'pickup_location_hours': '',
             **extra_context,
         }
+
+        if dn.pickup_location_id:
+            try:
+                pl = dn.pickup_location
+                ctx['pickup_location_name'] = pl.name or ''
+                ctx['pickup_location_address'] = pl.address or ''
+                ctx['pickup_location_hours'] = getattr(pl, 'hours_display', '') or ''
+            except Exception:
+                pass
         
         def render_tpl(content, context):
             if not content: return ""
@@ -8195,8 +8306,21 @@ class DeliveryNoteViewSet(viewsets.ModelViewSet):
                 'order_number': dn.delivery_note_number,
                 'delivery_started_at': d_val,
             },
+            # Átvételi pont adatok (atveteli_pont email sablonhoz)
+            'pickup_location_name': '',
+            'pickup_location_address': '',
+            'pickup_location_hours': '',
             **extra_context,
         }
+
+        if dn.pickup_location_id:
+            try:
+                pl = dn.pickup_location
+                ctx['pickup_location_name'] = pl.name or ''
+                ctx['pickup_location_address'] = pl.address or ''
+                ctx['pickup_location_hours'] = getattr(pl, 'hours_display', '') or ''
+            except Exception:
+                pass
         
         def render_tpl(content, context):
             if not content: return ""
