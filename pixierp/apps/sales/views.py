@@ -671,38 +671,6 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         self.check_object_permissions(self.request, obj)
         return obj
 
-    def list(self, request, *args, **kwargs):
-        """List árajánlatok, automatikusan frissítve az archív státuszt"""
-        # Frissítjük az archív státuszt a lejárt árajánlatoknál (max 1/perc, ne lassítsa a listát)
-        from django.utils import timezone
-        from django.core.cache import cache
-        _cache_key = f'rfq_archive_upd_{getattr(request.user, "id", 0)}'
-        if not cache.get(_cache_key):
-            QuoteRequest.objects.filter(
-                deadline__lt=timezone.now().date()
-            ).exclude(
-                status__in=['archived', 'ordered']
-            ).update(status='archived')
-            cache.set(_cache_key, True, 60)
-
-        # Optional ?order_status=... filter — applied AFTER computing
-        # effective_status (in Python). Accepts comma-separated values.
-        order_status_param = request.query_params.get('order_status')
-        if not order_status_param:
-            return super().list(request, *args, **kwargs)
-
-        wanted = {s.strip() for s in order_status_param.split(',') if s.strip()}
-        # We must compute effective_status, so apply on serialized data.
-        queryset = self.filter_queryset(self.get_queryset()).filter(status='ordered')
-        page = self.paginate_queryset(queryset)
-        target = page if page is not None else queryset
-        serializer = self.get_serializer(target, many=True)
-        data = [d for d in serializer.data if d.get('effective_status') in wanted]
-        if page is not None:
-            return self.get_paginated_response(data)
-        from rest_framework.response import Response
-        return Response(data)
-
     def get_object(self):
         lookup_url_kwarg = self.lookup_url_kwarg or self.lookup_field
         lookup_value = self.kwargs.get(lookup_url_kwarg)
@@ -715,15 +683,25 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
 
     def list(self, request, *args, **kwargs):
         """List árajánlatok, automatikusan frissítve az archív státuszt"""
-        # Frissítjük az archív státuszt a lejárt árajánlatoknál (max 1/perc, ne lassítsa a listát)
+        # Frissítjük az archív státuszt a lejárt árajánlatoknál (max 1/perc, ne lassítsa a listát).
+        # CSAK azokat archiváljuk, amelyek:
+        #   1. Határideje lejárt
+        #   2. NEM manuálisan beállított státuszban vannak (status_is_manual=False)
+        #   3. NEM "aktív munka" vagy "kész" státuszban vannak
         from django.utils import timezone
         from django.core.cache import cache
         _cache_key = f'rfq_archive_upd_{getattr(request.user, "id", 0)}'
         if not cache.get(_cache_key):
+            NO_AUTO_ARCHIVE = [
+                'archived', 'ordered', 'confirmed',
+                'in_production', 'ready', 'in_delivery',
+                'delivered', 'invoiced', 'cancelled',
+            ]
             QuoteRequest.objects.filter(
-                deadline__lt=timezone.now().date()
+                deadline__lt=timezone.now().date(),
+                status_is_manual=False,
             ).exclude(
-                status__in=['archived', 'ordered']
+                status__in=NO_AUTO_ARCHIVE
             ).update(status='archived')
             cache.set(_cache_key, True, 60)
 
@@ -2062,7 +2040,8 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         if old_status == new_status:
             return Response({'status': qr.status})
         qr.status = new_status
-        qr.save(update_fields=['status'])
+        qr.status_is_manual = True
+        qr.save(update_fields=['status', 'status_is_manual'])
         try:
             QuoteLog.objects.create(quote=qr, user=request.user, action=f'Státusz módosítva: {old_status} → {new_status}')
         except Exception:
@@ -7761,78 +7740,64 @@ class DeliveryNoteViewSet(viewsets.ModelViewSet):
             except QuoteRequestItem.DoesNotExist:
                 continue
 
+            # --- RFQ-alapú szállítás: quote_item közvetlenül ---
+            # Ellenőrizzük a már szállított mennyiséget (mindkét FK útvonalon)
+            delivered_via_qi = DeliveryNoteItem.objects.filter(
+                quote_item=quote_item
+            ).aggregate(total=models.Sum('quantity'))['total'] or 0
+
+            # Visszafele kompatibilis: ha létezik CustomerOrderItem, azt is figyelembe vesszük
             cois = CustomerOrderItem.objects.filter(
                 quote_item=quote_item
             ).exclude(customer_order__status='cancelled').exclude(status='cancelled')
 
-            # Ha nincs CustomerOrderItem de az RFQ szállítható státuszban van,
-            # automatikusan létrehozunk egy CustomerOrder + CustomerOrderItem-et
-            if not cois.exists():
-                qr = quote_item.quote_request
-                if qr.status not in DELIVERABLE_RFQ_STATUSES:
-                    continue
-                today = timezone.now().date()
-                date_str = today.strftime('%Y%m%d')
-                last_order = CustomerOrder.objects.filter(
-                    order_number__startswith=f'O{date_str}'
-                ).order_by('-order_number').first()
-                if last_order:
-                    last_seq = int(last_order.order_number[len(f'O{date_str}'):])
-                    new_seq = last_seq + 1
-                else:
-                    new_seq = 1
-                order_number_auto = f'O{date_str}{new_seq:02d}'
-                auto_order = CustomerOrder.objects.create(
-                    quote_request=qr,
-                    order_number=order_number_auto,
-                    status='ready',
-                    created_by=request.user,
-                )
-                auto_coi = CustomerOrderItem.objects.create(
-                    customer_order=auto_order,
-                    quote_item=quote_item,
-                    quantity=quote_item.quantity,
-                    unit=quote_item.unit,
-                    net_unit_price=quote_item.net_unit_price,
-                    vat_rate=quote_item.vat_rate,
-                    discount_percent=quote_item.discount_percent,
-                    description=quote_item.description or quote_item.item_name or '',
-                    status='ready',
-                )
-                QuoteLog.objects.create(
-                    quote=qr,
-                    user=request.user,
-                    action=f'Automatikus megrendelés létrehozva szállításhoz: {order_number_auto}',
-                )
-                cois = CustomerOrderItem.objects.filter(pk=auto_coi.pk)
-
-            for coi in cois:
-                delivered = DeliveryNoteItem.objects.filter(
-                    customer_order_item=coi
-                ).aggregate(total=models.Sum('quantity'))['total'] or 0
-                remaining = float(coi.quantity) - float(delivered)
+            if cois.exists():
+                # Manuális rendelés esetén: COI-alapú folyamat (backward compat)
+                BELOW_IN_DELIVERY = ('new', 'confirmed', 'in_production', 'in_design',
+                                     'pending_customer_approval', 'pending_internal_approval',
+                                     'ready', 'accepted', 'in_progress', 'quoted', 'ordered')
+                qr_status = quote_item.quote_request.status
+                for coi in cois:
+                    delivered_via_coi = float(DeliveryNoteItem.objects.filter(
+                        customer_order_item=coi
+                    ).aggregate(total=models.Sum('quantity'))['total'] or 0)
+                    remaining = float(coi.quantity) - float(delivered_via_coi)
+                    # Ha visszaállított státusz: engedjük újra szállítani
+                    if remaining <= 0 and qr_status in BELOW_IN_DELIVERY:
+                        remaining = float(coi.quantity)
+                    if remaining <= 0:
+                        continue
+                    item_name = coi.description or quote_item.item_name or '-'
+                    items_data.append({
+                        'customer_order_item': coi.id,
+                        'quote_item': quote_item.id,
+                        'quantity': remaining,
+                        'net_unit_price': float(coi.net_unit_price),
+                        'item_name': item_name[:255],
+                        'unit': coi.unit or quote_item.unit or 'db',
+                    })
+            else:
+                # RFQ-alapú folyamat: nincs CustomerOrder, quote_item közvetlenül
+                remaining = float(quote_item.quantity) - float(delivered_via_qi)
+                # Ha a felhasználó visszaállította a státuszt 'ready' vagy alacsonyabbra
+                # (< in_delivery rank), engedjük újra leszállítani — a korábbi szállítás
+                # figyelmen kívül marad, a teljes mennyiség újra kiszállítható.
+                BELOW_IN_DELIVERY = ('new', 'confirmed', 'in_production', 'in_design',
+                                     'pending_customer_approval', 'pending_internal_approval',
+                                     'ready', 'accepted', 'in_progress', 'quoted', 'ordered')
+                qr_status = quote_item.quote_request.status
+                if remaining <= 0 and qr_status in BELOW_IN_DELIVERY:
+                    remaining = float(quote_item.quantity)
                 if remaining <= 0:
                     continue
-
-                item_name = coi.description or ''
-                if not item_name:
-                    qi = quote_item
-                    item_name = (
-                        qi.product.name if qi.product else (
-                            qi.material.name if qi.material else (
-                                qi.manufacturing_product.name if qi.manufacturing_product else (
-                                    qi.service.name if qi.service else '-'
-                                )
-                            )
-                        )
-                    )
-
+                item_name = quote_item.item_name or '-'
                 items_data.append({
-                    'customer_order_item': coi.id,
+                    'customer_order_item': None,   # nincs CustomerOrder
+                    'quote_item': quote_item.id,
                     'quantity': remaining,
-                    'net_unit_price': float(coi.net_unit_price),
-                    'item_name': item_name[:255] if item_name else '',
-                    'unit': coi.unit,
+                    'net_unit_price': float(quote_item.net_unit_price or 0),
+                    'item_name': item_name[:255],
+                    'unit': quote_item.unit or 'db',
                 })
 
         if not items_data:
@@ -7841,16 +7806,21 @@ class DeliveryNoteViewSet(viewsets.ModelViewSet):
             for rfq_item_id in rfq_item_ids[:5]:
                 try:
                     qi = QuoteRequestItem.objects.get(id=rfq_item_id)
+                    from django.db.models import Sum as _Sum
+                    # Ellenőrzés: RFQ-alapú és COI-alapú szállított mennyiség
+                    deliv_qi = DeliveryNoteItem.objects.filter(quote_item=qi).aggregate(t=_Sum('quantity'))['t'] or 0
                     cois = CustomerOrderItem.objects.filter(quote_item=qi).exclude(customer_order__status='cancelled').exclude(status='cancelled')
-                    if not cois.exists():
-                        reasons.append(f'{qi.item_name or qi.id}: nincs aktív megrendelés')
-                    else:
+                    if cois.exists():
                         for coi in cois:
-                            from django.db.models import Sum as _Sum
-                            delivered = DeliveryNoteItem.objects.filter(customer_order_item=coi).aggregate(total=_Sum('quantity'))['total'] or 0
-                            remaining = float(coi.quantity) - float(delivered)
+                            delivered = float(DeliveryNoteItem.objects.filter(customer_order_item=coi).aggregate(t=_Sum('quantity'))['t'] or 0)
+                            remaining = float(coi.quantity) - delivered
                             if remaining <= 0:
                                 reasons.append(f'{qi.item_name or qi.id}: már kiszállítva ({delivered}/{coi.quantity})')
+                    else:
+                        remaining = float(qi.quantity) - float(deliv_qi)
+                        if remaining <= 0:
+                            reasons.append(f'{qi.item_name or qi.id}: már kiszállítva ({deliv_qi}/{qi.quantity})')
+                        # Ha még nincs COI és nem szállítható státuszban — de most ez nem blokkoló
                 except QuoteRequestItem.DoesNotExist:
                     pass
             reason_str = '; '.join(reasons[:3]) if reasons else 'ismeretlen ok'
@@ -7877,34 +7847,41 @@ class DeliveryNoteViewSet(viewsets.ModelViewSet):
 
         try:
             created_note = serializer.instance
-            # Szállítólevél létrehozásakor azonnal frissítjük a COI státuszokat és a megrendelés státuszát,
-            # hogy az RFQ listában is megjelenjen a "Szállítás alatt" állapot (ne maradjon "Gyártásban").
+            # Szállítólevél létrehozásakor frissítjük a COI státuszokat (ha van) és az RFQ státuszát.
             order_ids_to_sync = set()
+            rfq_ids_to_sync = set()
             for dn_item in created_note.items.all():
                 coi = dn_item.customer_order_item
-                if coi.status == 'cancelled':
-                    continue
-                ordered = float(coi.quantity)
-                delivered_total = float(DeliveryNoteItem.objects.filter(
-                    customer_order_item=coi
-                ).aggregate(total=models.Sum('quantity'))['total'] or 0)
-                if delivered_total >= ordered:
+                if coi and coi.status != 'cancelled':
                     if coi.status not in ('in_delivery', 'delivered'):
                         coi.status = 'in_delivery'
                         coi.save(update_fields=['status'])
-                elif coi.status not in ('in_delivery', 'delivered'):
-                    coi.status = 'in_delivery'
-                    coi.save(update_fields=['status'])
-                order_ids_to_sync.add(coi.customer_order_id)
+                    order_ids_to_sync.add(coi.customer_order_id)
+                # RFQ-alapú tétel: quote_item alapján sync
+                if dn_item.quote_item_id:
+                    rfq_ids_to_sync.add(dn_item.quote_item.quote_request_id)
             for oid in order_ids_to_sync:
                 CustomerOrder.sync_status_from_items(oid)
-            qr_ids = set(
-                created_note.items.values_list('customer_order_item__customer_order__quote_request_id', flat=True)
-            )
-            for qr_id in qr_ids:
-                qr_obj = QuoteRequest.objects.filter(id=qr_id).first()
-                if qr_obj:
+            # COI-hoz tartozó RFQ-k is
+            for qr_id in set(created_note.items.values_list(
+                'customer_order_item__customer_order__quote_request_id', flat=True
+            )):
+                if qr_id:
+                    rfq_ids_to_sync.add(qr_id)
+            # Rendszer-esemény: szállítólevél létrehozása → RFQ státusz frissítése 'in_delivery'-re.
+            # Az aktív rendszer-esemény MINDIG felülírja a státuszt (status_is_manual-t is törli).
+            # A status_is_manual flag csak az auto-promóciót (meglévő DN alapján számított) védi.
+            WRITABLE_BY_DELIVERY = frozenset({'new', 'confirmed', 'ordered', 'in_production', 'ready', 'in_delivery'})
+            for qr_id in rfq_ids_to_sync:
+                try:
+                    qr_obj = QuoteRequest.objects.get(id=qr_id)
+                    if qr_obj.status in WRITABLE_BY_DELIVERY:
+                        qr_obj.status = 'in_delivery'
+                        qr_obj.status_is_manual = False
+                        qr_obj.save(update_fields=['status', 'status_is_manual'])
                     _sync_rfq_primary_snapshot(qr_obj)
+                except Exception:
+                    pass
         except Exception:
             pass
 
@@ -7924,34 +7901,52 @@ class DeliveryNoteViewSet(viewsets.ModelViewSet):
         # Auto-update CustomerOrderItem status based on delivered quantities
         for dn_item in note.items.all():
             coi = dn_item.customer_order_item
-            if coi.status == 'cancelled':
-                continue
-            ordered = coi.quantity
-            delivered_total = DeliveryNoteItem.objects.filter(
-                customer_order_item=coi,
-                delivery_note__is_confirmed=True,
-            ).aggregate(total=models.Sum('quantity'))['total'] or 0
-            if delivered_total >= ordered:
-                if coi.status != 'delivered':
-                    coi.status = 'delivered'
-                    coi.save()
-            else:
-                if coi.status not in ('in_delivery', 'delivered'):
-                    coi.status = 'in_delivery'
-                    coi.save()
+            if coi:
+                if coi.status == 'cancelled':
+                    continue
+                ordered = coi.quantity
+                delivered_total = DeliveryNoteItem.objects.filter(
+                    customer_order_item=coi,
+                    delivery_note__is_confirmed=True,
+                ).aggregate(total=models.Sum('quantity'))['total'] or 0
+                if delivered_total >= ordered:
+                    if coi.status != 'delivered':
+                        coi.status = 'delivered'
+                        coi.save()
+                else:
+                    if coi.status not in ('in_delivery', 'delivered'):
+                        coi.status = 'in_delivery'
+                        coi.save()
 
-        # Safety net: explicitly resync parent order statuses
-        order_ids = set(note.items.values_list('customer_order_item__customer_order_id', flat=True))
+        # Safety net: explicitly resync parent order statuses (csak COI-alapú tételeknél)
+        order_ids = set(
+            oid for oid in note.items.values_list('customer_order_item__customer_order_id', flat=True) if oid
+        )
         for oid in order_ids:
             CustomerOrder.sync_status_from_items(oid)
 
         try:
-            qr_ids = set(
-                note.items.values_list('customer_order_item__customer_order__quote_request_id', flat=True)
-            )
-            for qr_id in qr_ids:
+            # RFQ-alapú és COI-alapú tételek szinkronizálása
+            rfq_ids = set()
+            for dn_item in note.items.all():
+                if dn_item.quote_item_id:
+                    rfq_ids.add(dn_item.quote_item.quote_request_id)
+                elif dn_item.customer_order_item_id:
+                    rfq_id = CustomerOrder.objects.filter(
+                        id=dn_item.customer_order_item.customer_order_id
+                    ).values_list('quote_request_id', flat=True).first()
+                    if rfq_id:
+                        rfq_ids.add(rfq_id)
+            # Rendszer-esemény: szállítólevél visszaigazolása → RFQ státusz 'delivered'-re.
+            # Aktív rendszer-esemény MINDIG felülírja (status_is_manual-t is törli).
+            WRITABLE_BY_CONFIRM = frozenset({'new', 'confirmed', 'ordered', 'in_production', 'ready', 'in_delivery'})
+            for qr_id in rfq_ids:
                 qr_obj = QuoteRequest.objects.filter(id=qr_id).first()
                 if qr_obj:
+                    if qr_obj.status in WRITABLE_BY_CONFIRM:
+                        qr_obj.status = 'delivered'
+                        qr_obj.status_is_manual = False
+                        qr_obj.save(update_fields=['status', 'status_is_manual'])
                     _sync_rfq_primary_snapshot(qr_obj)
         except Exception:
             pass

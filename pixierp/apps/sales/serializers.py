@@ -563,6 +563,21 @@ class QuoteRequestSerializer(serializers.ModelSerializer):
                 ).exclude(customer_order__status='cancelled'))
 
             statuses = [oi.status for oi in order_items if oi.status != 'cancelled']
+
+            # RFQ-alapú (quote_item közvetlen) szállítólevél tételek is hozzájárulnak
+            try:
+                from apps.sales.models import DeliveryNoteItem
+                from django.db.models import Sum
+                for rfq_item in rfq_items:
+                    qi_delivered = float(DeliveryNoteItem.objects.filter(
+                        quote_item_id=rfq_item.id
+                    ).aggregate(t=Sum('quantity'))['t'] or 0)
+                    ordered = float(rfq_item.quantity) if rfq_item.quantity else 0
+                    if qi_delivered > 0 and ordered > 0:
+                        statuses.append('delivered' if qi_delivered >= ordered else 'in_delivery')
+            except Exception:
+                pass
+
             if not statuses:
                 return None, None
 
@@ -597,16 +612,20 @@ class QuoteRequestSerializer(serializers.ModelSerializer):
         return obj.valid_until < timezone.now().date()
 
     def get_effective_status(self, obj):
+        # Ha a felhasználó manuálisan állított be státuszt, azt mindig tiszteletben tartjuk.
+        # Rendszer-esemény (szállítólevél létrehozás, visszaigazolás) törli ezt a flag-et.
+        if getattr(obj, 'status_is_manual', False):
+            return obj.status
         if obj.status in self._ORDER_STATUS_LABELS and obj.status not in ('invoiced', 'cancelled'):
-            # Még ha az RFQ státusza is egy order-szerű közbülső állapot (pl. 'ready', 'in_production'),
-            # az aggregált státusz megelőzi ha magasabb rangú — pl. ha a szállítás megtörtént,
-            # az 'in_delivery'/'delivered'/'invoiced' felülírja a régebb beragadt 'in_production'-t.
-            min_status, _ = self._aggregate_order_status(obj)
-            if min_status and min_status not in ('new',):
-                obj_rank = self._ORDER_STATUS_RANK.get(obj.status, -1)
-                agg_rank = self._ORDER_STATUS_RANK.get(min_status, -1)
-                if agg_rank > obj_rank:
-                    return min_status
+            # Auto-promotálás csak ezekből a korai/rendszer-által-beállított státuszokból.
+            AUTO_PROMOTABLE = frozenset({'ordered', 'new', 'confirmed'})
+            if obj.status in AUTO_PROMOTABLE:
+                min_status, _ = self._aggregate_order_status(obj)
+                if min_status and min_status not in ('new',):
+                    agg_rank = self._ORDER_STATUS_RANK.get(min_status, -1)
+                    obj_rank = self._ORDER_STATUS_RANK.get(obj.status, -1)
+                    if agg_rank > obj_rank:
+                        return min_status
         if obj.status in self._ORDER_STATUS_LABELS:
             return obj.status
         # deprecated: 2026-06-23 — a QuoteRequest.status sosem 'sent'/'invoiced' (nincs a STATUS_CHOICES-ban),
@@ -630,14 +649,17 @@ class QuoteRequestSerializer(serializers.ModelSerializer):
         return obj.status
 
     def get_effective_status_label(self, obj):
+        if getattr(obj, 'status_is_manual', False):
+            return self._ORDER_STATUS_LABELS.get(obj.status) or self._RFQ_STATUS_LABELS.get(obj.status, obj.status)
         if obj.status in self._ORDER_STATUS_LABELS and obj.status not in ('invoiced', 'cancelled'):
-            # Ha az aggregált státusz magasabb rangú mint az RFQ saját státusza, az kerül megjelenítésre.
-            min_status, is_partial = self._aggregate_order_status(obj)
-            if min_status and min_status not in ('new',):
-                obj_rank = self._ORDER_STATUS_RANK.get(obj.status, -1)
-                agg_rank = self._ORDER_STATUS_RANK.get(min_status, -1)
-                if agg_rank > obj_rank:
-                    return self._ORDER_STATUS_LABELS.get(min_status, min_status)
+            AUTO_PROMOTABLE = frozenset({'ordered', 'new', 'confirmed'})
+            if obj.status in AUTO_PROMOTABLE:
+                min_status, is_partial = self._aggregate_order_status(obj)
+                if min_status and min_status not in ('new',):
+                    agg_rank = self._ORDER_STATUS_RANK.get(min_status, -1)
+                    obj_rank = self._ORDER_STATUS_RANK.get(obj.status, -1)
+                    if agg_rank > obj_rank:
+                        return self._ORDER_STATUS_LABELS.get(min_status, min_status)
         if obj.status in self._ORDER_STATUS_LABELS:
             return self._ORDER_STATUS_LABELS[obj.status]
         min_status, is_partial = self._aggregate_order_status(obj)
@@ -1696,7 +1718,7 @@ class PickupLocationSerializer(serializers.ModelSerializer):
 
 
 class DeliveryNoteItemSerializer(serializers.ModelSerializer):
-    order_number = serializers.CharField(source='customer_order_item.customer_order.order_number', read_only=True)
+    order_number = serializers.SerializerMethodField()
     delivery_note_number = serializers.CharField(source='delivery_note.delivery_note_number', read_only=True)
     issue_date = serializers.DateField(source='delivery_note.issue_date', read_only=True)
     customer_name = serializers.CharField(source='delivery_note.customer.name', read_only=True)
@@ -1709,17 +1731,33 @@ class DeliveryNoteItemSerializer(serializers.ModelSerializer):
     confirmed_by_user_name = serializers.CharField(source='delivery_note.confirmed_by_user.get_full_name', read_only=True)
     delivery_note_public_url = serializers.SerializerMethodField()
     item_code = serializers.SerializerMethodField()
-    invoice_number = serializers.CharField(source='customer_order_item.customer_order.invoice_number', read_only=True)
+    invoice_number = serializers.SerializerMethodField()
     documentation = serializers.SerializerMethodField()
     created_by_name = serializers.CharField(source='delivery_note.created_by.get_full_name', read_only=True)
-    description = serializers.CharField(source='customer_order_item.description', read_only=True, default='')
-    internal_description = serializers.CharField(source='customer_order_item.remark', read_only=True, default='')
+    description = serializers.SerializerMethodField()
+    internal_description = serializers.SerializerMethodField()
     net_total = serializers.SerializerMethodField()
     rfq_id = serializers.SerializerMethodField()
     item_name = serializers.SerializerMethodField()
     delivery_type = serializers.CharField(source='delivery_note.delivery_type', read_only=True)
     pickup_location_id = serializers.IntegerField(source='delivery_note.pickup_location_id', read_only=True)
     pickup_location_name = serializers.CharField(source='delivery_note.pickup_location.name', read_only=True, default='')
+
+    def get_order_number(self, obj):
+        try: return obj.customer_order_item.customer_order.order_number
+        except Exception: return ''
+
+    def get_invoice_number(self, obj):
+        try: return obj.customer_order_item.customer_order.invoice_number
+        except Exception: return ''
+
+    def get_description(self, obj):
+        try: return obj.customer_order_item.description or ''
+        except Exception: return ''
+
+    def get_internal_description(self, obj):
+        try: return obj.customer_order_item.remark or ''
+        except Exception: return ''
 
     class Meta:
         model = DeliveryNoteItem
@@ -1898,16 +1936,20 @@ class DeliveryNoteSerializer(serializers.ModelSerializer):
         # Easier to iterate if few
         for item in obj.items.all():
             try:
+                if not item.customer_order_item:
+                    # RFQ-alapú tétel: quote_item-en keresztül
+                    if item.quote_item:
+                        qr = item.quote_item.quote_request
+                        for c in qr.contacts.all():
+                            if c.id not in seen_ids:
+                                contacts.append({'name': c.name, 'email': c.email, 'phone': c.phone, 'position': c.position})
+                                seen_ids.add(c.id)
+                    continue
                 co = item.customer_order_item.customer_order
                 qr = co.quote_request
                 for c in qr.contacts.all():
                     if c.id not in seen_ids:
-                        contacts.append({
-                            'name': c.name,
-                            'email': c.email,
-                            'phone': c.phone,
-                            'position': c.position
-                        })
+                        contacts.append({'name': c.name, 'email': c.email, 'phone': c.phone, 'position': c.position})
                         seen_ids.add(c.id)
             except:
                 pass
@@ -1942,21 +1984,27 @@ class DeliveryNoteSerializer(serializers.ModelSerializer):
         delivery_note = super().create(validated_data)
         
         for item_data in items_data:
-            # item_data should have 'customer_order_item' (ID) and 'quantity'
-            # If the key is 'customer_order_item' and value is an ID, we need to use 'customer_order_item_id'
-            if 'customer_order_item' in item_data and isinstance(item_data['customer_order_item'], (int, str)):
-                item_data['customer_order_item_id'] = item_data.pop('customer_order_item')
+            # customer_order_item: int/None → customer_order_item_id
+            coi_val = item_data.pop('customer_order_item', None)
+            if isinstance(coi_val, (int, str)) and coi_val:
+                item_data['customer_order_item_id'] = int(coi_val)
+            else:
+                item_data['customer_order_item_id'] = None
+            # quote_item: int → quote_item_id
+            qi_val = item_data.pop('quote_item', None)
+            if isinstance(qi_val, (int, str)) and qi_val:
+                item_data['quote_item_id'] = int(qi_val)
                 
             DeliveryNoteItem.objects.create(
                 delivery_note=delivery_note,
                 **{k: (v[:255] if isinstance(v, str) and k == 'item_name' else v) for k, v in item_data.items()}
             )
 
-        # Auto-set CustomerOrderItem status to 'in_delivery' if currently below
+        # Auto-set CustomerOrderItem status to 'in_delivery' if currently below (only if COI exists)
         STATUS_ORDER = ['new', 'confirmed', 'in_production', 'ready', 'in_delivery', 'delivered']
         for dn_item in delivery_note.items.all():
             coi = dn_item.customer_order_item
-            if coi.status not in ('in_delivery', 'delivered', 'cancelled'):
+            if coi and coi.status not in ('in_delivery', 'delivered', 'cancelled'):
                 coi.status = 'in_delivery'
                 coi.save()
 

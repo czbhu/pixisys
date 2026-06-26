@@ -2779,12 +2779,13 @@ const RFQs: React.FC = () => {
     openSendModal(list[0].rfqId, list[0].additionalRfqIds, list[0].itemIds);
   };
 
-  const DELIVERABLE_RFQ_STATUSES = ['ordered', 'confirmed', 'in_production', 'ready', 'in_delivery'];
+  const DELIVERABLE_RFQ_STATUSES = ['ordered', 'confirmed', 'in_production', 'ready', 'in_delivery', 'in_design',
+    'pending_customer_approval', 'pending_internal_approval', 'accepted', 'in_progress'];
 
   const handleBulkDelivery = async () => {
     const selectedItems = flattenedItems.filter((item: any) => bulkSelectedKeys.includes(item.uniqueId));
     const deliverableRows = selectedItems.filter((item: any) =>
-      DELIVERABLE_RFQ_STATUSES.includes(item.rfq_status || item.status)
+      DELIVERABLE_RFQ_STATUSES.includes(item.status || item.rfq_status)
     );
     if (!deliverableRows.length) {
       message.warning('Nincs szállítható ajánlat a kijelöltek között (csak megrendelt/kész státuszú ajánlatot lehet szállítani)');

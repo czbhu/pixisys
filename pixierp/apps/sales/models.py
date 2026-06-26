@@ -101,6 +101,8 @@ class QuoteRequest(models.Model):
     is_manufacturable = models.BooleanField(default=False, verbose_name="Gyártható")
     manufacturable_marked_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='manufacturable_marked_quote_requests', verbose_name="Gyárthatóvá tette")
     manufacturable_marked_at = models.DateTimeField(null=True, blank=True, verbose_name="Gyárthatóvá jelölés ideje")
+    # Ha True: a felhasználó manuálisan állított be státuszt → NEM írja felül auto-promóció
+    status_is_manual = models.BooleanField(default=False, verbose_name="Státusz manuálisan beállítva")
 
     # RFQ-first transition snapshot fields (1 RFQ = 1 item = 1 order)
     primary_item_name = models.CharField(max_length=200, blank=True, default='', verbose_name="Elsődleges tétel neve")
@@ -1041,9 +1043,25 @@ class DeliveryNote(models.Model):
         return self.delivery_note_number
 
 class DeliveryNoteItem(models.Model):
-    """Szállítólevél tétel"""
+    """Szállítólevél tétel — RFQ-alapú: quote_item az elsődleges hivatkozás.
+    customer_order_item opcionálisan megmarad régi/manuális rendelésekhez (backward compat)."""
     delivery_note = models.ForeignKey(DeliveryNote, on_delete=models.CASCADE, related_name='items', verbose_name="Szállítólevél")
-    customer_order_item = models.ForeignKey(CustomerOrderItem, on_delete=models.CASCADE, related_name='delivery_items', verbose_name="Megrendelés tétel")
+    # Elsődleges FK: közvetlen RFQ tétel hivatkozás (új folyamat)
+    quote_item = models.ForeignKey(
+        'QuoteRequestItem',
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='delivery_items',
+        verbose_name="Ajánlat tétel",
+    )
+    # Másodlagos FK: megtartva backward compat és manuális rendelésekhez
+    customer_order_item = models.ForeignKey(
+        CustomerOrderItem,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='delivery_items',
+        verbose_name="Megrendelés tétel",
+    )
     
     quantity = models.DecimalField(max_digits=10, decimal_places=2, verbose_name="Szállított mennyiség")
     
