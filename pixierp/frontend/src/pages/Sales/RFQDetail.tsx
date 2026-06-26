@@ -77,6 +77,28 @@ const RFQDetail: React.FC = () => {
   const [manufacturingExistingRemarks, setManufacturingExistingRemarks] = useState<Record<number, string>>({});
   const [manufacturingUploading, setManufacturingUploading] = useState(0);
   const [manufacturingPanelHovered, setManufacturingPanelHovered] = useState(false);
+  // File küldés más RFQ-ra
+  const [fileSendOpen, setFileSendOpen] = useState(false);
+  const [fileSendTarget, setFileSendTarget] = useState<any | null>(null);
+  const [fileSendSearch, setFileSendSearch] = useState('');
+  const [fileSendResults, setFileSendResults] = useState<any[]>([]);   // összes betöltött RFQ
+  const [fileSendPickerOpen, setFileSendPickerOpen] = useState(false);
+  const [fileSendLoading, setFileSendLoading] = useState(false);
+  const [fileSendSending, setFileSendSending] = useState(false);
+  const [fileSendAllFiles, setFileSendAllFiles] = useState<any[]>([]); // include_all=1 fájlok a modalhoz
+  const [selectedFileKeys, setSelectedFileKeys] = useState<string[]>([]);
+  // Client-side szűrés a picker táblában
+  const fileSendFiltered = useMemo(() => {
+    const q = (fileSendSearch || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+    if (!q) return fileSendResults;
+    return fileSendResults.filter(r => {
+      const cn = (r.company_name || r.company?.name || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+      const rn = (r.request_number || '').toLowerCase();
+      const itm = (r.primary_item_name || r.title || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+      const desc = (r.primary_item_description || '').replace(/<[^>]*>/g, ' ').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+      return cn.includes(q) || rn.includes(q) || itm.includes(q) || desc.includes(q);
+    });
+  }, [fileSendSearch, fileSendResults]);
   const [sendOpen, setSendOpen] = useState(false);
   const [sendForm] = Form.useForm();
   const [preview, setPreview] = useState<{ subject: string; body: string; is_html: boolean } | null>(null);
@@ -370,6 +392,18 @@ const RFQDetail: React.FC = () => {
   }, [id, rfq?.id, refreshManufacturingFiles, formBasic, salesService]);
 
   useClipboardImagePaste((file: File) => { void uploadManufacturingFile(file); }, manufacturingPanelHovered);
+
+  // Auto-search amikor a File küldés picker megnyílik — betöltjük az összes RFQ-t (client-side szűrés)
+  useEffect(() => {
+    if (!fileSendPickerOpen || fileSendResults.length > 0) return;
+    (async () => {
+      setFileSendLoading(true);
+      try {
+        const res = await salesService.getQuoteRequestsPage(1, 200);
+        setFileSendResults(res.results ?? []);
+      } catch {} finally { setFileSendLoading(false); }
+    })();
+  }, [fileSendPickerOpen]); // eslint-disable-line
 
   const openManufacturingAttachmentPreview = useCallback((att: any) => {
     const url = att.file_url || att.file || null;
@@ -1208,6 +1242,22 @@ const RFQDetail: React.FC = () => {
                     onChange={(e) => setRfqPendingRemark(e.target.value)}
                     style={{ flex: 1, minWidth: 180 }}
                   />
+                  <Button size="small" icon={<RocketOutlined />} onClick={async () => {
+                    const companyName = rfq?.company?.name || rfq?.company_name || '';
+                    setFileSendSearch(companyName);
+                    setFileSendTarget(null);
+                    // Betöltjük az összes csatolmányt (include_all=1)
+                    try {
+                      const allAtts = await salesService.getQuoteRequestAllAttachments(rfq?.id || id as any);
+                      const attsArr = Array.isArray(allAtts) ? allAtts : (allAtts?.results || []);
+                      setFileSendAllFiles(attsArr);
+                      setSelectedFileKeys([]);
+                    } catch {
+                      setFileSendAllFiles(manufacturingFiles);
+                      setSelectedFileKeys([]);
+                    }
+                    setFileSendOpen(true);
+                  }} title="File küldés más RFQ-ra">Küldés</Button>
                 </div>
 
                 <Table
@@ -1624,6 +1674,152 @@ const RFQDetail: React.FC = () => {
           open={filePreviewOpen} title={filePreviewTitle} url={filePreviewUrl}
           onClose={() => { setFilePreviewOpen(false); setFilePreviewUrl(null); setFilePreviewTitle(''); }}
         />
+
+        {/* ── File küldés más RFQ-ra ────────────────────────────────── */}
+        <Modal
+          title="File küldés más RFQ-ra"
+          open={fileSendOpen}
+          onCancel={() => { setFileSendOpen(false); setFileSendTarget(null); setFileSendPickerOpen(false); }}
+          width={860}
+          footer={[
+            <Button key="cancel" onClick={() => { setFileSendOpen(false); setFileSendTarget(null); }}>Mégse</Button>,
+            <Button key="send" type="primary" loading={fileSendSending}
+              disabled={!fileSendTarget || selectedFileKeys.length === 0}
+              onClick={async () => {
+                if (!fileSendTarget) return;
+                const mfgIds: number[] = [];
+                const itemIds: number[] = [];
+                selectedFileKeys.forEach(k => {
+                  const att = manufacturingFiles.find((a: any) => (a.row_key || String(a.id)) === k);
+                  if (!att) return;
+                  if (att.source === 'item') itemIds.push(att.id);
+                  else mfgIds.push(att.id);
+                });
+                setFileSendSending(true);
+                try {
+                  const res = await salesService.copyRfqAttachments(rfq?.id || id as any, fileSendTarget.id, mfgIds, itemIds);
+                  message.success(`${res.copied} fájl másolva → ${fileSendTarget.request_number}`);
+                  setFileSendOpen(false);
+                  setSelectedFileKeys([]);
+                } catch {
+                  message.error('Hiba a fájlok küldésekor');
+                } finally {
+                  setFileSendSending(false);
+                }
+              }}
+            >Küldés ({selectedFileKeys.length} fájl)</Button>,
+          ]}
+        >
+          {/* Célállomás RFQ választó */}
+          {fileSendTarget ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 6, padding: '8px 12px', marginBottom: 12 }}>
+              <div style={{ flex: 1 }}>
+                <span style={{ fontWeight: 600, color: '#1677ff' }}>{fileSendTarget.request_number}</span>
+                {fileSendTarget.company_name && <span style={{ color: '#555', marginLeft: 8 }}>{fileSendTarget.company_name}</span>}
+                {fileSendTarget.title && fileSendTarget.title !== fileSendTarget.request_number && (
+                  <span style={{ color: '#389e0d', marginLeft: 8, fontSize: 12 }}>{fileSendTarget.title}</span>
+                )}
+              </div>
+              <Button size="small" onClick={() => setFileSendPickerOpen(true)}>Csere</Button>
+            </div>
+          ) : (
+            <Button block icon={<RocketOutlined />} style={{ marginBottom: 12 }} onClick={() => setFileSendPickerOpen(true)}>
+              Célállomás RFQ kiválasztása…
+            </Button>
+          )}
+
+          {/* Fájlok listája 2 csoportban — IDE kerültek a checkboxok */}
+          {(() => {
+            const allFiles = fileSendAllFiles.length > 0 ? fileSendAllFiles : manufacturingFiles;
+            const mfgFiles = allFiles.filter((a: any) => a.is_manufacturing_file);
+            const normalFiles = allFiles.filter((a: any) => !a.is_manufacturing_file);
+            const renderGroup = (groupTitle: string, files: any[]) => files.length === 0 ? null : (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontWeight: 600, fontSize: 12, color: '#555', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 4 }}>{groupTitle}</div>
+                <Table
+                  size="small"
+                  pagination={false}
+                  rowKey={(r: any) => r.row_key || String(r.id)}
+                  dataSource={files}
+                  rowSelection={{
+                    selectedRowKeys: selectedFileKeys,
+                    onChange: (keys) => setSelectedFileKeys(prev => {
+                      // A többi csoport kijelölése maradjon, csak ezt a csoportot módosítjuk
+                      const groupKeys = files.map((f: any) => f.row_key || String(f.id));
+                      const otherKeys = prev.filter(k => !groupKeys.includes(k));
+                      return [...otherKeys, ...(keys as string[])];
+                    }),
+                  }}
+                  columns={[
+                    { title: 'File neve', key: 'name', ellipsis: true,
+                      render: (_: any, r: any) => {
+                        const fn = r.original_filename || r.file?.split('/').pop() || `#${r.id}`;
+                        const fileUrl = r.file_url || r.file;
+                        const isImg = !!fileUrl && /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(fn);
+                        const tip = isImg ? <img src={fileUrl} alt={fn} style={{ maxWidth: 200, maxHeight: 150, borderRadius: 4 }} /> : fn;
+                        return <Tooltip title={tip}><a href={fileUrl} target="_blank" rel="noreferrer" onClick={(e) => { if (isPdf(fileUrl)) { e.preventDefault(); openPdfPreview(fileUrl); } }}>{fn}</a></Tooltip>;
+                      }},
+                    { title: 'Jóváhagyva', key: 'approved', width: 90, align: 'center' as const,
+                      render: (_: any, r: any) => r.approved_at ? <CheckCircleOutlined style={{ color: '#52c41a' }} /> : null },
+                    { title: 'Megjegyzés', key: 'remark', width: 160,
+                      render: (_: any, r: any) => <span style={{ fontSize: 11, color: '#888' }}>{r.remark || ''}</span> },
+                  ]}
+                />
+              </div>
+            );
+            return <>{renderGroup('Gyártási csatolmányok', mfgFiles)}{renderGroup('Csatolmányok', normalFiles)}</>;
+          })()}
+        </Modal>
+
+        {/* RFQ picker a File küldéshez — valós idejű keresés */}
+        <Modal
+          title="Célállomás RFQ kiválasztása"
+          open={fileSendPickerOpen}
+          onCancel={() => setFileSendPickerOpen(false)}
+          footer={null}
+          width={820}
+        >
+          <Input
+            placeholder="Keresés: ajánlatszám, ügyfél, tétel neve, leírás…"
+            value={fileSendSearch}
+            allowClear
+            autoFocus
+            style={{ marginBottom: 12 }}
+            onChange={(e) => setFileSendSearch(e.target.value)}
+          />
+          <Table
+            size="small"
+            loading={fileSendLoading}
+            rowKey="id"
+            pagination={{ pageSize: 10, showSizeChanger: false }}
+            scroll={{ y: 360 }}
+            dataSource={fileSendFiltered}
+            locale={{ emptyText: fileSendResults.length === 0 ? 'Betöltés…' : 'Nincs találat' }}
+            columns={[
+              { title: 'Ajánlatszám', key: 'rfq_num', width: 120,
+                render: (_: any, r: any) => <span style={{ color: '#1677ff', fontWeight: 500 }}>{r.request_number}</span> },
+              { title: 'Ügyfél', key: 'company', width: 150,
+                render: (_: any, r: any) => r.company_name || r.company?.name || '—' },
+              { title: 'Tétel neve', key: 'item', width: 180, ellipsis: true,
+                render: (_: any, r: any) => r.primary_item_name || r.title || '—' },
+              { title: 'Mennyiség', key: 'qty', width: 80,
+                render: (_: any, r: any) => r.primary_quantity != null ? `${r.primary_quantity} ${r.primary_unit || 'db'}` : '—' },
+              { title: 'Leírás', key: 'desc', ellipsis: true,
+                render: (_: any, r: any) => {
+                  // HTML tag-ek eltávolítása
+                  const raw = r.primary_item_description || '';
+                  return raw.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim() || '—';
+                } },
+              { title: '', key: 'action', width: 80,
+                render: (_: any, r: any) => (
+                  <Button size="small" type="primary" onClick={() => {
+                    setFileSendTarget({ id: r.id, request_number: r.request_number, company_name: r.company_name || r.company?.name || '', title: r.title || r.primary_item_name || '' });
+                    setFileSendPickerOpen(false);
+                  }}>Kiválaszt</Button>
+                )},
+            ]}
+          />
+        </Modal>
 
         {/* ── Munkanapló (inline) ──────────────────────────────────── */}
         <div style={{ background: '#f9f0ff', border: '1px solid #d3adf7', borderRadius: 8, padding: '6px 12px 8px', marginTop: 8 }}>

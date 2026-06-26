@@ -1123,9 +1123,15 @@ const RFQs: React.FC = () => {
       })();
       const rfqContactNames = rfq.contact_names || (rfq.contacts || []).map((c: any) => c.name).filter(Boolean).join(', ');
       const rfqIsPrivate = !rfq.company?.name && !rfq.company_name && !(rfq.contacts || []).some((c: any) => c.company?.name || c.company_name);
-      const itemStatus = rfq.status === 'ordered'
-        ? (firstItem?.is_ordered ? normalizeRfqWorkflowStatus(rfq.effective_status || 'ordered') : 'quoted')
-        : normalizeRfqWorkflowStatus(rfq.status);
+      // itemStatus: a szűrőhöz és a sor színéhez használt állapot.
+      // Az effective_status (backend által számított) az elsődleges forrás — ez már
+      // tartalmazza a megrendelés-szintű státuszt (pl. delivered, invoiced) is.
+      // Fallback: rfq.status alapú régi logika.
+      const itemStatus = rfq.effective_status
+        ? normalizeRfqWorkflowStatus(rfq.effective_status)
+        : (rfq.status === 'ordered'
+            ? (firstItem?.is_ordered ? normalizeRfqWorkflowStatus(rfq.effective_status || 'ordered') : 'quoted')
+            : normalizeRfqWorkflowStatus(rfq.status));
       const rawCostStatuses: string[] = ((firstItem?.cost_items_statuses || []) as any[])
         .map((ci: any) => ci.status)
         .filter((s: string) => COST_ITEM_STATUS_ORDER.includes(s));

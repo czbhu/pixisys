@@ -467,6 +467,11 @@ export const salesService = {
         const response = await api.get(`/sales/quote-requests/${id}/attachments/`);
         return response.data;
     },
+    async getQuoteRequestAllAttachments(id: number | string) {
+        // ?include_all=1: minden item-szintű csatolmányt is visszaad (File küldés modalhoz)
+        const response = await api.get(`/sales/quote-requests/${id}/attachments/?include_all=1`);
+        return response.data;
+    },
     async getQuoteRequestManufacturingAttachments(id: number | string) {
         const response = await api.get(`/sales/quote-requests/${id}/attachments/?manufacturing=1`);
         return response.data;
@@ -504,6 +509,14 @@ export const salesService = {
     },
     async renameQuoteRequestAttachment(id: number, attachmentId: number, original_filename: string) {
         const response = await api.patch(`/sales/quote-requests/${id}/attachments/${attachmentId}/rename/`, { original_filename });
+        return response.data;
+    },
+    async copyRfqAttachments(sourceRfqId: number | string, targetRfqId: number, attachmentIds: number[], itemAttachmentIds: number[]) {
+        const response = await api.post(`/sales/quote-requests/${sourceRfqId}/copy_attachments/`, {
+            target_rfq_id: targetRfqId,
+            attachment_ids: attachmentIds,
+            item_attachment_ids: itemAttachmentIds,
+        });
         return response.data;
     },
 

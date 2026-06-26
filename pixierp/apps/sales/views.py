@@ -1043,6 +1043,8 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         from django.db.models import Q
         if only_manufacturing:
             item_filter = Q(is_manufacturing_file=True)
+        elif str(request.query_params.get('include_all', '')).lower() in ('1', 'true', 'yes'):
+            item_filter = Q()  # minden item-szintű csatolmány (modal use-case)
         else:
             item_filter = Q(is_manufacturing_file=True) | Q(uploaded_by__isnull=True)
         item_atts = QuoteRequestItemAttachment.objects.filter(
@@ -1205,6 +1207,51 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             att.save(update_fields=['original_filename', 'file'])
         file_url = request.build_absolute_uri(att.file.url) if att.file else None
         return Response({'original_filename': att.original_filename, 'file': att.file.name if att.file else None, 'file_url': file_url})
+
+    @action(detail=True, methods=['post'])
+    def copy_attachments(self, request, pk=None):
+        """Csatolmányok másolása egy másik RFQ-ra (DB rekordok másolata, fizikai fájl közös)."""
+        qr = self.get_object()
+        target_rfq_id = request.data.get('target_rfq_id')
+        attachment_ids = request.data.get('attachment_ids', [])
+        item_attachment_ids = request.data.get('item_attachment_ids', [])
+        if not target_rfq_id:
+            return Response({'error': 'target_rfq_id kötelező'}, status=400)
+        target_qr = get_object_or_404(QuoteRequest, pk=target_rfq_id)
+        user = request.user if request.user.is_authenticated else None
+        created = 0
+        for att_id in attachment_ids:
+            try:
+                src = QuoteRequestAttachment.all_objects.get(id=att_id, quote_request=qr)
+                if src.deleted_at:
+                    continue
+                QuoteRequestAttachment.objects.create(
+                    quote_request=target_qr, file=src.file,
+                    original_filename=src.original_filename, remark=src.remark or '',
+                    is_manufacturing_file=src.is_manufacturing_file,
+                    approved_by=src.approved_by, approved_at=src.approved_at,
+                    uploaded_by=user,
+                )
+                created += 1
+            except QuoteRequestAttachment.DoesNotExist:
+                pass
+        for att_id in item_attachment_ids:
+            try:
+                src = QuoteRequestItemAttachment.all_objects.get(id=att_id, quote_item__quote_request=qr)
+                if src.deleted_at:
+                    continue
+                QuoteRequestAttachment.objects.create(
+                    quote_request=target_qr, file=src.file,
+                    original_filename=src.original_filename, remark=src.remark or '',
+                    is_manufacturing_file=src.is_manufacturing_file,
+                    uploaded_by=user,
+                )
+                created += 1
+            except QuoteRequestItemAttachment.DoesNotExist:
+                pass
+        QuoteLog.objects.create(quote=qr, user=user,
+            action=f'{created} csatolmány másolva → {target_qr.request_number}')
+        return Response({'copied': created})
 
     @action(detail=True, methods=['post'])
     def set_project(self, request, pk=None):
