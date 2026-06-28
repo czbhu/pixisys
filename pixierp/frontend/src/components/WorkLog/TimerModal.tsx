@@ -217,11 +217,36 @@ export const TimerModal: React.FC = () => {
             loadOrders(showAllOrders);
             if (!activeLog) {
                 if (preselectedOrderId) {
-                    // preselectedOrderId itt RFQ id lehet
+                    // preselectedOrderId itt RFQ pk
                     salesService.getQuoteRequest(String(preselectedOrderId)).then(rfq => {
-                        setOrders(prev => prev.find((o: any) => o.id === rfq.id) ? prev : [...prev, rfq]);
-                        selectOrder(rfq);
-                        loadItems(rfq.id);
+                        // Flatten RFQ → sor formátum (ugyanúgy mint loadOrders), hogy
+                        // a manufacturing_product és cost_items_data elérhető legyen
+                        const allItems: any[] = rfq.items || [];
+                        const matchedItem = preselectedItemId
+                            ? (allItems.find((it: any) => it.id === preselectedItemId) || allItems.find((it: any) => !it?.parent) || allItems[0])
+                            : (allItems.find((it: any) => !it?.parent) || allItems[0]);
+                        const item = matchedItem || {
+                            id: null, item_name: rfq.primary_item_name || rfq.title || rfq.request_number,
+                            description: rfq.primary_item_description || '',
+                            quantity: rfq.primary_quantity ?? 1, unit: rfq.primary_unit || 'db',
+                            manufacturing_product: null, cost_items_data: [],
+                        };
+                        const flatRow = {
+                            id: rfq.id, rfq_pk: rfq.id,
+                            rfq_number: rfq.request_number || rfq.number,
+                            rfq_status: rfq.status, effective_status: rfq.effective_status,
+                            company_name: rfq.company_name || rfq.company?.name || '',
+                            item_id: item.id,
+                            item_name: item.item_name || item.name || rfq.primary_item_name || rfq.title || rfq.request_number,
+                            quantity: item.quantity ?? rfq.primary_quantity ?? 1,
+                            unit: item.unit || rfq.primary_unit || 'db',
+                            description: item.description || rfq.primary_item_description || '',
+                            manufacturing_product: item.manufacturing_product,
+                            cost_items_data: item.cost_items_data || [],
+                            _rowKey: `${rfq.id}-${item.id ?? 0}`,
+                        };
+                        setOrders(prev => prev.find((o: any) => o._rowKey === flatRow._rowKey) ? prev : [flatRow, ...prev]);
+                        selectOrder(flatRow);
                     }).catch(() => {
                         // fallback: CustomerOrder-ként próbáljuk
                         salesService.getCustomerOrder(preselectedOrderId).then(order => {
