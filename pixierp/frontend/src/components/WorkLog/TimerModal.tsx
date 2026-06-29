@@ -195,6 +195,8 @@ export const TimerModal: React.FC = () => {
         setSelectedOrder(row);
         setSelectedOrderId(row.rfq_pk ?? row.id);
         setIsOtherOrder(false);
+        // Az RFQ tétel id-t beállítjuk a form mezőbe, hogy a START-kor az rfq_item_id elmentődjön
+        form.setFieldsValue({ item_id: row.item_id || null });
         // Azonnal betöltjük a cost item-eket
         loadCostItemsForRow(row);
     };

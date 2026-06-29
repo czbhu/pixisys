@@ -1647,6 +1647,20 @@ class WorkLogSerializer(serializers.ModelSerializer):
                 # fallback: strip HTML from description
                 from django.utils.html import strip_tags
                 return strip_tags(obj.item.description or '') or None
+            if obj.rfq_item_id and obj.rfq_item:
+                qi = obj.rfq_item
+                if qi.item_name:
+                    return qi.item_name
+                if qi.product_id and qi.product:
+                    return qi.product.name
+                if qi.material_id and qi.material:
+                    return qi.material.name
+                if qi.manufacturing_product_id and qi.manufacturing_product:
+                    return qi.manufacturing_product.name
+                if qi.service_id and qi.service:
+                    return qi.service.name
+                from django.utils.html import strip_tags
+                return strip_tags(qi.description or '') or None
         except Exception:
             pass
         return None

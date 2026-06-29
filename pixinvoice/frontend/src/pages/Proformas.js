@@ -18,8 +18,24 @@ const Header = styled.div`
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+
+  @media (max-width: 768px) {
+    padding: 12px;
+    gap: 10px;
+  }
 `;
-const Title = styled.h1`margin: 0; font-size: 22px; color: #2c3e50;`;
+const Title = styled.h1`
+  margin: 0;
+  font-size: 22px;
+  color: #2c3e50;
+
+  @media (max-width: 768px) {
+    font-size: 20px;
+    width: 100%;
+  }
+`;
 const ActionButton = styled(Link)`
   padding: 10px 20px;
   background: #3498db;
@@ -27,11 +43,89 @@ const ActionButton = styled(Link)`
   text-decoration: none;
   border-radius: 6px;
   font-weight: 500;
+  display: inline-flex;
+  align-items: center;
   &:hover { background: #2980b9; }
+
+  @media (max-width: 768px) {
+    width: 100%;
+    justify-content: center;
+  }
 `;
-const Table = styled.table`width: 100%; border-collapse: collapse;`;
-const Th = styled.th`padding: 12px 16px; text-align: left; background: #f8f9fa; border-bottom: 2px solid #ecf0f1; font-size: 13px; color: #7f8c8d;`;
-const Td = styled.td`padding: 12px 16px; border-bottom: 1px solid #f0f0f0; vertical-align: top;`;
+const TableContainer = styled.div`
+  overflow-x: auto;
+
+  @media (max-width: 768px) {
+    overflow-x: hidden;
+  }
+`;
+const Table = styled.table`
+  width: 100%;
+  border-collapse: collapse;
+`;
+const Th = styled.th`
+  padding: 12px 16px;
+  text-align: left;
+  background: #f8f9fa;
+  border-bottom: 2px solid #ecf0f1;
+  font-size: 13px;
+  color: #7f8c8d;
+
+  @media (max-width: 768px) {
+    padding: 10px 8px;
+    font-size: 12px;
+    ${props => props.$hideOnMobile && 'display: none;'}
+    ${props => props.$mobileWidth && `width: ${props.$mobileWidth};`}
+    ${props => props.$mobileTextRight && 'text-align: right;'}
+  }
+`;
+const Td = styled.td`
+  padding: 12px 16px;
+  border-bottom: 1px solid #f0f0f0;
+  vertical-align: top;
+
+  @media (max-width: 768px) {
+    padding: 10px 8px;
+    font-size: 12px;
+    ${props => props.$hideOnMobile && 'display: none;'}
+    ${props => props.$mobileWidth && `width: ${props.$mobileWidth};`}
+    ${props => props.$mobileTextRight && 'text-align: right; white-space: nowrap;'}
+  }
+`;
+const MainActionsTd = styled(Td)`
+  @media (max-width: 768px) {
+    display: none;
+  }
+`;
+const MobileActionsRow = styled.tr`
+  display: none;
+
+  @media (max-width: 768px) {
+    display: ${props => (props.$open ? 'table-row' : 'none')};
+  }
+`;
+const MobileActionsCell = styled.td`
+  display: none;
+
+  @media (max-width: 768px) {
+    display: table-cell;
+    padding: 8px 6px;
+    border-bottom: 1px solid #ecf0f1;
+    background: #fff;
+  }
+`;
+const MobileActionsBar = styled.div`
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
+`;
 const SmallMuted = styled.div`font-size: 11px; color: #6b7280; margin-top: 2px;`;
 
 const ROW_COLORS = {
@@ -101,6 +195,31 @@ export default function Proformas() {
   const copyMutation = useMutation((id) => proformaAPI.copyProforma(id), {
     onSuccess: () => queryClient.invalidateQueries('proformas'),
   });
+
+  // Mobile actions
+  const [mobileActionsProformaId, setMobileActionsProformaId] = useState(null);
+
+  const isMobileViewport = () => {
+    try { return window.matchMedia('(max-width: 768px)').matches; } catch { return false; }
+  };
+
+  const toggleMobileActionsForRow = React.useCallback((id) => {
+    setMobileActionsProformaId((prev) => (prev === id ? null : id));
+  }, []);
+
+  const handleRowTouchTap = React.useCallback((event, id) => {
+    if (!isMobileViewport()) return;
+    const target = event.target;
+    if (target && typeof target.closest === 'function' && target.closest('input,button,a,label,select,textarea,[role="button"]')) return;
+    event.preventDefault();
+    toggleMobileActionsForRow(id);
+  }, [toggleMobileActionsForRow]);
+
+  const handleRowContextMenu = React.useCallback((event, id) => {
+    if (!isMobileViewport()) return;
+    event.preventDefault();
+    toggleMobileActionsForRow(id);
+  }, [toggleMobileActionsForRow]);
 
   // Pay modal
   const [payRow, setPayRow] = useState(null);
@@ -213,15 +332,15 @@ export default function Proformas() {
       {isLoading ? (
         <div style={{ padding: 20 }}>Betöltés...</div>
       ) : (
-        <div style={{ overflowX: 'auto' }}>
+        <TableContainer>
           <Table>
             <thead>
               <tr>
                 <Th>Szám</Th>
-                <Th>Dátum</Th>
+                <Th $hideOnMobile>Dátum</Th>
                 <Th>Ügyfél</Th>
-                <Th style={{textAlign:'right'}}>Összeg (bruttó)</Th>
-                <Th>Műveletek</Th>
+                <Th $mobileTextRight style={{textAlign:'right'}}>Összeg (bruttó)</Th>
+                <Th $hideOnMobile>Műveletek</Th>
               </tr>
             </thead>
             <tbody>
@@ -233,12 +352,33 @@ export default function Proformas() {
                 const amountPaid = parseFloat(pf.amount_paid || 0);
                 const remaining = gross - amountPaid;
                 const rowBg = ROW_COLORS[status] || ROW_COLORS.unpaid;
+                const actionButtons = (
+                  <>
+                    {(status === 'unpaid' || status === 'partial') && (
+                      <button onClick={() => openPay(pf)} title="Kifizetés rögzítése" style={{ border: 'none', background: '#dcfce7', color: '#166534', cursor: 'pointer', borderRadius:4, padding:'2px 8px', fontWeight:600, fontSize:12 }}>Fizet</button>
+                    )}
+                    <Link to={`/proformas/${pf.id}/edit`} title="Szerkesztés" style={{ color: '#3498db' }}><Edit size={18} /></Link>
+                    <button onClick={() => copyMutation.mutate(pf.id)} title="Másolat" style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#2c3e50' }}><Copy size={18} /></button>
+                    <a href={proformaAPI.getPdfUrl(pf.id)} target="_blank" rel="noreferrer" title="PDF megtekintése" style={{ color: '#16a085' }}><Eye size={18} /></a>
+                    <button onClick={() => openEmailModal(pf)} title="E-mail küldése" style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#e67e22' }}><Mail size={18} /></button>
+                    <button onClick={() => { if(window.confirm('Törlöd a díjbekérőt?')) deleteMutation.mutate(pf.id); }} title="Törlés" style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#e74c3c' }}><Trash2 size={18} /></button>
+                    <Link to={`/invoices/new?from_proforma=${pf.id}`} title="Számla díjbekérő alapján" style={{ color: '#27ae60' }}><FileText size={18} /></Link>
+                    <Link to={`/invoices/new?from_proforma=${pf.id}&advance=1`} title="Előlegszámla díjbekérő alapján" style={{ color: '#8e44ad' }}><FileText size={18} /></Link>
+                  </>
+                );
                 return (
-                  <tr key={pf.id} style={{ background: rowBg }}>
-                    <Td>{pf.proforma_number}</Td>
-                    <Td>{pf.issue_date}</Td>
+                  <React.Fragment key={pf.id}>
+                  <tr
+                    style={{ background: rowBg }}
+                    onContextMenu={(event) => handleRowContextMenu(event, pf.id)}
+                    onTouchEnd={(event) => handleRowTouchTap(event, pf.id)}
+                  >
+                    <Td>
+                      <div>{pf.proforma_number}</div>
+                    </Td>
+                    <Td $hideOnMobile>{pf.issue_date}</Td>
                     <Td>{pf.customer?.name || ''}</Td>
-                    <Td style={{textAlign:'right', fontWeight:600}}>
+                    <Td $mobileTextRight style={{textAlign:'right', fontWeight:600}}>
                       <div>{formatMoney(gross)}</div>
                       {isPaid && status !== 'partial' && pf.payment_date && (
                         <SmallMuted style={{color:'#166534'}}>Rendezve: {pf.payment_date}</SmallMuted>
@@ -247,26 +387,25 @@ export default function Proformas() {
                         <SmallMuted style={{color:'#854d0e'}}>Fizetve: {formatMoney(amountPaid)} — Maradék: {formatMoney(remaining)}</SmallMuted>
                       )}
                     </Td>
-                    <Td>
+                    <MainActionsTd>
                       <div style={{ display: 'flex', gap: 8, flexWrap:'wrap' }}>
-                        {(status === 'unpaid' || status === 'partial') && (
-                          <button onClick={() => openPay(pf)} title="Kifizetés rögzítése" style={{ border: 'none', background: '#dcfce7', color: '#166534', cursor: 'pointer', borderRadius:4, padding:'2px 8px', fontWeight:600, fontSize:12 }}>Fizet</button>
-                        )}
-                        <Link to={`/proformas/${pf.id}/edit`} title="Szerkesztés" style={{ color: '#3498db' }}><Edit size={18} /></Link>
-                        <button onClick={() => copyMutation.mutate(pf.id)} title="Másolat" style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#2c3e50' }}><Copy size={18} /></button>
-                        <a href={proformaAPI.getPdfUrl(pf.id)} target="_blank" rel="noreferrer" title="PDF megtekintése" style={{ color: '#16a085' }}><Eye size={18} /></a>
-                        <button onClick={() => openEmailModal(pf)} title="E-mail küldése" style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#e67e22' }}><Mail size={18} /></button>
-                        <button onClick={() => { if(window.confirm('Törlöd a díjbekérőt?')) deleteMutation.mutate(pf.id); }} title="Törlés" style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#e74c3c' }}><Trash2 size={18} /></button>
-                        <Link to={`/invoices/new?from_proforma=${pf.id}`} title="Számla díjbekérő alapján" style={{ color: '#27ae60' }}><FileText size={18} /></Link>
-                        <Link to={`/invoices/new?from_proforma=${pf.id}&advance=1`} title="Előlegszámla díjbekérő alapján" style={{ color: '#8e44ad' }}><FileText size={18} /></Link>
+                        {actionButtons}
                       </div>
-                    </Td>
+                    </MainActionsTd>
                   </tr>
+                  <MobileActionsRow $open={mobileActionsProformaId === pf.id}>
+                    <MobileActionsCell colSpan={5}>
+                      <MobileActionsBar>
+                        {actionButtons}
+                      </MobileActionsBar>
+                    </MobileActionsCell>
+                  </MobileActionsRow>
+                  </React.Fragment>
                 );
               })}
             </tbody>
           </Table>
-        </div>
+        </TableContainer>
       )}
       {emailModalOpen && (
         <EmailModal

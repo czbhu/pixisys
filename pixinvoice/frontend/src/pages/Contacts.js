@@ -95,6 +95,11 @@ const SearchContainer = styled.div`
   margin-bottom: 24px;
   align-items: center;
   flex-wrap: wrap;
+
+  @media (max-width: 768px) {
+    gap: 8px;
+    > * { width: 100%; }
+  }
 `;
 
 const SearchInput = styled.input`
@@ -105,6 +110,11 @@ const SearchInput = styled.input`
   border-radius: 6px;
   font-size: 14px;
   transition: border-color 0.2s;
+
+  @media (max-width: 768px) {
+    min-width: 0;
+    width: 100%;
+  }
 
   &:focus {
     outline: none;
@@ -274,12 +284,59 @@ const TableHeader = styled.th`
   font-weight: 600;
   color: #2c3e50;
   font-size: 14px;
+
+  @media (max-width: 768px) {
+    padding: 10px 8px;
+    font-size: 12px;
+    ${props => props.$hideOnMobile && 'display: none;'}
+  }
 `;
 
 const TableCell = styled.td`
   padding: 16px;
   color: #34495e;
   font-size: 14px;
+
+  @media (max-width: 768px) {
+    padding: 10px 8px;
+    font-size: 12px;
+    ${props => props.$hideOnMobile && 'display: none;'}
+  }
+`;
+
+const TableActionsCell = styled(TableCell)`
+  @media (max-width: 768px) {
+    display: none;
+  }
+`;
+
+const MobileActionsRow = styled.tr`
+  display: none;
+
+  @media (max-width: 768px) {
+    display: ${props => (props.$open ? 'table-row' : 'none')};
+  }
+`;
+
+const MobileActionsCell = styled.td`
+  display: none;
+
+  @media (max-width: 768px) {
+    display: table-cell;
+    padding: 8px;
+    border-bottom: 1px solid #ecf0f1;
+    background: #fff;
+  }
+`;
+
+const MobileActionsBar = styled.div`
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  &::-webkit-scrollbar { display: none; }
 `;
 
 const PaginationContainer = styled.div`
@@ -403,6 +460,30 @@ const Contacts = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [contactTypeFilter, setContactTypeFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+
+  const [mobileActionsContactId, setMobileActionsContactId] = useState(null);
+
+  const isMobileViewport = () => {
+    try { return window.matchMedia('(max-width: 768px)').matches; } catch { return false; }
+  };
+
+  const toggleMobileActionsForRow = (id) => {
+    setMobileActionsContactId((prev) => (prev === id ? null : id));
+  };
+
+  const handleRowTouchTap = (event, id) => {
+    if (!isMobileViewport()) return;
+    const target = event.target;
+    if (target && typeof target.closest === 'function' && target.closest('input,button,a,label,select,textarea,[role="button"]')) return;
+    event.preventDefault();
+    toggleMobileActionsForRow(id);
+  };
+
+  const handleRowContextMenu = (event, id) => {
+    if (!isMobileViewport()) return;
+    event.preventDefault();
+    toggleMobileActionsForRow(id);
+  };
 
   // Save preferences to localStorage
   useEffect(() => {
@@ -757,67 +838,83 @@ const Contacts = () => {
               <tr>
                 <TableHeader>Név</TableHeader>
                 <TableHeader>Ügyfél</TableHeader>
-                <TableHeader>Pozíció</TableHeader>
-                <TableHeader>Típus</TableHeader>
-                <TableHeader>E-mail</TableHeader>
-                <TableHeader>Telefon</TableHeader>
-                <TableHeader>Státusz</TableHeader>
-                <TableHeader>Műveletek</TableHeader>
+                <TableHeader $hideOnMobile>Pozíció</TableHeader>
+                <TableHeader $hideOnMobile>Típus</TableHeader>
+                <TableHeader $hideOnMobile>E-mail</TableHeader>
+                <TableHeader $hideOnMobile>Telefon</TableHeader>
+                <TableHeader $hideOnMobile>Státusz</TableHeader>
+                <TableHeader $hideOnMobile>Műveletek</TableHeader>
               </tr>
             </TableHead>
             <tbody>
-              {contacts.map((contact) => (
+              {contacts.map((contact) => {
+                const actionButtons = (
+                  <ContactActions>
+                    <ActionButton
+                      onClick={(e) => handleView(contact.id)}
+                      title="Megtekintés"
+                      variant="primary"
+                    >
+                      <Eye size={16} />
+                    </ActionButton>
+                    <ActionButton
+                      onClick={(e) => handleEdit(e, contact.id)}
+                      title="Szerkesztés"
+                      variant="primary"
+                    >
+                      <Edit size={16} />
+                    </ActionButton>
+                    <ActionButton
+                      onClick={(e) => handleDelete(e, contact.id, contact.full_name)}
+                      title="Törlés"
+                      variant="danger"
+                    >
+                      <Trash2 size={16} />
+                    </ActionButton>
+                  </ContactActions>
+                );
+                return (
+                <React.Fragment key={contact.id}>
                 <TableRow 
-                  key={contact.id}
                   onDoubleClick={() => handleDoubleClick(contact.id)}
+                  onContextMenu={(event) => handleRowContextMenu(event, contact.id)}
+                  onTouchEnd={(event) => handleRowTouchTap(event, contact.id)}
                 >
                   <TableCell>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                       {contact.full_name}
                       {contact.is_primary && <Star size={14} color="#f39c12" fill="#f39c12" />}
                     </div>
+                    <div style={{ fontSize: 11, color: '#7f8c8d', marginTop: 2 }}>{contact.customer_name}</div>
                   </TableCell>
-                  <TableCell>{contact.customer_name}</TableCell>
-                  <TableCell>{contact.position || '-'}</TableCell>
-                  <TableCell>
+                  <TableCell $hideOnMobile>{contact.customer_name}</TableCell>
+                  <TableCell $hideOnMobile>{contact.position || '-'}</TableCell>
+                  <TableCell $hideOnMobile>
                     <ContactType type={contact.contact_type}>
                       {getContactTypeLabel(contact.contact_type)}
                     </ContactType>
                   </TableCell>
-                  <TableCell>{contact.email || '-'}</TableCell>
-                  <TableCell>{contact.phone || contact.mobile || '-'}</TableCell>
-                  <TableCell>
+                  <TableCell $hideOnMobile>{contact.email || '-'}</TableCell>
+                  <TableCell $hideOnMobile>{contact.phone || contact.mobile || '-'}</TableCell>
+                  <TableCell $hideOnMobile>
                     <StatusBadge isActive={contact.is_active}>
                       {contact.is_active ? 'Aktív' : 'Inaktív'}
                     </StatusBadge>
                   </TableCell>
-                  <TableCell>
-                    <ContactActions>
-                      <ActionButton
-                        onClick={(e) => handleView(contact.id)}
-                        title="Megtekintés"
-                        variant="primary"
-                      >
-                        <Eye size={16} />
-                      </ActionButton>
-                      <ActionButton
-                        onClick={(e) => handleEdit(e, contact.id)}
-                        title="Szerkesztés"
-                        variant="primary"
-                      >
-                        <Edit size={16} />
-                      </ActionButton>
-                      <ActionButton
-                        onClick={(e) => handleDelete(e, contact.id, contact.full_name)}
-                        title="Törlés"
-                        variant="danger"
-                      >
-                        <Trash2 size={16} />
-                      </ActionButton>
-                    </ContactActions>
-                  </TableCell>
+                  <TableActionsCell>
+                    {actionButtons}
+                  </TableActionsCell>
                 </TableRow>
-              ))}
+                <MobileActionsRow $open={mobileActionsContactId === contact.id}>
+                  <MobileActionsCell colSpan={8}>
+                    <MobileActionsBar>
+                      {actionButtons}
+                    </MobileActionsBar>
+                  </MobileActionsCell>
+                </MobileActionsRow>
+                </React.Fragment>
+                );
+              })}
             </tbody>
           </Table>
         )

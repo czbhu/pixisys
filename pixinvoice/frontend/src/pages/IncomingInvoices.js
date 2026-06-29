@@ -85,10 +85,6 @@ const EditInfoBar = styled.div`
 const Table = styled.table`
   width: 100%;
   border-collapse: collapse;
-
-  @media (max-width: 768px) {
-    table-layout: fixed;
-  }
 `;
 
 const TableHeader = styled.thead`
@@ -107,6 +103,9 @@ const TableHeaderCell = styled.th`
     font-size: 12px;
     white-space: normal;
     word-break: break-word;
+    ${props => props.$hideOnMobile && 'display: none;'}
+    ${props => props.$mobileWidth && `width: ${props.$mobileWidth};`}
+    ${props => props.$mobileTextRight && 'text-align: right;'}
   }
 `;
 
@@ -129,6 +128,9 @@ const TableCell = styled.td`
     font-size: 12px;
     white-space: normal;
     word-break: break-word;
+    ${props => props.$hideOnMobile && 'display: none;'}
+    ${props => props.$mobileWidth && `width: ${props.$mobileWidth};`}
+    ${props => props.$mobileTextRight && 'text-align: right; white-space: nowrap;'}
   }
 `;
 
@@ -2020,9 +2022,9 @@ export default function IncomingInvoices({ externalOutgoing = false }) {
           <TableHeader>
             <tr>
               {isSelectorMode ? (
-                <TableHeaderCell>Kiválasztás</TableHeaderCell>
+                <TableHeaderCell $mobileWidth="28px">Kiválasztás</TableHeaderCell>
               ) : (
-                <TableHeaderCell>
+                <TableHeaderCell $mobileWidth="28px">
                   <input
                     ref={headerSelectRef}
                     type="checkbox"
@@ -2033,17 +2035,17 @@ export default function IncomingInvoices({ externalOutgoing = false }) {
                 </TableHeaderCell>
               )}
               <TableHeaderCell>{externalOutgoing ? 'Ügyfél' : 'Kibocsátó'}</TableHeaderCell>
-              <TableHeaderCell>Adószám</TableHeaderCell>
+              <TableHeaderCell $hideOnMobile>Adószám</TableHeaderCell>
               <TableHeaderCell>Számlaszám</TableHeaderCell>
-              <TableHeaderCell>Kibocsátás</TableHeaderCell>
-              <TableHeaderCell>Nettó</TableHeaderCell>
-              <TableHeaderCell>ÁFA</TableHeaderCell>
-              <TableHeaderCell>Bruttó</TableHeaderCell>
-              <TableHeaderCell>Deviza</TableHeaderCell>
-              {!externalOutgoing && <TableHeaderCell>Jóváhagyás</TableHeaderCell>}
-              <TableHeaderCell>Fizetési mód</TableHeaderCell>
-              {paymentListMode === 'bank' && <TableHeaderCell>Bankkivonat</TableHeaderCell>}
-              <TableHeaderCell>Művelet</TableHeaderCell>
+              <TableHeaderCell $hideOnMobile>Kibocsátás</TableHeaderCell>
+              <TableHeaderCell $hideOnMobile>Nettó</TableHeaderCell>
+              <TableHeaderCell $hideOnMobile>ÁFA</TableHeaderCell>
+              <TableHeaderCell $mobileTextRight $mobileWidth="96px">Bruttó</TableHeaderCell>
+              <TableHeaderCell $hideOnMobile>Deviza</TableHeaderCell>
+              {!externalOutgoing && <TableHeaderCell $hideOnMobile>Jóváhagyás</TableHeaderCell>}
+              <TableHeaderCell $hideOnMobile>Fizetési mód</TableHeaderCell>
+              {paymentListMode === 'bank' && <TableHeaderCell $hideOnMobile>Bankkivonat</TableHeaderCell>}
+              <TableHeaderCell $hideOnMobile>Művelet</TableHeaderCell>
             </tr>
           </TableHeader>
           <TableBody>
@@ -2162,12 +2164,12 @@ export default function IncomingInvoices({ externalOutgoing = false }) {
                     )}
                   </span>
                 </TableCell>
-                <TableCell>{row.supplierTaxNumber}</TableCell>
+                <TableCell $hideOnMobile>{row.supplierTaxNumber}</TableCell>
                 <TableCell>{row.invoiceNumber}</TableCell>
-                <TableCell>{row.invoiceIssueDate}</TableCell>
-                <TableCell className="text-right">{row.netAmount}</TableCell>
-                <TableCell className="text-right">{row.vatAmount}</TableCell>
-                <TableCell className="text-right">
+                <TableCell $hideOnMobile>{row.invoiceIssueDate}</TableCell>
+                <TableCell $hideOnMobile className="text-right">{row.netAmount}</TableCell>
+                <TableCell $hideOnMobile className="text-right">{row.vatAmount}</TableCell>
+                <TableCell $mobileTextRight className="text-right">
                   <div>{row.grossAmount}</div>
                   {row.currency && row.currency !== 'HUF' && row.netAmountHUF && (
                     <SmallMuted>
@@ -2175,9 +2177,9 @@ export default function IncomingInvoices({ externalOutgoing = false }) {
                     </SmallMuted>
                   )}
                 </TableCell>
-                <TableCell>{row.currency}</TableCell>
+                <TableCell $hideOnMobile>{row.currency}</TableCell>
                 {!externalOutgoing && (
-                  <TableCell>
+                  <TableCell $hideOnMobile>
                     {isTransfer ? (
                       canApproveInvoices ? (
                         <label style={{ display:'flex', alignItems:'flex-start', gap:8 }}>
@@ -2207,7 +2209,7 @@ export default function IncomingInvoices({ externalOutgoing = false }) {
                     )}
                   </TableCell>
                 )}
-                <TableCell>
+                <TableCell $hideOnMobile>
                   {needsPaymentMethod(row) ? (
                     <div style={{ display:'flex', gap:8, alignItems:'center', flexWrap:'wrap' }}>
                       <FilterSelect
@@ -2304,7 +2306,7 @@ export default function IncomingInvoices({ externalOutgoing = false }) {
                   )}
                 </TableCell>
                 {paymentListMode === 'bank' && (
-                  <TableCell>
+                  <TableCell $hideOnMobile>
                     {(row.bankStatements || []).length ? (
                       <div>
                         <div style={{ fontWeight: 600 }}>{(row.bankStatements || []).length} tétel</div>

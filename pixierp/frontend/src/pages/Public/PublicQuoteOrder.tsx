@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import {
   Card, Table, Spin, Alert, Typography, Descriptions, Button, message, Row, Col,
-  Checkbox, DatePicker, Upload, Input, List, Popconfirm, Tag, Progress,
+  Checkbox, DatePicker, Upload, Input, List, Popconfirm, Tag, Progress, Tooltip,
 } from 'antd';
 import {
   ShoppingCartOutlined, PrinterOutlined,
@@ -20,9 +20,59 @@ const API_BASE_URL = process.env.REACT_APP_API_URL || '/api/v1';
 interface AttachmentItem {
   id: number;
   original_filename: string;
+  file_url?: string;
   remark: string;
   created_at: string;
 }
+
+const isImageFile = (filename: string) =>
+  /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(filename || '');
+
+const AttachmentTooltipContent: React.FC<{ attachments: AttachmentItem[] }> = ({ attachments }) => (
+  <div style={{ maxWidth: 300 }}>
+    {attachments.map((att) => (
+      <div key={att.id} style={{ marginBottom: attachments.length > 1 ? 12 : 0 }}>
+        {isImageFile(att.original_filename) && att.file_url && (
+          <img
+            src={att.file_url}
+            alt={att.original_filename}
+            style={{ maxWidth: '100%', maxHeight: 140, borderRadius: 4, display: 'block', marginBottom: 6, objectFit: 'contain', background: '#fff' }}
+          />
+        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+          <PaperClipOutlined style={{ color: '#91caff', flexShrink: 0 }} />
+          {att.file_url ? (
+            <a
+              href={att.file_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: '#91caff', fontSize: 12, wordBreak: 'break-all' }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {att.original_filename}
+            </a>
+          ) : (
+            <span style={{ color: '#ddd', fontSize: 12 }}>{att.original_filename}</span>
+          )}
+          {att.file_url && (
+            <a
+              href={att.file_url}
+              download={att.original_filename}
+              style={{ color: '#52c41a', fontSize: 11, flexShrink: 0 }}
+              onClick={(e) => e.stopPropagation()}
+              title="Letöltés"
+            >
+              ↓ Letöltés
+            </a>
+          )}
+        </div>
+        {att.remark && (
+          <div style={{ fontSize: 11, color: '#aaa', marginTop: 3 }}>{att.remark}</div>
+        )}
+      </div>
+    ))}
+  </div>
+);
 
 interface QuoteItem {
   id: number;
@@ -196,6 +246,17 @@ const ItemUploadZone: React.FC<ItemUploadZoneProps> = ({ token, item }) => {
           renderItem={(att) => (
             <List.Item
               actions={[
+                att.file_url && (
+                  <a
+                    key="download"
+                    href={att.file_url}
+                    download={att.original_filename}
+                    title="Letöltés"
+                    style={{ color: '#1677ff', fontSize: 13 }}
+                  >
+                    ↓
+                  </a>
+                ),
                 <Popconfirm
                   title="Biztosan törli ezt a fájlt?"
                   onConfirm={() => handleDelete(att)}
@@ -204,11 +265,22 @@ const ItemUploadZone: React.FC<ItemUploadZoneProps> = ({ token, item }) => {
                 >
                   <Button size="small" danger icon={<DeleteOutlined />} />
                 </Popconfirm>
-              ]}
+              ].filter(Boolean)}
             >
+              {isImageFile(att.original_filename) && att.file_url && (
+                <img
+                  src={att.file_url}
+                  alt={att.original_filename}
+                  style={{ maxHeight: 48, maxWidth: 72, objectFit: 'contain', borderRadius: 4, marginRight: 8, border: '1px solid #f0f0f0' }}
+                />
+              )}
               <List.Item.Meta
-                avatar={<PaperClipOutlined style={{ color: '#1677ff' }} />}
-                title={<Text style={{ fontSize: 13 }}>{att.original_filename}</Text>}
+                avatar={!isImageFile(att.original_filename) && <PaperClipOutlined style={{ color: '#1677ff' }} />}
+                title={
+                  att.file_url
+                    ? <a href={att.file_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 13 }}>{att.original_filename}</a>
+                    : <Text style={{ fontSize: 13 }}>{att.original_filename}</Text>
+                }
                 description={
                   att.remark
                     ? <Text type="secondary" style={{ fontSize: 11 }}>{att.remark}</Text>
@@ -417,11 +489,22 @@ const PublicQuoteOrder: React.FC = () => {
         <div>
           <div style={{ fontWeight: 500 }}>{getItemName(record)}</div>
           {(record.attachments?.length ?? 0) > 0 && (
-            <Tag icon={<PaperClipOutlined />} color="blue"
-              style={{ fontSize: 11, marginTop: 4, cursor: 'pointer' }}
-              onClick={() => toggleExpand(record.id)}>
-              {record.attachments!.length} csatolmány
-            </Tag>
+            <Tooltip
+              title={<AttachmentTooltipContent attachments={record.attachments!} />}
+              placement="right"
+              overlayStyle={{ maxWidth: 340 }}
+              overlayInnerStyle={{ padding: '10px 12px' }}
+              mouseEnterDelay={0.15}
+            >
+              <Tag
+                icon={<PaperClipOutlined />}
+                color="blue"
+                style={{ fontSize: 11, marginTop: 4, cursor: 'pointer' }}
+                onClick={() => toggleExpand(record.id)}
+              >
+                {record.attachments!.length} csatolmány
+              </Tag>
+            </Tooltip>
           )}
         </div>
       )

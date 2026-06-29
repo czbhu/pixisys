@@ -7,18 +7,40 @@ import api, { companyBankAccountAPI, incomingProformaAPI, systemUserAPI } from '
 
 // ── Styled components ────────────────────────────────────────────────────────
 const PageWrap = styled.div`padding: 16px 20px;`;
-const TopBar = styled.div`display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px;`;
-const Title = styled.h2`margin:0;font-size:20px;font-weight:700;`;
+const TopBar = styled.div`
+  display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px;
+
+  @media (max-width: 768px) {
+    gap: 8px;
+  }
+`;
+const Title = styled.h2`
+  margin:0;font-size:20px;font-weight:700;
+
+  @media (max-width: 768px) {
+    width: 100%;
+  }
+`;
 const PrimaryButton = styled.button`
   display:inline-flex;align-items:center;gap:6px;padding:8px 14px;
   background:#3498db;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;
   &:hover{background:#2980b9;}
   &:disabled{background:#95a5a6;cursor:default;}
+
+  @media (max-width: 768px) {
+    width: 100%;
+    justify-content: center;
+  }
 `;
 const SecondaryButton = styled.button`
   display:inline-flex;align-items:center;gap:6px;padding:6px 12px;
   background:#fff;color:#374151;border:1px solid #d1d5db;border-radius:6px;cursor:pointer;font-size:13px;
   &:hover{background:#f3f4f6;}
+
+  @media (max-width: 768px) {
+    width: 100%;
+    justify-content: center;
+  }
 `;
 const IconButton = styled.button`
   display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;
@@ -32,16 +54,89 @@ const Tab = styled.button`
   color:${p=>p.$active?'#3498db':'#6b7280'};
   &:hover{color:#374151;}
 `;
-const SearchWrap = styled.div`position:relative;display:inline-flex;align-items:center;`;
-const SearchInput = styled.input`padding:6px 10px 6px 30px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;width:200px;`;
+const SearchWrap = styled.div`position:relative;display:inline-flex;align-items:center;
+
+  @media (max-width: 768px) {
+    width: 100%;
+  }
+`;
+const SearchInput = styled.input`
+  padding:6px 10px 6px 30px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;width:200px;
+
+  @media (max-width: 768px) {
+    width: 100%;
+  }
+`;
 const SearchIcon = styled.div`position:absolute;left:8px;color:#9ca3af;pointer-events:none;`;
-const Table = styled.table`width:100%;border-collapse:collapse;font-size:13px;`;
-const Th = styled.th`padding:8px 10px;text-align:left;background:#f8f9fa;border-bottom:2px solid #e5e7eb;font-weight:600;color:#374151;white-space:nowrap;`;
+const TableContainer = styled.div`
+  overflow-x: auto;
+
+  @media (max-width: 768px) {
+    overflow-x: hidden;
+  }
+`;
+const Table = styled.table`
+  width:100%;border-collapse:collapse;font-size:13px;
+`;
+const Th = styled.th`
+  padding:8px 10px;text-align:left;background:#f8f9fa;border-bottom:2px solid #e5e7eb;font-weight:600;color:#374151;white-space:nowrap;
+
+  @media (max-width: 768px) {
+    padding: 10px 8px;
+    font-size: 12px;
+    white-space: normal;
+    ${props => props.$hideOnMobile && 'display: none;'}
+    ${props => props.$mobileWidth && `width: ${props.$mobileWidth};`}
+    ${props => props.$mobileTextRight && 'text-align: right;'}
+  }
+`;
 const Td = styled.td`
   padding:7px 10px;border-bottom:1px solid #f0f2f5;vertical-align:top;
   ${p=>p.$green?'background:#E6F7ED;':''}
   ${p=>p.$yellow?'background:#fffbeb;':''}
   ${p=>p.$purple?'background:#f5f3ff;':''}
+
+  @media (max-width: 768px) {
+    padding: 8px;
+    font-size: 12px;
+    ${props => props.$hideOnMobile && 'display: none;'}
+    ${props => props.$mobileWidth && `width: ${props.$mobileWidth};`}
+    ${props => props.$mobileTextRight && 'text-align: right; white-space: nowrap;'}
+  }
+`;
+const MainActionsTd = styled(Td)`
+  @media (max-width: 768px) {
+    display: none;
+  }
+`;
+const MobileActionsRow = styled.tr`
+  display: none;
+
+  @media (max-width: 768px) {
+    display: ${props => (props.$open ? 'table-row' : 'none')};
+  }
+`;
+const MobileActionsCell = styled.td`
+  display: none;
+
+  @media (max-width: 768px) {
+    display: table-cell;
+    padding: 8px 6px;
+    border-bottom: 1px solid #e5e7eb;
+    background: #fff;
+  }
+`;
+const MobileActionsBar = styled.div`
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
 `;
 const TableRow = styled.tr`
   ${p=>p.$unpaid?'background:#dbeafe;':''}
@@ -162,6 +257,31 @@ export default function IncomingProformas() {
   const [payDate, setPayDate] = useState('');
   const [paying, setPaying] = useState(false);
   const [userPickerValue, setUserPickerValue] = useState('');
+
+  // Mobile actions
+  const [mobileActionsRowId, setMobileActionsRowId] = useState(null);
+
+  const isMobileViewport = () => {
+    try { return window.matchMedia('(max-width: 768px)').matches; } catch { return false; }
+  };
+
+  const toggleMobileActionsForRow = useCallback((id) => {
+    setMobileActionsRowId((prev) => (prev === id ? null : id));
+  }, []);
+
+  const handleRowTouchTap = useCallback((event, id) => {
+    if (!isMobileViewport()) return;
+    const target = event.target;
+    if (target && typeof target.closest === 'function' && target.closest('input,button,a,label,select,textarea,[role="button"]')) return;
+    event.preventDefault();
+    toggleMobileActionsForRow(id);
+  }, [toggleMobileActionsForRow]);
+
+  const handleRowContextMenu = useCallback((event, id) => {
+    if (!isMobileViewport()) return;
+    event.preventDefault();
+    toggleMobileActionsForRow(id);
+  }, [toggleMobileActionsForRow]);
 
   // Follow globally selected company from sidebar selector.
   useEffect(() => {
@@ -645,11 +765,11 @@ export default function IncomingProformas() {
         ))}
       </TabBar>
 
-      <div style={{ overflowX:'auto' }}>
+      <TableContainer>
         <Table>
           <thead>
             <tr>
-              <Th>
+              <Th $mobileWidth="28px">
                 <input
                   type="checkbox"
                   checked={items.length > 0 && items.every(r => selected.has(r.id))}
@@ -659,15 +779,15 @@ export default function IncomingProformas() {
               </Th>
               <Th>Díjbekérő szám</Th>
               <Th>Szállító</Th>
-              <Th>Keltezés</Th>
-              <Th>Esedékesség</Th>
-              <Th style={{textAlign:'right'}}>Bruttó</Th>
-              <Th>Deviza</Th>
-              <Th>Fiz. mód</Th>
-              <Th>Kapcsolódó számlák</Th>
-              <Th>Maradék</Th>
+              <Th $hideOnMobile>Keltezés</Th>
+              <Th $hideOnMobile>Esedékesség</Th>
+              <Th $mobileTextRight style={{textAlign:'right'}}>Bruttó</Th>
+              <Th $hideOnMobile>Deviza</Th>
+              <Th $hideOnMobile>Fiz. mód</Th>
+              <Th $hideOnMobile>Kapcsolódó számlák</Th>
+              <Th $hideOnMobile>Maradék</Th>
               <Th>Státusz</Th>
-              <Th>Műveletek</Th>
+              <Th $hideOnMobile>Műveletek</Th>
             </tr>
           </thead>
           <tbody>
@@ -684,9 +804,35 @@ export default function IncomingProformas() {
               const remaining = parseFloat(row.remaining_amount || 0);
               const isOverpaid = remaining < -0.005;
               const amountPaid = parseFloat(row.amount_paid || 0);
+              const rowActions = (
+                <>
+                  {(isUnpaid || isPartial) && (
+                    <IconButton onClick={()=>openPay(row)} title="Kifizet" style={{background:'#dcfce7',color:'#166534'}}>
+                      <span style={{fontSize:11,fontWeight:600}}>Fizet</span>
+                    </IconButton>
+                  )}
+                  <IconButton onClick={()=>navigate(`/incoming-proformas/open?company_id=${encodeURIComponent(companyId)}&proforma_id=${encodeURIComponent(row.id)}`)} title="Megnyitás">
+                    <Eye size={14}/>
+                  </IconButton>
+                  <IconButton onClick={()=>openEdit(row)} title="Szerkesztés" style={{background:'#dbeafe',color:'#1d4ed8'}}>
+                    <Edit2 size={14}/>
+                  </IconButton>
+                  <IconButton onClick={()=>openEmail(row)} title="E-mail küldés" style={{background:'#d1fae5',color:'#065f46'}}>
+                    <Mail size={14}/>
+                  </IconButton>
+                  <IconButton onClick={()=>handleDelete(row)} title="Törlés" style={{background:'#fee2e2',color:'#dc2626'}}>
+                    <Trash2 size={14}/>
+                  </IconButton>
+                </>
+              );
               return (
-                <TableRow key={row.id} $unpaid={isUnpaid} $partial={isPartial} $paid={isPaid && !isInvoiced} $invoiced={isInvoiced}>
-                  <Td>
+                <React.Fragment key={row.id}>
+                <TableRow
+                  $unpaid={isUnpaid} $partial={isPartial} $paid={isPaid && !isInvoiced} $invoiced={isInvoiced}
+                  onContextMenu={(event) => handleRowContextMenu(event, row.id)}
+                  onTouchEnd={(event) => handleRowTouchTap(event, row.id)}
+                >
+                  <Td $mobileWidth="28px">
                     <input
                       type="checkbox"
                       checked={selected.has(row.id)}
@@ -704,9 +850,9 @@ export default function IncomingProformas() {
                     <div>{row.supplier_name || '—'}</div>
                     {row.supplier_tax_number && <SmallMuted>{row.supplier_tax_number}</SmallMuted>}
                   </Td>
-                  <Td>{row.issue_date || '—'}</Td>
-                  <Td>{row.due_date || '—'}</Td>
-                  <Td style={{textAlign:'right',fontWeight:600}}>
+                  <Td $hideOnMobile>{row.issue_date || '—'}</Td>
+                  <Td $hideOnMobile>{row.due_date || '—'}</Td>
+                  <Td $mobileTextRight style={{textAlign:'right',fontWeight:600}}>
                     <div>{formatMoney(row.gross_amount)}</div>
                     {(isPaid || isPartial) && amountPaid > 0 && (
                       <SmallMuted style={{color: isPaid ? '#166534' : '#854d0e'}}>
@@ -714,9 +860,9 @@ export default function IncomingProformas() {
                       </SmallMuted>
                     )}
                   </Td>
-                  <Td>{row.currency}</Td>
-                  <Td>{PM_LABELS[row.payment_method] || row.payment_method || '—'}</Td>
-                  <Td>
+                  <Td $hideOnMobile>{row.currency}</Td>
+                  <Td $hideOnMobile>{PM_LABELS[row.payment_method] || row.payment_method || '—'}</Td>
+                  <Td $hideOnMobile>
                     {(row.invoice_links || []).length === 0 ? (
                       <SmallMuted>—</SmallMuted>
                     ) : (row.invoice_links || []).map(lnk => (
@@ -730,7 +876,7 @@ export default function IncomingProformas() {
                       </div>
                     ))}
                   </Td>
-                  <Td>
+                  <Td $hideOnMobile>
                     {isCovered ? (
                       <StatusPill $v="invoiced">Teljesítve</StatusPill>
                     ) : isOverpaid ? (
@@ -743,33 +889,25 @@ export default function IncomingProformas() {
                     <StatusPill $v={statusColor(row.status)}>{STATUS_LABELS[row.status] || row.status}</StatusPill>
                     {row.payment_date && isPaid && <SmallMuted>Rendezve: {row.payment_date}</SmallMuted>}
                   </Td>
-                  <Td>
+                  <MainActionsTd>
                     <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
-                      {(isUnpaid || isPartial) && (
-                        <IconButton onClick={()=>openPay(row)} title="Kifizet" style={{background:'#dcfce7',color:'#166534'}}>
-                          <span style={{fontSize:11,fontWeight:600}}>Fizet</span>
-                        </IconButton>
-                      )}
-                      <IconButton onClick={()=>navigate(`/incoming-proformas/open?company_id=${encodeURIComponent(companyId)}&proforma_id=${encodeURIComponent(row.id)}`)} title="Megnyitás">
-                        <Eye size={14}/>
-                      </IconButton>
-                      <IconButton onClick={()=>openEdit(row)} title="Szerkesztés" style={{background:'#dbeafe',color:'#1d4ed8'}}>
-                        <Edit2 size={14}/>
-                      </IconButton>
-                      <IconButton onClick={()=>openEmail(row)} title="E-mail küldés" style={{background:'#d1fae5',color:'#065f46'}}>
-                        <Mail size={14}/>
-                      </IconButton>
-                      <IconButton onClick={()=>handleDelete(row)} title="Törlés" style={{background:'#fee2e2',color:'#dc2626'}}>
-                        <Trash2 size={14}/>
-                      </IconButton>
+                      {rowActions}
                     </div>
-                  </Td>
+                  </MainActionsTd>
                 </TableRow>
+                <MobileActionsRow $open={mobileActionsRowId === row.id}>
+                  <MobileActionsCell colSpan={12}>
+                    <MobileActionsBar>
+                      {rowActions}
+                    </MobileActionsBar>
+                  </MobileActionsCell>
+                </MobileActionsRow>
+                </React.Fragment>
               );
             })}
           </tbody>
         </Table>
-      </div>
+      </TableContainer>
 
       {total > pageSize && (
         <div style={{display:'flex',gap:8,justifyContent:'center',marginTop:14,alignItems:'center'}}>

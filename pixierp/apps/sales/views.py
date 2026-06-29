@@ -6944,7 +6944,7 @@ class WorkLogViewSet(viewsets.ModelViewSet):
             customer_order_id=order_id if order_id else None,
             quote_request_id=rfq_id if rfq_id else None,
             order_label=order_label or '',
-            item_id=item_id if item_id else None,
+            item_id=item_id if (item_id and order_id) else None,
             rfq_item_id=rfq_item_id if rfq_item_id else None,
             sub_item_id=sub_item_id if sub_item_id else None,
             workflow_name=workflow_name,

@@ -44,6 +44,11 @@ const SearchContainer = styled.div`
   gap: 12px;
   align-items: center;
   flex-wrap: wrap;
+
+  @media (max-width: 768px) {
+    width: 100%;
+    > * { width: 100%; }
+  }
 `;
 
 const ViewToggle = styled.div`
@@ -78,6 +83,11 @@ const SearchInput = styled.input`
   border-radius: 4px;
   font-size: 14px;
   min-width: 200px;
+
+  @media (max-width: 768px) {
+    min-width: 0;
+    width: 100%;
+  }
 `;
 
 const ActionButton = styled(Link)`
@@ -332,9 +342,10 @@ const TableHead = styled.th`
   font-size: 14px;
 
   @media (max-width: 768px) {
-    &:last-child {
-      display: none;
-    }
+    padding: 10px 8px;
+    font-size: 12px;
+    &:last-child { display: none; }
+    ${props => props.$hideOnMobile && 'display: none;'}
   }
 `;
 
@@ -342,6 +353,12 @@ const TableCell = styled.td`
   padding: 16px 24px;
   color: #2c3e50;
   font-size: 14px;
+
+  @media (max-width: 768px) {
+    padding: 10px 8px;
+    font-size: 12px;
+    ${props => props.$hideOnMobile && 'display: none;'}
+  }
 `;
 
 const TableActions = styled(TableCell)`
@@ -678,10 +695,10 @@ const Customers = () => {
             <TableHeader>
               <tr>
                 <TableHead>Név</TableHead>
-                <TableHead>Adószám</TableHead>
-                <TableHead>Cím</TableHead>
-                <TableHead>Email</TableHead>
-                <TableHead>Telefon</TableHead>
+                <TableHead $hideOnMobile>Adószám</TableHead>
+                <TableHead $hideOnMobile>Cím</TableHead>
+                <TableHead $hideOnMobile>Email</TableHead>
+                <TableHead $hideOnMobile>Telefon</TableHead>
                 <TableHead style={{ textAlign: 'right' }}>Műveletek</TableHead>
               </tr>
             </TableHeader>
@@ -717,11 +734,12 @@ const Customers = () => {
                 >
                   <TableCell>
                     <strong>{customer.name}</strong>
+                    <div style={{ fontSize: 12, color: '#7f8c8d', marginTop: 2 }}>{customer.tax_number}</div>
                   </TableCell>
-                  <TableCell>{customer.tax_number}</TableCell>
-                  <TableCell>{customer.city} {customer.postal_code}</TableCell>
-                  <TableCell>{customer.email || '-'}</TableCell>
-                  <TableCell>{customer.phone || '-'}</TableCell>
+                  <TableCell $hideOnMobile>{customer.tax_number}</TableCell>
+                  <TableCell $hideOnMobile>{customer.city} {customer.postal_code}</TableCell>
+                  <TableCell $hideOnMobile>{customer.email || '-'}</TableCell>
+                  <TableCell $hideOnMobile>{customer.phone || '-'}</TableCell>
                   <TableActions>
                     {actionButtons}
                   </TableActions>

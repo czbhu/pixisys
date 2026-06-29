@@ -20,6 +20,11 @@ const Header = styled.div`
   align-items: center;
   flex-wrap: wrap;
   gap: 12px;
+
+  @media (max-width: 768px) {
+    padding: 12px;
+    gap: 10px;
+  }
 `;
 
 const Title = styled.h1`
@@ -27,6 +32,11 @@ const Title = styled.h1`
   font-weight: 600;
   margin: 0;
   color: #2c3e50;
+
+  @media (max-width: 768px) {
+    font-size: 20px;
+    width: 100%;
+  }
 `;
 
 const Toolbar = styled.div`
@@ -34,6 +44,24 @@ const Toolbar = styled.div`
   gap: 8px;
   align-items: center;
   flex-wrap: wrap;
+
+  @media (max-width: 768px) {
+    width: 100%;
+    > * { width: 100%; }
+  }
+`;
+
+const SearchInput = styled.input`
+  padding: 8px 12px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 14px;
+  min-width: 360px;
+
+  @media (max-width: 768px) {
+    min-width: 0;
+    width: 100%;
+  }
 `;
 
 const Button = styled.button`
@@ -54,6 +82,10 @@ const PrimaryButton = styled(Button)`
 
 const TableWrap = styled.div`
   overflow-x: auto;
+
+  @media (max-width: 768px) {
+    overflow-x: hidden;
+  }
 `;
 
 const Table = styled.table`
@@ -77,6 +109,16 @@ const Th = styled.th`
   overflow: hidden;
   cursor: pointer;
   &:hover { background: #eef1f5; }
+
+  @media (max-width: 768px) {
+    padding: 10px 8px;
+    font-size: 12px;
+    white-space: normal;
+    width: auto !important;
+    min-width: 0 !important;
+    ${props => props.$hideOnMobile && 'display: none;'}
+    ${props => props.$mobileTextRight && 'text-align: right;'}
+  }
 `;
 
 const ThResizeHandle = styled.span`
@@ -100,6 +142,55 @@ const Tr = styled.tr`
   &:hover { background-color: rgba(0,0,0,0.03); }
 `;
 
+const Td = styled.td`
+  padding: 12px;
+  border-bottom: 1px solid #ecf0f1;
+  color: inherit;
+
+  @media (max-width: 768px) {
+    padding: 8px;
+    font-size: 12px;
+    ${props => props.$hideOnMobile && 'display: none;'}
+    ${props => props.$mobileTextRight && 'text-align: right; white-space: nowrap;'}
+  }
+`;
+
+const MainActionsTd = styled(Td)`
+  @media (max-width: 768px) {
+    display: none;
+  }
+`;
+
+const MobileActionsRow = styled.tr`
+  display: none;
+
+  @media (max-width: 768px) {
+    display: ${props => (props.$open ? 'table-row' : 'none')};
+  }
+`;
+
+const MobileActionsCell = styled.td`
+  display: none;
+
+  @media (max-width: 768px) {
+    display: table-cell;
+    padding: 8px 6px;
+    border-bottom: 1px solid #ecf0f1;
+    background: #fff;
+  }
+`;
+
+const MobileActionsBar = styled.div`
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  &::-webkit-scrollbar { display: none; }
+`;
+
 const ARREARS_ROW_STYLE = {
   overdue:        { background: '#fffde7', color: '#2c3e50' },
   arrears_notice: { background: '#fff176', color: '#2c3e50' },
@@ -111,12 +202,6 @@ const ARREARS_ROW_STYLE = {
   won:            { background: '#e8f5e9', color: '#1b5e20' },
   lost:           { background: '#ffebee', color: '#b71c1c' },
 };
-
-const Td = styled.td`
-  padding: 12px;
-  border-bottom: 1px solid #ecf0f1;
-  color: inherit;
-`;
 
 const StatusTag = styled.span`
   display: inline-block;
@@ -229,6 +314,31 @@ export default function Arrears() {
   const headerSelectRef = useRef(null);
   const lastCheckedIndexRef = useRef(-1); // shift-select anchor
   const sortedRowsRef = useRef([]);
+
+  // Mobile actions
+  const [mobileActionsRowId, setMobileActionsRowId] = useState(null);
+
+  const isMobileViewport = () => {
+    try { return window.matchMedia('(max-width: 768px)').matches; } catch { return false; }
+  };
+
+  const toggleMobileActionsForRow = useCallback((id) => {
+    setMobileActionsRowId((prev) => (prev === id ? null : id));
+  }, []);
+
+  const handleRowTouchTap = useCallback((event, id) => {
+    if (!isMobileViewport()) return;
+    const target = event.target;
+    if (target && typeof target.closest === 'function' && target.closest('input,button,a,label,select,textarea,[role="button"]')) return;
+    event.preventDefault();
+    toggleMobileActionsForRow(id);
+  }, [toggleMobileActionsForRow]);
+
+  const handleRowContextMenu = useCallback((event, id) => {
+    if (!isMobileViewport()) return;
+    event.preventDefault();
+    toggleMobileActionsForRow(id);
+  }, [toggleMobileActionsForRow]);
 
   // Sort state
   const [sortKey, setSortKey] = useState(null);
@@ -631,8 +741,8 @@ export default function Arrears() {
   })();
 
   // Column header helper
-  const renderTh = (key, label, style = {}) => (
-    <Th style={{ width: colWidths[key], minWidth: 60, ...style }} onClick={() => handleSort(key)}>
+  const renderTh = (key, label, style = {}, hideOnMobile = false) => (
+    <Th style={{ width: colWidths[key], minWidth: 60, ...style }} onClick={() => handleSort(key)} $hideOnMobile={hideOnMobile}>
       {label}
       {sortKey === key && <SortArrow>{sortDir === 'asc' ? '▲' : '▼'}</SortArrow>}
       <ThResizeHandle onMouseDown={(e) => startResize(e, key)} onClick={(e) => e.stopPropagation()} />
@@ -644,18 +754,11 @@ export default function Arrears() {
       <Header>
         <Title>Kintlévőség</Title>
         <Toolbar>
-          <input
+          <SearchInput
             type="text"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             placeholder="Keresés számlaszám, ügyfél vagy megjegyzés alapján..."
-            style={{
-              padding: '8px 12px',
-              border: '1px solid #ddd',
-              borderRadius: 4,
-              fontSize: 14,
-              minWidth: 360,
-            }}
           />
           <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={{ padding: '8px 10px' }}>
             <option value="">Összes státusz</option>
@@ -694,13 +797,13 @@ export default function Arrears() {
               </Th>
               {renderTh('num', 'Számlaszám')}
               {renderTh('customer', 'Ügyfél')}
-              {renderTh('issue', 'Kelt')}
-              {renderTh('delivery', 'Teljesítés')}
-              {renderTh('due', 'Esedékesség')}
-              {renderTh('payment', 'Fizetési mód')}
+              {renderTh('issue', 'Kelt', {}, true)}
+              {renderTh('delivery', 'Teljesítés', {}, true)}
+              {renderTh('due', 'Esedékesség', {}, true)}
+              {renderTh('payment', 'Fizetési mód', {}, true)}
               {renderTh('amount', 'Összeg')}
-              {renderTh('status', 'Státusz')}
-              <Th style={{ width: colWidths.actions, minWidth: 60 }}>
+              {renderTh('status', 'Státusz', {}, true)}
+              <Th style={{ width: colWidths.actions, minWidth: 60 }} $hideOnMobile>
                 Műveletek
                 <ThResizeHandle onMouseDown={(e) => startResize(e, 'actions')} onClick={(e) => e.stopPropagation()} />
               </Th>
@@ -712,8 +815,36 @@ export default function Arrears() {
               const currentStatus = row.arrears_status;
               const hasCurrent = !!NEXT_STATUS[currentStatus] || currentStatus === 'overdue';
               const rowStyle = ARREARS_ROW_STYLE[currentStatus] || {};
+              const rowActions = (
+                <>
+                  <Button onClick={() => window.open(`/invoices/${row.id}/edit`, '_blank')}>Megnyitás</Button>
+                  {hasCurrent && (
+                    <Button
+                      title={`Újraküldés (${STATUS_LABEL[currentStatus] || currentStatus})`}
+                      onClick={() => openRowEmail(row, '')}
+                      style={{ fontSize: 12, padding: '4px 8px' }}
+                    >
+                      📧 Újra
+                    </Button>
+                  )}
+                  {rowNextStatus && (
+                    <Button
+                      title={`Következő: ${STATUS_LABEL[rowNextStatus] || rowNextStatus}`}
+                      onClick={() => openRowEmail(row, rowNextStatus)}
+                      style={{ fontSize: 12, padding: '4px 8px', background: '#eaf4ff', borderColor: '#3498db', color: '#1a6ea8' }}
+                    >
+                      📧 {STATUS_LABEL[rowNextStatus] || rowNextStatus}
+                    </Button>
+                  )}
+                </>
+              );
               return (
-                <Tr key={row.id} style={rowStyle}>
+                <React.Fragment key={row.id}>
+                <Tr
+                  style={rowStyle}
+                  onContextMenu={(event) => handleRowContextMenu(event, row.id)}
+                  onTouchEnd={(event) => handleRowTouchTap(event, row.id)}
+                >
                   <Td>
                     <input
                       type="checkbox"
@@ -724,9 +855,9 @@ export default function Arrears() {
                   </Td>
                   <Td>{row.invoice_number}</Td>
                   <Td>{row.customer?.name || '-'}</Td>
-                  <Td>{formatDate(row.issue_date)}</Td>
-                  <Td>{formatDate(row.delivery_date)}</Td>
-                  <Td>
+                  <Td $hideOnMobile>{formatDate(row.issue_date)}</Td>
+                  <Td $hideOnMobile>{formatDate(row.delivery_date)}</Td>
+                  <Td $hideOnMobile>
                     <div>{formatDate(row.due_date)}</div>
                     {row.days_overdue > 0 && (
                       <div style={{ fontSize: 12, color: 'inherit', opacity: 0.75, marginTop: 2 }}>
@@ -734,8 +865,8 @@ export default function Arrears() {
                       </div>
                     )}
                   </Td>
-                  <Td>{paymentMethodLabel(row.payment_method)}</Td>
-                  <Td>
+                  <Td $hideOnMobile>{paymentMethodLabel(row.payment_method)}</Td>
+                  <Td $mobileTextRight>
                     <div>{formatAmount(row.total_gross_amount, row.currency)}</div>
                     {Number(row.amount_paid || 0) > 0 && Number(row.remaining_amount || 0) > 0 && (
                       <div style={{ fontSize: 12, color: '#b42318', marginTop: 2, fontWeight: 600 }}>
@@ -743,7 +874,7 @@ export default function Arrears() {
                       </div>
                     )}
                   </Td>
-                  <Td>
+                  <Td $hideOnMobile>
                     <StatusPickerWrap>
                       <StatusTag
                         onMouseDown={(e) => handleStatusMouseDown(e, row.id)}
@@ -778,30 +909,20 @@ export default function Arrears() {
                     </StatusPickerWrap>
                     <Muted>{Number(row.days_in_status || 0)} nap</Muted>
                   </Td>
-                  <Td>
+                  <MainActionsTd>
                     <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                      <Button onClick={() => window.open(`/invoices/${row.id}/edit`, '_blank')}>Megnyitás</Button>
-                      {hasCurrent && (
-                        <Button
-                          title={`Újraküldés (${STATUS_LABEL[currentStatus] || currentStatus})`}
-                          onClick={() => openRowEmail(row, '')}
-                          style={{ fontSize: 12, padding: '4px 8px' }}
-                        >
-                          📧 Újra
-                        </Button>
-                      )}
-                      {rowNextStatus && (
-                        <Button
-                          title={`Következő: ${STATUS_LABEL[rowNextStatus] || rowNextStatus}`}
-                          onClick={() => openRowEmail(row, rowNextStatus)}
-                          style={{ fontSize: 12, padding: '4px 8px', background: '#eaf4ff', borderColor: '#3498db', color: '#1a6ea8' }}
-                        >
-                          📧 {STATUS_LABEL[rowNextStatus] || rowNextStatus}
-                        </Button>
-                      )}
+                      {rowActions}
                     </div>
-                  </Td>
+                  </MainActionsTd>
                 </Tr>
+                <MobileActionsRow $open={mobileActionsRowId === row.id}>
+                  <MobileActionsCell colSpan={10}>
+                    <MobileActionsBar>
+                      {rowActions}
+                    </MobileActionsBar>
+                  </MobileActionsCell>
+                </MobileActionsRow>
+                </React.Fragment>
               );
             })}
           </tbody>

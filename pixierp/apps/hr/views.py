@@ -1869,9 +1869,9 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                 return ''
             return re.sub(r'<[^>]*>', '', str(text)).strip()
 
-        def _item_name(item, order=None):
+        def _item_name(item, order=None, rfq_item=None):
             """CustomerOrderItem → tétel név (quote_item.item_name preferált), HTML nélkül.
-            Ha item nincs, fallback: megrendelés első tétele.
+            Ha item nincs, rfq_item-ből (QuoteRequestItem) olvassa. Fallback: megrendelés első tétele.
             """
             def _from_qi(qi):
                 if not qi:
@@ -1893,6 +1893,9 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                     return _from_qi(item.quote_item) or _clean_text(item.description)
                 except Exception:
                     return _clean_text(getattr(item, 'description', ''))
+
+            if rfq_item:
+                return _from_qi(rfq_item)
 
             if order:
                 try:
@@ -1933,12 +1936,17 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         ).select_related(
             'user',
             'customer_order__quote_request__company',
+            'quote_request__company',
             'item__quote_item__product',
             'item__quote_item__material',
             'item__quote_item__manufacturing_product',
             'item__quote_item__service',
+            'rfq_item__product',
+            'rfq_item__material',
+            'rfq_item__manufacturing_product',
+            'rfq_item__service',
             'sub_item',
-        ).prefetch_related('customer_order__quote_request__contacts')
+        ).prefetch_related('customer_order__quote_request__contacts', 'quote_request__contacts')
         active_wl_map = {wl.user_id: wl for wl in active_wls}
 
         # Report date's work logs grouped by user
@@ -1947,12 +1955,17 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         ).select_related(
             'user',
             'customer_order__quote_request__company',
+            'quote_request__company',
             'item__quote_item__product',
             'item__quote_item__material',
             'item__quote_item__manufacturing_product',
             'item__quote_item__service',
+            'rfq_item__product',
+            'rfq_item__material',
+            'rfq_item__manufacturing_product',
+            'rfq_item__service',
             'sub_item',
-        ).prefetch_related('customer_order__quote_request__contacts').order_by('started_at')
+        ).prefetch_related('customer_order__quote_request__contacts', 'quote_request__contacts').order_by('started_at')
         wl_by_user = {}
         for wl in today_wls:
             wl_by_user.setdefault(wl.user_id, []).append(wl)
@@ -2000,8 +2013,16 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             active_work = None
             if awl:
                 try:
-                    customer_name = _customer_name(awl.customer_order) if awl.customer_order_id else ''
-                    quote_title = awl.customer_order.quote_request.title if awl.customer_order_id and awl.customer_order.quote_request else ''
+                    if awl.customer_order_id:
+                        customer_name = _customer_name(awl.customer_order)
+                        quote_title = awl.customer_order.quote_request.title if awl.customer_order.quote_request else ''
+                    elif awl.quote_request_id and awl.quote_request:
+                        qr = awl.quote_request
+                        customer_name = qr.company.name if qr.company_id else ''
+                        quote_title = qr.title or ''
+                    else:
+                        customer_name = ''
+                        quote_title = ''
                 except Exception:
                     customer_name = ''
                     quote_title = ''
@@ -2009,10 +2030,22 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                     'order_number': awl.customer_order.order_number if awl.customer_order_id else '',
                     'order_id': awl.customer_order.id if awl.customer_order_id else None,
                     'order_label': awl.order_label or '',
-                    'rfq_number': (awl.customer_order.quote_request.number or awl.customer_order.quote_request.request_number) if awl.customer_order_id and awl.customer_order.quote_request else '',
+                    'rfq_number': (
+                        (awl.customer_order.quote_request.number or awl.customer_order.quote_request.request_number)
+                        if awl.customer_order_id and awl.customer_order.quote_request
+                        else (
+                            (awl.quote_request.number or awl.quote_request.request_number)
+                            if awl.quote_request_id and awl.quote_request
+                            else ''
+                        )
+                    ),
                     'customer_name': customer_name,
                     'quote_title': quote_title,
-                    'item_name': _item_name(awl.item, awl.customer_order) if awl.customer_order_id else '',
+                    'item_name': _item_name(
+                        awl.item if awl.customer_order_id else None,
+                        awl.customer_order if awl.customer_order_id else None,
+                        rfq_item=awl.rfq_item if awl.rfq_item_id else None,
+                    ),
                     'sub_item_name': awl.sub_item.name if awl.sub_item else '',
                     'workflow_name': awl.workflow_name or '',
                     'started_at': awl.started_at.isoformat(),
@@ -2027,8 +2060,16 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                 wl_dur = int((wl_end - wl.started_at).total_seconds())
                 active_seconds += wl_dur
                 try:
-                    c_name = _customer_name(wl.customer_order) if wl.customer_order_id else ''
-                    q_title = wl.customer_order.quote_request.title if wl.customer_order_id and wl.customer_order.quote_request else ''
+                    if wl.customer_order_id:
+                        c_name = _customer_name(wl.customer_order)
+                        q_title = wl.customer_order.quote_request.title if wl.customer_order.quote_request else ''
+                    elif wl.quote_request_id and wl.quote_request:
+                        qr = wl.quote_request
+                        c_name = qr.company.name if qr.company_id else ''
+                        q_title = qr.title or ''
+                    else:
+                        c_name = ''
+                        q_title = ''
                 except Exception:
                     c_name = ''
                     q_title = ''
@@ -2037,10 +2078,22 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                     'order_number': wl.customer_order.order_number if wl.customer_order_id else '',
                     'order_id': wl.customer_order.id if wl.customer_order_id else None,
                     'order_label': wl.order_label or '',
-                    'rfq_number': (wl.customer_order.quote_request.number or wl.customer_order.quote_request.request_number) if wl.customer_order_id and wl.customer_order.quote_request else '',
+                    'rfq_number': (
+                        (wl.customer_order.quote_request.number or wl.customer_order.quote_request.request_number)
+                        if wl.customer_order_id and wl.customer_order.quote_request
+                        else (
+                            (wl.quote_request.number or wl.quote_request.request_number)
+                            if wl.quote_request_id and wl.quote_request
+                            else ''
+                        )
+                    ),
                     'customer_name': c_name,
                     'quote_title': q_title,
-                    'item_name': _item_name(wl.item, wl.customer_order if wl.customer_order_id else None),
+                    'item_name': _item_name(
+                        wl.item if wl.customer_order_id else None,
+                        wl.customer_order if wl.customer_order_id else None,
+                        rfq_item=wl.rfq_item if wl.rfq_item_id else None,
+                    ),
                     'sub_item_name': wl.sub_item.name if wl.sub_item else '',
                     'workflow_name': wl.workflow_name or '',
                     'duration_seconds': wl_dur,
