@@ -4905,6 +4905,7 @@ const RFQs: React.FC = () => {
           discount_percent: Number((newItems[editIdx] as any).discount_percent || 0),
           discount_amount: Number((newItems[editIdx] as any).discount_amount || 0),
         } : undefined) : undefined}
+        initialFormulas={editIdx !== null ? ((newItems[editIdx] as any)?.formulas || {}) : undefined}
       />
       {/* ── Tétel másolása ─────────────────────────────────────────────────── */}
       {copySourceItem && (
