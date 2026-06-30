@@ -1610,8 +1610,9 @@ const RFQs: React.FC = () => {
             }
           } else {
             let manuRefId = it.ref_id;
-            // _fromCopy + ref_id=null: közvetlen (direkt) tétel — createDirectManufacturingItem-tel hozzuk létre
-            if (!manuRefId && (it as any)._fromCopy) {
+            // ref_id=null + direct item: createDirectManufacturingItem-tel hozzuk létre
+            // (both _fromCopy and _fromHistory direct items use this path)
+            if (!manuRefId && ((it as any)._fromCopy || (it as any)._fromHistory)) {
               try {
                 await salesService.createDirectManufacturingItem(rfqId, {
                   name: it.name || '',
@@ -1623,6 +1624,7 @@ const RFQs: React.FC = () => {
                   vat_rate: it.vat_rate || 27,
                   discount_percent: (it as any).discount_percent || 0,
                   discount_amount: (it as any).discount_amount || 0,
+                  formulas: (it as any).formulas || {},
                   cost_items: (it as any).cost_items_data || [],
                 });
               } catch {
@@ -1645,7 +1647,8 @@ const RFQs: React.FC = () => {
                 return;
               }
             }
-            const createdItem = await salesService.addRfqManufacturingItem(rfqId, manuRefId, it.name || '', it.quantity, it.description || '', it.unit, it.net_unit_price, it.vat_rate, (it as any).discount_percent, (it as any).discount_amount);
+            // Pass formulas so that _price_from_cost_calc is preserved on the copied item
+            const createdItem = await salesService.addRfqManufacturingItem(rfqId, manuRefId, it.name || '', it.quantity, it.description || '', it.unit, it.net_unit_price, it.vat_rate, (it as any).discount_percent, (it as any).discount_amount, (it as any).formulas || {});
             if (createdItem?.id && it.files?.length) {
               for (const f of it.files) {
                 const key = (f as any)?.uid || (f as any)?.name;
@@ -2053,6 +2056,7 @@ const RFQs: React.FC = () => {
         cost_items_data: sourceItem.cost_items_data || [],
         discount_percent: sourceItem.discount_percent ?? 0,
         discount_amount: sourceItem.discount_amount ?? 0,
+        formulas: sourceItem.formulas || {},
         _fromCopy: true,
       };
       const payload = {
@@ -2137,8 +2141,11 @@ const RFQs: React.FC = () => {
         net_unit_price: Number(item.net_unit_price) || 0,
         vat_rate: item.vat_rate ?? 27,
         description: item.description || '',
+        internal_description: item.internal_description || '',
         discount_percent: item.discount_percent,
         discount_amount: item.discount_amount,
+        formulas: item.formulas || {},
+        cost_items_data: item.cost_items_data || [],
         _fromHistory: true,
       }));
       setNewItems(mappedItems);
@@ -2209,6 +2216,7 @@ const RFQs: React.FC = () => {
             vat_rate: p.vat_rate || 27,
             discount_percent: (p as any).discount_percent || 0,
             discount_amount: (p as any).discount_amount || 0,
+            formulas: (p as any).formulas || {},
             cost_items: (p as any).cost_items_data || [],
           });
         } else {
@@ -2226,7 +2234,7 @@ const RFQs: React.FC = () => {
               return;
             }
           }
-          await salesService.addRfqManufacturingItem(rfq.id, manuRefId, p.name || '', p.quantity || 1, (p as any).description || '', p.unit || 'db', p.net_unit_price || 0, p.vat_rate || 27, (p as any).discount_percent, (p as any).discount_amount);
+          await salesService.addRfqManufacturingItem(rfq.id, manuRefId, p.name || '', p.quantity || 1, (p as any).description || '', p.unit || 'db', p.net_unit_price || 0, p.vat_rate || 27, (p as any).discount_percent, (p as any).discount_amount, (p as any).formulas || {});
         }
       } else {
         await salesService.addRfqServiceItem(rfq.id, p.ref_id!, p.name || '', p.quantity || 1, (p as any).description || '', p.unit || 'db', p.net_unit_price || 0, p.vat_rate || 27, (p as any).discount_percent, (p as any).discount_amount);
