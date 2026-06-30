@@ -54,11 +54,32 @@ const ActivityLogModal: React.FC<ActivityLogModalProps> = ({
   const fetchTimeline = async () => {
     setLoading(true);
     try {
-      const endpoint = objectType === 'quoterequest'
+      const timelineEndpoint = objectType === 'quoterequest'
         ? `/sales/quote-requests/${objectId}/timeline/`
         : `/sales/customer-orders/${objectId}/activity_logs/`;
-      const response = await api.get(endpoint);
-      const list = Array.isArray(response.data) ? response.data : [];
+
+      let list: TimelineEvent[] = [];
+      try {
+        const response = await api.get(timelineEndpoint);
+        list = Array.isArray(response.data) ? response.data : [];
+      } catch (primaryError: any) {
+        // Fallback: ha a timeline endpoint nem elérhető, a logs endpointot hívjuk
+        if (primaryError?.response?.status === 404 && objectType === 'quoterequest') {
+          const logsRes = await api.get(`/sales/quote-requests/${objectId}/logs/`);
+          const rawLogs = Array.isArray(logsRes.data) ? logsRes.data : (logsRes.data?.results ?? []);
+          list = rawLogs.map((log: any) => ({
+            timestamp: log.created_at ?? null,
+            who_name: log.user_name ?? '',
+            who_role: '',
+            what: log.action ?? '',
+            category: log.meta?.category ?? 'log',
+            meta: log.meta ? { changes: log.meta.changes } : {},
+          }));
+        } else {
+          throw primaryError;
+        }
+      }
+
       const sorted = [...list].sort((a: TimelineEvent, b: TimelineEvent) => {
         const ta = a.timestamp ? dayjs(a.timestamp).valueOf() : 0;
         const tb = b.timestamp ? dayjs(b.timestamp).valueOf() : 0;
