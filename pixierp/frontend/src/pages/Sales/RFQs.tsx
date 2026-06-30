@@ -1469,13 +1469,13 @@ const RFQs: React.FC = () => {
     {
       title: 'Nettó összesen', key: 'item_total', width: 130, align: 'right' as const,
       sorter: (a: any, b: any) => {
-        const effA = Number(a.discounted_net_total || a.net_total || (Number(a.quantity || 0) * Number(a.net_unit_price || a.manufacturing_product_net_unit_price || 0)));
-        const effB = Number(b.discounted_net_total || b.net_total || (Number(b.quantity || 0) * Number(b.net_unit_price || b.manufacturing_product_net_unit_price || 0)));
+        const effA = Number(a.discounted_net_total) || Number(a.net_total) || (Number(a.quantity || 0) * Number(a.net_unit_price || a.manufacturing_product_net_unit_price || 0));
+        const effB = Number(b.discounted_net_total) || Number(b.net_total) || (Number(b.quantity || 0) * Number(b.net_unit_price || b.manufacturing_product_net_unit_price || 0));
         return effA - effB;
       },
       render: (_: any, r: any) => {
-        const effPrice = Number(r.net_unit_price || r.manufacturing_product_net_unit_price || 0);
-        const total = Number(r.discounted_net_total || r.net_total || (Number(r.quantity || 0) * effPrice));
+        const effPrice = Number(r.net_unit_price) || Number(r.manufacturing_product_net_unit_price) || 0;
+        const total = Number(r.discounted_net_total) || Number(r.net_total) || (Number(r.quantity || 0) * effPrice);
         return `${total.toLocaleString('hu-HU')} ${r.currency_symbol || 'Ft'}`;
       },
     },

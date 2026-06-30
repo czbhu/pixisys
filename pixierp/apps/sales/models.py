@@ -522,17 +522,20 @@ class QuoteRequestItem(models.Model):
 
     def save(self, *args, **kwargs):
         try:
-            qty = self.quantity or 0
-            unit_price = self.net_unit_price or 0
+            from decimal import Decimal as _D
+            qty = _D(str(self.quantity or 0))
+            unit_price = _D(str(self.net_unit_price or 0))
             self.net_total = qty * unit_price
             discounted = self.net_total
-            if (self.discount_percent or 0) > 0:
-                discounted = discounted * (1 - float(self.discount_percent) / 100.0)
-            if (self.discount_amount or 0) > 0:
-                discounted = max(0, discounted - float(self.discount_amount))
+            disc_pct = float(self.discount_percent or 0)
+            disc_amt = float(self.discount_amount or 0)
+            if disc_pct > 0:
+                discounted = discounted * _D(str(1 - disc_pct / 100.0))
+            if disc_amt > 0:
+                discounted = max(_D('0'), discounted - _D(str(disc_amt)))
             self.discounted_net_total = discounted
-            self.gross_total = self.net_total * (1 + (self.vat_rate or 0) / 100)
-            self.discounted_gross_total = self.discounted_net_total * (1 + (self.vat_rate or 0) / 100)
+            self.gross_total = self.net_total * (1 + _D(str(self.vat_rate or 0)) / _D('100'))
+            self.discounted_gross_total = self.discounted_net_total * (1 + _D(str(self.vat_rate or 0)) / _D('100'))
         except Exception:
             pass
         # Ajánlatszám (tételenként egyedi) generálása, ha még nincs
