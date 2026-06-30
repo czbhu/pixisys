@@ -670,7 +670,6 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           setSyncQtyRows(syncSet);
           if (mode === 'edit') {
             if (savedPriceFromCalc !== undefined) setManuPriceFromCalc(savedPriceFromCalc);
-            else if (typeof p.price_from_cost_calc === 'boolean') setManuPriceFromCalc(p.price_from_cost_calc);
             else setManuPriceFromCalc(false);
           } else if (typeof p.price_from_cost_calc === 'boolean') {
             setManuPriceFromCalc(p.price_from_cost_calc);
@@ -792,10 +791,10 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           );
           setSyncQtyRows(syncSet);
         }
-        // Restore saved checkbox state; fall back to heuristic for legacy records
+        // Restore saved checkbox state; in edit mode default to false if no saved value
+        // (do NOT inherit from the manufacturing product master — the user manually set the price)
         if (mode === 'edit' || !!quoteItemId) {
           if (savedPriceFromCalc !== undefined) setManuPriceFromCalc(savedPriceFromCalc);
-          else if (typeof p.price_from_cost_calc === 'boolean') setManuPriceFromCalc(p.price_from_cost_calc);
           else setManuPriceFromCalc(false);
         } else if (typeof p.price_from_cost_calc === 'boolean') {
           setManuPriceFromCalc(p.price_from_cost_calc);
