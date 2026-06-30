@@ -1589,6 +1589,31 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         serializer = QuoteLogSerializer(qr.logs.order_by('-created_at'), many=True)
         return Response(serializer.data)
 
+    @action(detail=True, methods=['get'])
+    def timeline(self, request, pk=None):
+        """ActivityLogModal által várt formátumban adja vissza az árajánlat naplóját."""
+        qr = self.get_object()
+        events = []
+        for log in qr.logs.select_related('user').order_by('-created_at'):
+            role = ''
+            try:
+                emp = getattr(log.user, 'employee_profile', None) if log.user else None
+                if emp:
+                    depts = emp.departments.all()
+                    role = ', '.join(d.name for d in depts) if depts else ''
+            except Exception:
+                pass
+            meta = log.meta or {}
+            events.append({
+                'timestamp': log.created_at.isoformat() if log.created_at else None,
+                'who_role': role,
+                'who_name': log.user.get_full_name() if log.user else '',
+                'what': log.action or '',
+                'category': meta.get('category', 'log'),
+                'meta': {'changes': meta.get('changes')} if meta.get('changes') else {},
+            })
+        return Response(events)
+
     @action(detail=True, methods=['post'])
     def send_email(self, request, pk=None):
         qr = self.get_object()

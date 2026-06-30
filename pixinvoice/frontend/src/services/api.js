@@ -152,6 +152,9 @@ export const invoiceAPI = {
   
   // Get single invoice
   getInvoice: (id) => api.get(`/api/invoices/${id}/`),
+
+  // Get invoice activity timeline (Dátum | Felhasználó | Művelet)
+  getTimeline: (id) => api.get(`/api/invoices/${id}/timeline/`),
   
   // Create invoice
   createInvoice: (data) => api.post('/api/invoices/', data),

@@ -2275,6 +2275,19 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         except Exception as e:
             logger.exception("Invoice create error")
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        # Log invoice creation
+        try:
+            from invoices.models import InvoiceLog
+            user = self.request.user if getattr(self.request.user, 'is_authenticated', False) else None
+            InvoiceLog.objects.create(
+                invoice=serializer.instance,
+                user=user,
+                action=f'Számla létrehozva: {serializer.instance.invoice_number}',
+                category='create',
+                ip_address=self.request.META.get('REMOTE_ADDR'),
+            )
+        except Exception:
+            pass
         headers = {}
         # Auto-submit to NAV right after create (best-effort)
         try:
@@ -2287,6 +2300,65 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             pass
         # Use read serializer to return the created invoice
         return Response(InvoiceSerializer(serializer.instance).data, status=status.HTTP_201_CREATED, headers=headers)
+
+    @action(detail=True, methods=['get'])
+    def timeline(self, request, pk=None):
+        """Számla eseménynaplójának visszaadása (Dátum | Felhasználó | Művelet formátumban)."""
+        from invoices.models import InvoiceLog
+        invoice = self.get_object()
+        events = []
+        # Stored logs
+        for log in InvoiceLog.objects.filter(invoice=invoice).select_related('user').order_by('-created_at'):
+            events.append({
+                'timestamp': log.created_at.isoformat() if log.created_at else None,
+                'who_name': log.user.get_full_name() or log.user.username if log.user else '',
+                'who_role': '',
+                'what': log.action or '',
+                'category': log.category or 'log',
+                'meta': log.meta or {},
+            })
+        # Synthetic events from invoice data if no stored logs
+        if not events:
+            if invoice.created_at:
+                events.append({
+                    'timestamp': invoice.created_at.isoformat(),
+                    'who_name': invoice.created_by.get_full_name() if invoice.created_by else '',
+                    'who_role': '',
+                    'what': f'Számla létrehozva: {invoice.invoice_number}',
+                    'category': 'create',
+                    'meta': {},
+                })
+            if invoice.nav_submission_date:
+                events.append({
+                    'timestamp': invoice.nav_submission_date.isoformat(),
+                    'who_name': '',
+                    'who_role': '',
+                    'what': f'NAV beküldve (tranzakció: {invoice.nav_transaction_id or "–"})',
+                    'category': 'nav',
+                    'meta': {},
+                })
+            if invoice.payment_date and invoice.amount_paid:
+                events.append({
+                    'timestamp': str(invoice.payment_date) + 'T00:00:00',
+                    'who_name': '',
+                    'who_role': '',
+                    'what': f'Kiegyenlítve: {invoice.amount_paid} {invoice.currency}',
+                    'category': 'payment',
+                    'meta': {},
+                })
+            for idx, entry in enumerate(invoice.arrears_log or []):
+                ts = entry.get('timestamp') or entry.get('date')
+                events.append({
+                    'timestamp': ts,
+                    'who_name': entry.get('user') or '',
+                    'who_role': '',
+                    'what': f'Behajtás: {entry.get("status_label") or entry.get("status", "–")}',
+                    'category': 'arrears',
+                    'meta': {},
+                })
+            events.sort(key=lambda e: e['timestamp'] or '', reverse=True)
+        return Response(events)
+
     @action(detail=True, methods=['post'])
     def send_email(self, request, pk=None):
         import sys, datetime

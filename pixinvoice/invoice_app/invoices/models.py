@@ -692,6 +692,26 @@ class Invoice(models.Model):
             return 0
 
 
+class InvoiceLog(models.Model):
+    """Számla eseménynapló – minden fontos műveletet naplóz (létrehozás, státuszváltás, kiegyenlítés, NAV, e-mail stb.)."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    invoice = models.ForeignKey(Invoice, on_delete=models.CASCADE, related_name='logs', verbose_name="Számla")
+    user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, verbose_name="Felhasználó")
+    action = models.CharField(max_length=300, verbose_name="Esemény")
+    category = models.CharField(max_length=40, default='log', verbose_name="Kategória")
+    ip_address = models.GenericIPAddressField(null=True, blank=True, verbose_name="IP cím")
+    meta = models.JSONField(default=dict, blank=True, null=True, verbose_name="Metaadatok")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Számla napló"
+        verbose_name_plural = "Számla naplók"
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.invoice.invoice_number} – {self.action}"
+
+
 class BankStatement(models.Model):
     """Bank statement header for grouping payments."""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

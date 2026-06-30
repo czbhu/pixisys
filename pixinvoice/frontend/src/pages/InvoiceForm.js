@@ -857,6 +857,10 @@ const InvoiceForm = () => {
   const MANUAL_DRAFTS_KEY = 'pixinvoice_manual_drafts';
   const [draftsModalOpen, setDraftsModalOpen] = useState(false);
   const [manualDrafts, setManualDrafts] = useState([]);
+  // Activity log
+  const [invoiceLogs, setInvoiceLogs] = useState([]);
+  const [invoiceLogsLoading, setInvoiceLogsLoading] = useState(false);
+  const [activityLogModalOpen, setActivityLogModalOpen] = useState(false);
   const [currencyConfirm, setCurrencyConfirm] = useState(null); // { newOpt, resolve }
   const [scheduleSaving, setScheduleSaving] = useState(false);
   const [scheduleTemplateOptions, setScheduleTemplateOptions] = useState([{ value: 'invoice_send', label: 'Számlaküldés' }]);
@@ -1340,6 +1344,14 @@ const InvoiceForm = () => {
             setItemMeta(metaMap);
           }
         } catch {}
+        // Fetch activity log when invoice loads
+        if (id) {
+          setInvoiceLogsLoading(true);
+          invoiceAPI.getTimeline(id)
+            .then(res => setInvoiceLogs(Array.isArray(res.data) ? res.data : []))
+            .catch(() => setInvoiceLogs([]))
+            .finally(() => setInvoiceLogsLoading(false));
+        }
       }
     }
   );
@@ -5260,11 +5272,124 @@ const InvoiceForm = () => {
                   </VatTable>
                 </>
               )}
+
+              {/* ── Számla eseménynapló ─────────────────────────────── */}
+              {isEdit && (
+                <>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 20, marginBottom: 6 }}>
+                    <SectionTitle style={{ margin: 0 }}>Naplózás {invoiceLogs.length > 0 ? `(${invoiceLogs.length})` : ''}</SectionTitle>
+                    <button
+                      type="button"
+                      onClick={() => setActivityLogModalOpen(true)}
+                      style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 10px', fontSize: 12, border: '1px solid #d0d0d0', borderRadius: 4, background: '#f8f9fa', cursor: 'pointer', color: '#555' }}
+                    >
+                      <Clock3 size={13} />
+                      Aktivitás napló
+                    </button>
+                  </div>
+                  {invoiceLogsLoading ? (
+                    <div style={{ padding: '12px 0', color: '#999', fontSize: 13 }}>Betöltés…</div>
+                  ) : invoiceLogs.length === 0 ? (
+                    <div style={{ padding: '8px 0', color: '#bbb', fontSize: 12 }}>Nincs naplóbejegyzés.</div>
+                  ) : (
+                    <VatTable>
+                      <thead>
+                        <tr>
+                          <th style={{ width: 140 }}>Dátum</th>
+                          <th style={{ width: 140 }}>Felhasználó</th>
+                          <th>Művelet</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {invoiceLogs.slice(0, 5).map((entry, idx) => {
+                          const ts = entry?.timestamp ? new Date(entry.timestamp) : null;
+                          const dateStr = ts ? ts.toLocaleString('hu-HU', { dateStyle: 'short', timeStyle: 'short' }) : '-';
+                          return (
+                            <tr key={`inv-log-${idx}`}>
+                              <td style={{ whiteSpace: 'nowrap', fontSize: 12 }}>{dateStr}</td>
+                              <td style={{ fontSize: 12, color: '#555' }}>{entry?.who_name || '—'}</td>
+                              <td style={{ fontSize: 12 }}>{entry?.what || '—'}</td>
+                            </tr>
+                          );
+                        })}
+                        {invoiceLogs.length > 5 && (
+                          <tr>
+                            <td colSpan={3} style={{ textAlign: 'center', fontSize: 11, color: '#999', padding: '6px 0' }}>
+                              + {invoiceLogs.length - 5} további bejegyzés —&nbsp;
+                              <span
+                                style={{ color: '#2980b9', cursor: 'pointer', textDecoration: 'underline' }}
+                                onClick={() => setActivityLogModalOpen(true)}
+                              >
+                                Mind mutatása
+                              </span>
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </VatTable>
+                  )}
+                </>
+              )}
             </>
           ); })()}
         </SummarySection>
         </fieldset>
       </form>
+
+      {/* ── Aktivitás napló modal ──────────────────────────────────── */}
+      {activityLogModalOpen && createPortal(
+        <div
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onClick={() => setActivityLogModalOpen(false)}
+        >
+          <div
+            style={{ background: '#fff', borderRadius: 8, boxShadow: '0 4px 24px rgba(0,0,0,0.2)', width: '90%', maxWidth: 860, maxHeight: '85vh', display: 'flex', flexDirection: 'column' }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div style={{ padding: '14px 20px', borderBottom: '1px solid #ecf0f1', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <strong style={{ fontSize: 15 }}>Aktivitás napló</strong>
+              <button type="button" onClick={() => setActivityLogModalOpen(false)} style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: 18, lineHeight: 1, color: '#888' }}>×</button>
+            </div>
+            <div style={{ overflow: 'auto', padding: '12px 20px 20px' }}>
+              {invoiceLogs.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: 32, color: '#bbb' }}>Nincs naplóbejegyzés.</div>
+              ) : (
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                  <thead>
+                    <tr style={{ background: '#f8f9fa' }}>
+                      <th style={{ padding: '8px 10px', textAlign: 'left', borderBottom: '2px solid #ecf0f1', width: 155, fontWeight: 600, color: '#555' }}>Dátum</th>
+                      <th style={{ padding: '8px 10px', textAlign: 'left', borderBottom: '2px solid #ecf0f1', width: 160, fontWeight: 600, color: '#555' }}>Felhasználó</th>
+                      <th style={{ padding: '8px 10px', textAlign: 'left', borderBottom: '2px solid #ecf0f1', fontWeight: 600, color: '#555' }}>Művelet</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {invoiceLogs.map((entry, idx) => {
+                      const ts = entry?.timestamp ? new Date(entry.timestamp) : null;
+                      const dateStr = ts ? ts.toLocaleString('hu-HU', { dateStyle: 'short', timeStyle: 'short' }) : '-';
+                      const categoryColors = { create: '#52c41a', nav: '#722ed1', payment: '#1677ff', arrears: '#fa8c16', email: '#0958d9', log: '#8c8c8c' };
+                      const cat = entry?.category || 'log';
+                      const catColor = categoryColors[cat] || '#8c8c8c';
+                      return (
+                        <tr key={`modal-log-${idx}`} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                          <td style={{ padding: '7px 10px', whiteSpace: 'nowrap', color: '#555' }}>{dateStr}</td>
+                          <td style={{ padding: '7px 10px', color: '#555' }}>{entry?.who_name || '—'}</td>
+                          <td style={{ padding: '7px 10px' }}>
+                            <span style={{ display: 'inline-block', padding: '1px 7px', borderRadius: 10, fontSize: 11, marginRight: 8, background: catColor + '1a', color: catColor, border: `1px solid ${catColor}40` }}>
+                              {cat === 'create' ? 'Létrehozás' : cat === 'nav' ? 'NAV' : cat === 'payment' ? 'Kiegyenlítés' : cat === 'arrears' ? 'Behajtás' : cat === 'email' ? 'E-mail' : 'Napló'}
+                            </span>
+                            {entry?.what || '—'}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
 
       <MobileActionBar>
         <MobileActionButton
