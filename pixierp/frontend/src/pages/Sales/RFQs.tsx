@@ -2056,7 +2056,11 @@ const RFQs: React.FC = () => {
         cost_items_data: sourceItem.cost_items_data || [],
         discount_percent: sourceItem.discount_percent ?? 0,
         discount_amount: sourceItem.discount_amount ?? 0,
-        formulas: sourceItem.formulas || {},
+        formulas: {
+          // Default: manual pricing (false) — if the source explicitly had true, it takes priority
+          _price_from_cost_calc: false,
+          ...(sourceItem.formulas || {}),
+        },
         _fromCopy: true,
       };
       const payload = {
@@ -2144,7 +2148,11 @@ const RFQs: React.FC = () => {
         internal_description: item.internal_description || '',
         discount_percent: item.discount_percent,
         discount_amount: item.discount_amount,
-        formulas: item.formulas || {},
+        formulas: {
+          // Default: manual pricing (false) — if the source explicitly had true, it takes priority
+          _price_from_cost_calc: false,
+          ...(item.formulas || {}),
+        },
         cost_items_data: item.cost_items_data || [],
         _fromHistory: true,
       }));
