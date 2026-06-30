@@ -581,7 +581,8 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           }));
           setManuCostItems(loadedItems);
           setSyncQtyRows(new Set(loadedItems.filter(i => i.syncQty).map(i => i.id)));
-          setManuPriceFromCalc(loadedItems.length > 0);
+          // savedPriceFromCalc (from formulas) takes priority; fallback to heuristic
+          setManuPriceFromCalc(savedPriceFromCalc !== undefined ? savedPriceFromCalc : loadedItems.length > 0);
         }
       } else if (mode === 'edit' && quoteItemId) {
         setManuFormInitialValues({
