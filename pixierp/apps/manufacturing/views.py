@@ -1898,16 +1898,27 @@ class ManufacturingCostItemViewSet(
                 name_lines = wrap_to_width(sub_name or '', font_normal, 8, name_max)
                 p.drawString(col_x_name, y, name_lines[0])
 
+                def _resolve_sub_qty(sub_obj):
+                    """Return the effective sub-item quantity, applying syncQty if set."""
+                    raw = (sub_obj.get('quantity') if isinstance(sub_obj, dict) else getattr(sub_obj, 'quantity', None))
+                    if raw is None and isinstance(sub_obj, dict):
+                        raw = sub_obj.get('qty')
+                    # syncQty: use main-item quantity instead of sub-item quantity
+                    if isinstance(sub_obj, dict) and sub_obj.get('syncQty') and direct_item is not None:
+                        main_qty = get_direct_field(direct_item, 'quantity')
+                        if main_qty is not None:
+                            try:
+                                raw = float(main_qty)
+                            except (TypeError, ValueError):
+                                pass
+                    return raw
+
                 try:
-                    sub_qty = (sub.get('quantity') if isinstance(sub, dict) else getattr(sub, 'quantity', None))
-                    if isinstance(sub, dict) and sub_qty is None:
-                        sub_qty = sub.get('qty')
+                    sub_qty = _resolve_sub_qty(sub)
                     sub_unit = sub.get('unit', '') if isinstance(sub, dict) else getattr(sub, 'unit', '')
                     qty_txt = f"{float(sub_qty):g} {sub_unit or ''}".strip()
                 except Exception:
-                    sub_qty = (sub.get('quantity') if isinstance(sub, dict) else getattr(sub, 'quantity', None))
-                    if isinstance(sub, dict) and sub_qty is None:
-                        sub_qty = sub.get('qty')
+                    sub_qty = _resolve_sub_qty(sub)
                     sub_unit = sub.get('unit', '') if isinstance(sub, dict) else getattr(sub, 'unit', '')
                     qty_txt = f"{sub_qty} {sub_unit or ''}".strip()
                 p.drawString(col_x_qty, y, qty_txt)
