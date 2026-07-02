@@ -1482,41 +1482,43 @@ const InvoiceForm = () => {
 
       // If block has no default currency, stick to the current one
       const newCurrency = blk.default_currency || prevCurrency || 'HUF';
-      let newRate = 1;
-      let oldRate = 1;
-
-      // Only perform logic if currency changed and we have available currencies loaded
-      if (newCurrency && availableCurrencies && availableCurrencies.length > 0) {
-           const newCurrObj = availableCurrencies.find(c => c.code === newCurrency);
-           const oldCurrObj = availableCurrencies.find(c => c.code === prevCurrency);
-           
-           newRate = parseFloat(newCurrObj?.current_rate || 1);
-           oldRate = parseFloat(oldCurrObj?.current_rate || 1);
-           
-           if (newCurrency !== prevCurrency) {
-               // Convert items
-               const currentItems = getValues('items') || [];
-               if (currentItems.length > 0) {
-                   const convertedItems = currentItems.map(item => {
-                       // Convert: Value_HUF = Value_Old * OldRate.  Value_New = Value_HUF / NewRate.
-                       // Factor = OldRate / NewRate
-                       const factor = oldRate / newRate;
-                       
-                       const newItem = { ...item };
-                       if (newItem.unit_price) newItem.unit_price = parseFloat((newItem.unit_price * factor).toFixed(4));
-                       if (newItem.net_amount) newItem.net_amount = parseFloat((newItem.net_amount * factor).toFixed(2));
-                       if (newItem.gross_amount) newItem.gross_amount = parseFloat((newItem.gross_amount * factor).toFixed(2));
-                       if (newItem.vat_amount) newItem.vat_amount = parseFloat((newItem.vat_amount * factor).toFixed(2));
-                       return newItem;
-                   });
-                   setValue('items', convertedItems);
-               }
-           }
-      }
 
       if (blk.default_currency) setValue('currency', blk.default_currency);
       // Only set bank account if explicitly set on block
-      if (blk.default_bank_account) setValue('company_bank_account_id', blk.default_bank_account); 
+      if (blk.default_bank_account) setValue('company_bank_account_id', blk.default_bank_account);
+
+      // Convert items when currency changes — fetch FRESH rates to avoid stale-cache mismatch
+      if (newCurrency !== prevCurrency) {
+        const currentItems = getValues('items') || [];
+        if (currentItems.length > 0) {
+          const dateStr = new Date().toISOString().split('T')[0];
+          const fetchRate = (code) =>
+            code === 'HUF'
+              ? Promise.resolve(1)
+              : utilsAPI.getExchangeRate(code, dateStr)
+                  .then(r => parseFloat(r?.data?.rate || 1))
+                  .catch(() => {
+                    // Fallback to cached rate if fetch fails
+                    const obj = (availableCurrencies || []).find(c => c.code === code);
+                    return parseFloat(obj?.current_rate || 1);
+                  });
+
+          Promise.all([fetchRate(prevCurrency), fetchRate(newCurrency)]).then(([oldRate, newRate]) => {
+            if (oldRate === newRate) return;
+            const factor = oldRate / newRate;
+            const items = getValues('items') || [];
+            const convertedItems = items.map(item => {
+              const newItem = { ...item };
+              if (newItem.unit_price) newItem.unit_price = parseFloat((newItem.unit_price * factor).toFixed(4));
+              if (newItem.net_amount) newItem.net_amount = parseFloat((newItem.net_amount * factor).toFixed(2));
+              if (newItem.gross_amount) newItem.gross_amount = parseFloat((newItem.gross_amount * factor).toFixed(2));
+              if (newItem.vat_amount) newItem.vat_amount = parseFloat((newItem.vat_amount * factor).toFixed(2));
+              return newItem;
+            });
+            setValue('items', convertedItems);
+          });
+        }
+      }
     }
   }, [watch('invoice_block_id'), invoiceBlocks, isEdit, setValue, availableCurrencies]);
 
