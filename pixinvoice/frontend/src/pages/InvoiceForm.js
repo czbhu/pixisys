@@ -3324,25 +3324,30 @@ const InvoiceForm = () => {
     } catch {}
   }, [location.search, setValue]);
 
-  // Load draft data from URL parameter or localStorage if 'erp_data'/'erp_from_storage' is present (ERP integration)
+  // Load draft data from URL hash or URL parameter (ERP integration)
+  // The hash (#erp_data=...) is NOT sent to the server → no 414 Request-URI Too Long error
   React.useEffect(() => {
     try {
-      const sp = new URLSearchParams(location.search);
-
-      // Prevent double loading
       if (hasERPDataRef.current) return;
 
       let draft = null;
 
-      // New: localStorage approach (avoids Request-URI Too Long with many items)
-      if (sp.get('erp_from_storage') === '1') {
-        const raw = localStorage.getItem('erp_invoice_payload');
-        if (raw) {
-          localStorage.removeItem('erp_invoice_payload');
-          draft = JSON.parse(raw);
+      // Primary: hash fragment approach (cross-origin safe, no 414)
+      const hashStr = window.location.hash || '';
+      if (hashStr.startsWith('#erp_data=')) {
+        const encoded = hashStr.slice('#erp_data='.length);
+        if (encoded) {
+          draft = JSON.parse(decodeURIComponent(atob(encoded)));
+          // Clear the hash to avoid reload loops
+          if (window.history && window.history.replaceState) {
+            window.history.replaceState(null, '', window.location.pathname + window.location.search);
+          }
         }
-      } else {
-        // Legacy: URL parameter approach
+      }
+
+      // Fallback: legacy URL parameter approach (kept for backward compat)
+      if (!draft) {
+        const sp = new URLSearchParams(location.search);
         const erpData = sp.get('erp_data');
         if (!erpData) return;
         draft = JSON.parse(decodeURIComponent(atob(erpData)));
