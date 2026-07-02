@@ -3324,26 +3324,32 @@ const InvoiceForm = () => {
     } catch {}
   }, [location.search, setValue]);
 
-  // Load draft data from URL parameter if 'erp_data' parameter is present (ERP integration)
+  // Load draft data from URL parameter or localStorage if 'erp_data'/'erp_from_storage' is present (ERP integration)
   React.useEffect(() => {
     try {
       const sp = new URLSearchParams(location.search);
-      const erpData = sp.get('erp_data');
-      if (!erpData) return;
-      
+
       // Prevent double loading
-      if (hasERPDataRef.current) {
-        console.log('[ERP] Data already loaded, skipping');
-        return;
+      if (hasERPDataRef.current) return;
+
+      let draft = null;
+
+      // New: localStorage approach (avoids Request-URI Too Long with many items)
+      if (sp.get('erp_from_storage') === '1') {
+        const raw = localStorage.getItem('erp_invoice_payload');
+        if (raw) {
+          localStorage.removeItem('erp_invoice_payload');
+          draft = JSON.parse(raw);
+        }
+      } else {
+        // Legacy: URL parameter approach
+        const erpData = sp.get('erp_data');
+        if (!erpData) return;
+        draft = JSON.parse(decodeURIComponent(atob(erpData)));
       }
-      
-      console.log('[ERP] Found ERP data in URL');
-      hasERPDataRef.current = true; // Mark that ERP data was loaded
-      
-      const decoded = decodeURIComponent(atob(erpData));
-      console.log('[ERP] Decoded data:', decoded);
-      const draft = JSON.parse(decoded);
-      console.log('[ERP] Parsed draft:', draft);
+
+      if (!draft) return;
+      hasERPDataRef.current = true;
       
       // Set customer data if provided
       if (draft.customer) {

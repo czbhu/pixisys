@@ -2984,9 +2984,10 @@ const RFQs: React.FC = () => {
           delivery_date: dayjs().format('YYYY-MM-DD'),
         };
 
-        const encodedData = btoa(encodeURIComponent(JSON.stringify(invoiceData)));
         const PixInvoiceUrl = process.env.REACT_APP_PIXINVOICE_URL || 'https://i.pixisys.eu';
-        window.open(`${PixInvoiceUrl}/invoices/new?erp_data=${encodedData}`, '_blank');
+        // Tároljuk localStorage-ban, hogy elkerüljük a 'Request-URI Too Long' hibát sok tétel esetén
+        try { localStorage.setItem('erp_invoice_payload', JSON.stringify(invoiceData)); } catch {}
+        window.open(`${PixInvoiceUrl}/invoices/new?erp_from_storage=1`, '_blank');
         message.success(`Számla előkészítve: ${company?.name || contacts?.[0]?.name || 'Ügyfél'}`);
       }
       setBulkSelectedKeys([]);
