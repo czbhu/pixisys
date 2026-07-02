@@ -1525,9 +1525,6 @@ class ManufacturingCostItemViewSet(
                     if rfq_item:
                         item_qty_str = f"{float(rfq_item.quantity):g} {(rfq_item.unit or '').strip()}".strip()
 
-                if not item_qty_str and ci is not None and ci.quantity is not None:
-                    item_qty_str = f"{float(ci.quantity):g} {(ci.unit or '').strip()}".strip()
-
                 if not item_qty_str and direct_item is not None:
                     dqty = get_direct_field(direct_item, 'quantity')
                     dunit = get_direct_field(direct_item, 'unit') or ''
@@ -1536,6 +1533,9 @@ class ManufacturingCostItemViewSet(
                             item_qty_str = f"{float(dqty):g} {str(dunit).strip()}".strip()
                         except Exception:
                             item_qty_str = f"{dqty} {str(dunit).strip()}".strip()
+
+                if not item_qty_str and ci is not None and ci.quantity is not None:
+                    item_qty_str = f"{float(ci.quantity):g} {(ci.unit or '').strip()}".strip()
             except Exception:
                 pass
 
@@ -1898,27 +1898,16 @@ class ManufacturingCostItemViewSet(
                 name_lines = wrap_to_width(sub_name or '', font_normal, 8, name_max)
                 p.drawString(col_x_name, y, name_lines[0])
 
-                def _resolve_sub_qty(sub_obj):
-                    """Return the effective sub-item quantity, applying syncQty if set."""
-                    raw = (sub_obj.get('quantity') if isinstance(sub_obj, dict) else getattr(sub_obj, 'quantity', None))
-                    if raw is None and isinstance(sub_obj, dict):
-                        raw = sub_obj.get('qty')
-                    # syncQty: use main-item quantity instead of sub-item quantity
-                    if isinstance(sub_obj, dict) and sub_obj.get('syncQty') and direct_item is not None:
-                        main_qty = get_direct_field(direct_item, 'quantity')
-                        if main_qty is not None:
-                            try:
-                                raw = float(main_qty)
-                            except (TypeError, ValueError):
-                                pass
-                    return raw
-
                 try:
-                    sub_qty = _resolve_sub_qty(sub)
+                    sub_qty = (sub.get('quantity') if isinstance(sub, dict) else getattr(sub, 'quantity', None))
+                    if isinstance(sub, dict) and sub_qty is None:
+                        sub_qty = sub.get('qty')
                     sub_unit = sub.get('unit', '') if isinstance(sub, dict) else getattr(sub, 'unit', '')
                     qty_txt = f"{float(sub_qty):g} {sub_unit or ''}".strip()
                 except Exception:
-                    sub_qty = _resolve_sub_qty(sub)
+                    sub_qty = (sub.get('quantity') if isinstance(sub, dict) else getattr(sub, 'quantity', None))
+                    if isinstance(sub, dict) and sub_qty is None:
+                        sub_qty = sub.get('qty')
                     sub_unit = sub.get('unit', '') if isinstance(sub, dict) else getattr(sub, 'unit', '')
                     qty_txt = f"{sub_qty} {sub_unit or ''}".strip()
                 p.drawString(col_x_qty, y, qty_txt)
