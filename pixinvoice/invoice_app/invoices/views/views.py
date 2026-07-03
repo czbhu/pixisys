@@ -1953,6 +1953,11 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             gross = inv.total_gross_amount
             paid = inv.amount_paid or 0
             outstanding_val = float((gross - paid) if gross is not None else 0)
+            # Skip invoices that are already fully paid or overpaid (amount_paid >= gross).
+            # Overpaid invoices can occur when a bank statement item was applied multiple
+            # times (data bug). These should NOT appear as unpaid.
+            if outstanding_val <= 0.005:
+                continue
             exc_rate = getattr(inv, 'exchange_rate', None)
             inv_currency = (str(inv.currency or '') or 'HUF').strip().upper()
             gross_huf = None
