@@ -1665,7 +1665,11 @@ const InvoiceForm = () => {
   );
 
   // Draft autosave (persist form across refresh)
-  const DRAFT_KEY = React.useMemo(() => (isEdit ? `invoice_form_draft_${id}` : 'invoice_form_draft_new'), [isEdit, id]);
+  const DRAFT_KEY = React.useMemo(() => {
+    if (isEdit) return `invoice_form_draft_${id}`;
+    if (isIncomingManual) return 'invoice_form_draft_incoming_new';
+    return 'invoice_form_draft_new';
+  }, [isEdit, id, isIncomingManual]);
   const KEEP_FLAG_KEY = React.useMemo(() => `${DRAFT_KEY}__keep_on_refresh`, [DRAFT_KEY]);
   const hasDraftRef = React.useRef(false);
   const hasERPDataRef = React.useRef(false);
