@@ -515,6 +515,14 @@ const BankStatements = () => {
     return Number.isFinite(n) ? n : 0;
   };
 
+  // Rendezettnek tekintjük, ha a hátralék < 5 Ft (HUF) vagy < 0.01 (más deviza)
+  const isEffectivelySettled = (outstanding, currency) => {
+    const abs = Math.abs(amountNum(outstanding));
+    const cur = String(currency || '').toUpperCase();
+    const tol = cur === 'HUF' ? 5 : 0.01;
+    return abs <= tol;
+  };
+
   const normalizeCurrency = React.useCallback((value, fallback = 'HUF') => {
     const cur = String(value || '').trim().toUpperCase();
     return cur || String(fallback || 'HUF').trim().toUpperCase() || 'HUF';
@@ -1060,7 +1068,7 @@ const BankStatements = () => {
           outstanding: signedOutstanding,
           invoice_type: 'outgoing',
         };
-      }).filter(inv => Math.abs(amountNum(inv.outstanding)) > 0.0001);
+      }).filter(inv => !isEffectivelySettled(inv.outstanding, inv.currency));
 
       let remaining = Math.abs(amountNum(it.amount));
       const selectedAllocs = [];
@@ -1307,7 +1315,7 @@ const BankStatements = () => {
         outstanding: signedOutstanding,
         invoice_type: 'incoming',
       };
-    }).filter(inv => Math.abs(amountNum(inv.outstanding)) > 0.0001);
+    }).filter(inv => !isEffectivelySettled(inv.outstanding, inv.currency));
 
     if (remittanceTokens.length > 0) {
       const tokenOnly = rows.filter((inv) => isRemittanceInvoiceMatch(String(inv?._invoice_no_norm || '')));
@@ -2938,7 +2946,7 @@ const BankStatements = () => {
                   source: 'incoming_mixed',
                 };
               })
-              .filter((inv) => Math.abs(amountNum(inv?.outstanding)) > 0.0001);
+              .filter((inv) => !isEffectivelySettled(inv?.outstanding, inv?.currency));
 
             if (incomingRows.length) {
               rows = [...rows, ...incomingRows];
@@ -3179,7 +3187,7 @@ const BankStatements = () => {
           outstanding: signedOutstanding,
           invoice_type: 'incoming',
         };
-        }).filter(inv => Math.abs(amountNum(inv.outstanding)) > 0.0001);
+        }).filter(inv => !isEffectivelySettled(inv.outstanding, inv.currency));
 
         if (!showAllInvoices && remittanceTokens.length > 0) {
           const tokenOnly = rows.filter((inv) => isRemittanceInvoiceMatch(String(inv?._invoice_no_norm || '')));
@@ -3334,8 +3342,8 @@ const BankStatements = () => {
       };
       rows = deduplicateByInvoiceNo(rows);
       autoAllocateRows = deduplicateByInvoiceNo(autoAllocateRows);
-      rows = rows.filter((inv) => Math.abs(amountNum(inv?.outstanding)) > 0.0001);
-      autoAllocateRows = autoAllocateRows.filter((inv) => Math.abs(amountNum(inv?.outstanding)) > 0.0001);
+      rows = rows.filter((inv) => !isEffectivelySettled(inv?.outstanding, inv?.currency));
+      autoAllocateRows = autoAllocateRows.filter((inv) => !isEffectivelySettled(inv?.outstanding, inv?.currency));
 
       let remaining = Math.abs(amountNum(it.amount));
       setAllocationPct(85, 'Automatikus allokáció számítása');
