@@ -4556,7 +4556,7 @@ const InvoiceForm = () => {
                 dateFormat="yyyy-MM-dd"
                 className="form-control"
                 wrapperClassName="w-100"
-                disabled={!isEdit || isReadOnly}
+                disabled={isReadOnly || (!isEdit && !isIncomingManual)}
               />
               {errors.issue_date && (
                 <ErrorMessage>{errors.issue_date.message}</ErrorMessage>
