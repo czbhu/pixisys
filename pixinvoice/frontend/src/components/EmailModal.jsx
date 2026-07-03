@@ -28,6 +28,7 @@ export default function EmailModal({
 
   const [from, setFrom] = useState(defaultFrom || '');
   const [replyTo, setReplyTo] = useState(defaultReplyTo || '');
+  const [attachmentsExpanded, setAttachmentsExpanded] = useState(false);
   const [to, setTo] = useState(normalizeEmailList(defaultTo).join(', '));
   const [cc, setCc] = useState(normalizeEmailList(defaultCc).join(', '));
   const [bcc, setBcc] = useState(normalizeEmailList(defaultBcc).join(', '));
@@ -135,8 +136,28 @@ export default function EmailModal({
           {headerExtra && <div style={{ marginTop: 8 }}>{headerExtra}</div>}
           {attachments && attachments.length > 0 ? (
             <div style={{ gridColumn: '1 / span 2', marginTop: 6 }}>
-              <div style={{ marginBottom: 4, fontWeight: 500 }}>Csatolmányok:</div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                <span style={{ fontWeight: 500 }}>Csatolmányok ({attachments.length} db):</span>
+                {attachments.length > 8 && (
+                  <button
+                    type="button"
+                    onClick={() => setAttachmentsExpanded(v => !v)}
+                    style={{ border: 'none', background: 'none', color: '#3498db', cursor: 'pointer', fontSize: '0.85em', padding: '2px 6px' }}
+                  >
+                    {attachmentsExpanded ? '▲ Összecsuk' : `▼ Mind mutatása (${attachments.length})`}
+                  </button>
+                )}
+              </div>
+              <div style={{
+                display: 'flex',
+                flexWrap: 'wrap',
+                gap: '8px',
+                maxHeight: attachmentsExpanded ? '360px' : '72px',
+                overflowY: attachmentsExpanded ? 'auto' : 'hidden',
+                overflowX: 'hidden',
+                transition: 'max-height 0.2s ease',
+                position: 'relative',
+              }}>
                 {attachments.map(inv => (
                   <a
                     key={inv.id}
@@ -152,13 +173,22 @@ export default function EmailModal({
                       border: '1px solid #dee2e6',
                       fontSize: '0.9em',
                       display: 'inline-flex',
-                      alignItems: 'center'
+                      alignItems: 'center',
+                      flexShrink: 0,
                     }}
                   >
                     📄 {inv.invoice_number}.pdf
                   </a>
                 ))}
               </div>
+              {!attachmentsExpanded && attachments.length > 8 && (
+                <div
+                  onClick={() => setAttachmentsExpanded(true)}
+                  style={{ textAlign: 'center', color: '#3498db', cursor: 'pointer', fontSize: '0.85em', marginTop: 4, padding: '2px 0' }}
+                >
+                  ··· még {attachments.length - 8} csatolmány — kattints a megjelenítéshez
+                </div>
+              )}
             </div>
           ) : (
             <>
