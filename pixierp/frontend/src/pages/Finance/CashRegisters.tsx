@@ -86,7 +86,9 @@ const CashRegisters: React.FC = () => {
     const [transactions, setTransactions] = useState<CashTransaction[]>([]);
     const [cashRegisters, setCashRegisters] = useState<CashRegister[]>([]);
     const [reasons, setReasons] = useState<TransactionReason[]>([]);
-    const [selectedCashRegister, setSelectedCashRegister] = useState<number | null>(null);
+    const [selectedCashRegister, setSelectedCashRegister] = useState<number | null>(() => {
+        try { const v = localStorage.getItem('cashRegisters_lastSelected'); return v ? Number(v) : null; } catch { return null; }
+    });
     const [selectedEmployee, setSelectedEmployee] = useState<number | null>(null);
     const [dateRange, setDateRange] = useState<[Dayjs, Dayjs] | null>(null);
     const [searchText, setSearchText] = useState('');
@@ -176,7 +178,11 @@ const CashRegisters: React.FC = () => {
             }
 
             if (!selectedCashRegister || !visibleRegisters.some((cr) => cr.id === selectedCashRegister)) {
-                setSelectedCashRegister(visibleRegisters[0].id);
+                // Try to restore from localStorage first, then fall back to first register
+                let savedId: number | null = null;
+                try { const v = localStorage.getItem('cashRegisters_lastSelected'); savedId = v ? Number(v) : null; } catch {}
+                const restoredId = savedId && visibleRegisters.some((cr) => cr.id === savedId) ? savedId : visibleRegisters[0].id;
+                setSelectedCashRegister(restoredId);
             }
         } catch (error) {
             message.error('Nem sikerült betölteni a kasszákat');
@@ -345,10 +351,7 @@ const CashRegisters: React.FC = () => {
                             <Select
                                 placeholder="Kassza választó"
                                 value={selectedCashRegister}
-                                onChange={setSelectedCashRegister}
-                                style={{ width: '100%' }}
-                            >
-                                <Option value={-1}>Mind</Option>
+                                onChange={(v) => { setSelectedCashRegister(v); try { if (v != null) localStorage.setItem('cashRegisters_lastSelected', String(v)); } catch {} }}
                                 {cashRegisters.map(cr => (
                                     <Option key={cr.id} value={cr.id}>
                                         {cr.name}
@@ -454,7 +457,7 @@ const CashRegisters: React.FC = () => {
                                     <Select
                                         placeholder="Kassza választó"
                                         value={selectedCashRegister}
-                                        onChange={setSelectedCashRegister}
+                                        onChange={(v) => { setSelectedCashRegister(v); try { if (v != null) localStorage.setItem('cashRegisters_lastSelected', String(v)); } catch {} }}
                                         style={{ width: 200 }}
                                     >
                                         <Option value={-1}>Mind</Option>
