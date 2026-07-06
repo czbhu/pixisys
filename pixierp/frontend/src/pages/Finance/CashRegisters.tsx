@@ -352,6 +352,9 @@ const CashRegisters: React.FC = () => {
                                 placeholder="Kassza választó"
                                 value={selectedCashRegister}
                                 onChange={(v) => { setSelectedCashRegister(v); try { if (v != null) localStorage.setItem('cashRegisters_lastSelected', String(v)); } catch {} }}
+                                style={{ width: '100%' }}
+                            >
+                                <Option value={-1}>Mind</Option>
                                 {cashRegisters.map(cr => (
                                     <Option key={cr.id} value={cr.id}>
                                         {cr.name}
