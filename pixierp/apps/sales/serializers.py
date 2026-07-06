@@ -324,7 +324,11 @@ class QuoteRequestItemSerializer(serializers.ModelSerializer):
     def get_invoice_number(self, obj):
         coi = self._get_first_active_coi(obj)
         if not coi:
-            return None
+            # Fallback: CO nélküli QR esetén a QR primary_invoice_number mezője
+            try:
+                return obj.quote_request.primary_invoice_number or None
+            except Exception:
+                return None
         return coi.customer_order.invoice_number or None
 
     class Meta:

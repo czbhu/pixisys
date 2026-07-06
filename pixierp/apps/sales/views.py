@@ -1621,14 +1621,14 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         if 'invoice_number' not in request.data:
             return Response({'error': 'invoice_number mező kötelező'}, status=status.HTTP_400_BAD_REQUEST)
         invoice_number = request.data.get('invoice_number')
-        qr.invoice_number = invoice_number
+        qr.primary_invoice_number = invoice_number or ''
         if invoice_number:
             qr.status = 'invoiced'
         else:
             if qr.status == 'invoiced':
                 qr.status = 'ordered'
-        qr.save(update_fields=['invoice_number', 'status'])
-        return Response({'id': qr.id, 'number': qr.number, 'status': qr.status, 'invoice_number': qr.invoice_number})
+        qr.save(update_fields=['primary_invoice_number', 'status'])
+        return Response({'id': qr.id, 'number': qr.number, 'status': qr.status, 'primary_invoice_number': qr.primary_invoice_number})
 
     @action(detail=True, methods=['post'])
     def send_email(self, request, pk=None):
