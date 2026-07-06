@@ -1614,6 +1614,22 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             })
         return Response(events)
 
+    @action(detail=True, methods=['patch', 'post'], permission_classes=[permissions.AllowAny])
+    def update_invoice_number(self, request, pk=None):
+        """QR számlaszámának frissítése (PixInvoice callback, CO nélküli QR-ekhez)"""
+        qr = self.get_object()
+        if 'invoice_number' not in request.data:
+            return Response({'error': 'invoice_number mező kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        invoice_number = request.data.get('invoice_number')
+        qr.invoice_number = invoice_number
+        if invoice_number:
+            qr.status = 'invoiced'
+        else:
+            if qr.status == 'invoiced':
+                qr.status = 'ordered'
+        qr.save(update_fields=['invoice_number', 'status'])
+        return Response({'id': qr.id, 'number': qr.number, 'status': qr.status, 'invoice_number': qr.invoice_number})
+
     @action(detail=True, methods=['post'])
     def send_email(self, request, pk=None):
         qr = self.get_object()

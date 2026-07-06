@@ -1674,6 +1674,7 @@ const InvoiceForm = () => {
   const hasDraftRef = React.useRef(false);
   const hasERPDataRef = React.useRef(false);
   const erpOrderIdsRef = React.useRef([]); // Store ERP order IDs for callback
+  const erpRfqIdsRef = React.useRef([]); // Store ERP RFQ IDs for callback (CO nélküli QR-ekhez)
 
   // Load draft from localStorage on mount (skip for copy/correct/storno flows and ERP data)
   React.useEffect(() => {
@@ -1911,6 +1912,32 @@ const InvoiceForm = () => {
               toast.warning('Számla létrehozva, de nem sikerült értesíteni az ERP-t');
             });
           }
+
+          // QR-alapú callback (CO nélküli QR-ek: erp_rfq_ids alapján)
+          if (erpRfqIdsRef.current.length > 0) {
+            const rfqInvoiceNum = isStorno ? null : invoiceNumber;
+            const rfqPromises = erpRfqIdsRef.current.map(async (rfqId) => {
+              try {
+                const erpBaseUrl = process.env.REACT_APP_ERP_API_URL || 'https://e.pixisys.eu/api/v1';
+                const resp = await fetch(`${erpBaseUrl}/sales/rfqs/${rfqId}/update_invoice_number/`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ invoice_number: rfqInvoiceNum }),
+                });
+                if (resp.ok) {
+                  console.log(`[ERP RFQ Callback] QR ${rfqId} frissítve`);
+                } else {
+                  console.error(`[ERP RFQ Callback] QR ${rfqId} hiba:`, resp.status);
+                }
+              } catch (err) {
+                console.error(`[ERP RFQ Callback] QR ${rfqId} kivétel:`, err);
+              }
+            });
+            Promise.all(rfqPromises).then(() => {
+              erpRfqIdsRef.current = [];
+            });
+          }
+
           
           try {
             const inv = res?.data || {};
@@ -3487,6 +3514,11 @@ const InvoiceForm = () => {
       if (draft.erp_order_ids && Array.isArray(draft.erp_order_ids)) {
         console.log('[ERP] Storing order IDs for callback:', draft.erp_order_ids);
         erpOrderIdsRef.current = draft.erp_order_ids;
+      }
+      // Store ERP RFQ IDs for callback (CO nélküli QR-ek esetén)
+      if (draft.erp_rfq_ids && Array.isArray(draft.erp_rfq_ids)) {
+        console.log('[ERP] Storing RFQ IDs for callback:', draft.erp_rfq_ids);
+        erpRfqIdsRef.current = draft.erp_rfq_ids;
       }
       
       // Always set issue_date to today for new invoices from ERP (draft may have loaded a stale date)
