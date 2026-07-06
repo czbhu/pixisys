@@ -3228,14 +3228,33 @@ def public_submit_order(request, token: str):
     if already_ordered_ids:
         return Response({'error': f'A következő tételek már meg vannak rendelve: {already_ordered_ids}'}, status=409)
     
-    # Megrendelés létrehozása
+    # Megrendelések létrehozása — kombináltajánlat esetén MINDEN RFQ-hoz külön CO
     from django.db import transaction
-    
-    # Megrendelésszám generálás — az ajánlat számát tartjuk meg, ha lehetséges
-    rfq_num = qr.number or qr.request_number
-    if rfq_num and not CustomerOrder.objects.filter(order_number=rfq_num).exists():
-        order_number = rfq_num
-    else:
+
+    # Optional desired delivery date from customer
+    deadline_raw = request.data.get('desired_date') or None
+    deadline_val = None
+    if deadline_raw:
+        try:
+            from datetime import date as _date
+            deadline_val = _date.fromisoformat(str(deadline_raw))
+        except Exception:
+            pass
+
+    # Group items by their quote_request so each RFQ gets its own CO
+    valid_items_by_id = {item.id: item for item in valid_items}
+    items_by_qr: dict = {}
+    for item_data in items_data:
+        item = valid_items_by_id[item_data['item_id']]
+        rfq_id = item.quote_request_id
+        if rfq_id not in items_by_qr:
+            items_by_qr[rfq_id] = {'qr_obj': item.quote_request, 'entries': []}
+        items_by_qr[rfq_id]['entries'].append((item, item_data['quantity']))
+
+    def _gen_order_number(rfq_obj):
+        rfq_num = rfq_obj.number or rfq_obj.request_number
+        if rfq_num and not CustomerOrder.objects.filter(order_number=rfq_num).exists():
+            return rfq_num
         # Fallback: O{dátum}{sorrend} formátum
         today = timezone.now().date()
         date_str = today.strftime('%Y%m%d')
@@ -3249,76 +3268,64 @@ def public_submit_order(request, token: str):
                 new_seq = 1
         else:
             new_seq = 1
-        order_number = f'O{date_str}{new_seq:02d}'
-    
-    # Optional desired delivery date from customer
-    deadline_raw = request.data.get('desired_date') or None
-    deadline_val = None
-    if deadline_raw:
-        try:
-            from datetime import date as _date
-            deadline_val = _date.fromisoformat(str(deadline_raw))
-        except Exception:
-            pass
+        return f'O{date_str}{new_seq:02d}'
 
     order_details = []
-    
+    # primary order_number used for the notification email subject
+    primary_order_number = _gen_order_number(qr)
+
     try:
         with transaction.atomic():
-            # Megrendelés létrehozása
-            order = CustomerOrder.objects.create(
-                quote_request=qr,
-                order_number=order_number,
-                status='new',
-                notes=request.data.get('notes', ''),
-                deadline=deadline_val,
-                # created_by None, mivel publikus
-            )
-            valid_items_by_id = {item.id: item for item in valid_items}
-            for item_data in items_data:
-                item = valid_items_by_id[item_data['item_id']]
-                quantity = item_data['quantity']
-                
-                CustomerOrderItem.objects.create(
-                    customer_order=order,
-                    quote_item=item,
-                    quantity=quantity,
-                    unit=item.unit,
-                    net_unit_price=item.net_unit_price,
-                    vat_rate=item.vat_rate,
-                    discount_percent=item.discount_percent,
-                    description=item.description
+            for rfq_id, rfq_data in items_by_qr.items():
+                rfq_obj = rfq_data['qr_obj']
+                order_number = _gen_order_number(rfq_obj)
+                order = CustomerOrder.objects.create(
+                    quote_request=rfq_obj,
+                    order_number=order_number,
+                    status='new',
+                    notes=request.data.get('notes', ''),
+                    deadline=deadline_val,
+                    # created_by None, mivel publikus
                 )
-                
-                # Tétel megnevezés feloldása típus szerint
-                if item.product:
-                    item_megnevezes = item.product.name
-                elif item.manufacturing_product:
-                    item_megnevezes = item.manufacturing_product.name
-                elif item.service:
-                    item_megnevezes = item.service.name
-                elif item.material:
-                    item_megnevezes = item.material.name
-                elif item.description:
-                    item_megnevezes = item.description[:100]
-                else:
-                    item_megnevezes = 'Tétel'
-                line = f"- {item_megnevezes}: {quantity} {item.unit}"
-                if item.description and item.description != item_megnevezes:
-                    line += f"\n    Leírás: {item.description[:200]}"
-                order_details.append(line)
-            
-            # Státusz frissítés - minden érintett ajánlat megrendelve (NEM archív!)
-            touched_quote_requests = {item.quote_request for item in valid_items}
-            for touched_qr in touched_quote_requests:
-                if touched_qr.status != 'ordered':
-                    touched_qr.status = 'ordered'
-                    touched_qr.save(update_fields=['status'])
+                for item, quantity in rfq_data['entries']:
+                    CustomerOrderItem.objects.create(
+                        customer_order=order,
+                        quote_item=item,
+                        quantity=quantity,
+                        unit=item.unit,
+                        net_unit_price=item.net_unit_price,
+                        vat_rate=item.vat_rate,
+                        discount_percent=item.discount_percent,
+                        description=item.description
+                    )
+                    # Tétel megnevezés feloldása típus szerint
+                    if item.product:
+                        item_megnevezes = item.product.name
+                    elif item.manufacturing_product:
+                        item_megnevezes = item.manufacturing_product.name
+                    elif item.service:
+                        item_megnevezes = item.service.name
+                    elif item.material:
+                        item_megnevezes = item.material.name
+                    elif item.description:
+                        item_megnevezes = item.description[:100]
+                    else:
+                        item_megnevezes = 'Tétel'
+                    line = f"- {item_megnevezes}: {quantity} {item.unit}"
+                    if item.description and item.description != item_megnevezes:
+                        line += f"\n    Leírás: {item.description[:200]}"
+                    order_details.append(line)
+                # Státusz frissítés az érintett RFQ-hoz
+                if rfq_obj.status != 'ordered':
+                    rfq_obj.status = 'ordered'
+                    rfq_obj.save(update_fields=['status'])
+
+        order_number = primary_order_number  # used in email subject below
 
         # Email küldés (csak sikeres tranzakció esetén)
         from django.core.mail import get_connection, EmailMultiAlternatives
         from apps.core.models import EmailServerConfig
-        
+
         email_body = f"""Új megrendelés érkezett a publikus megrendelő felületen keresztül.
 
 Ajánlat megnevezése: {qr.title}
