@@ -1628,6 +1628,21 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             if qr.status == 'invoiced':
                 qr.status = 'ordered'
         qr.save(update_fields=['primary_invoice_number', 'status'])
+        try:
+            if invoice_number:
+                QuoteLog.objects.create(
+                    quote=qr,
+                    action=f'Kiszámlázva: {invoice_number}',
+                    meta={'category': 'invoice', 'invoice_number': invoice_number},
+                )
+            else:
+                QuoteLog.objects.create(
+                    quote=qr,
+                    action='Számla sztornózva',
+                    meta={'category': 'invoice'},
+                )
+        except Exception:
+            pass
         return Response({'id': qr.id, 'number': qr.number, 'status': qr.status, 'primary_invoice_number': qr.primary_invoice_number})
 
     @action(detail=True, methods=['post'])
@@ -2365,12 +2380,13 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                 for k in _old_snap
                 if str(_old_snap[k]) != str(_new_snap[k])
             }
-            QuoteLog.objects.create(
-                quote=qr,
-                user=request.user,
-                action='Árajánlat módosítva (alap adatok)',
-                meta={'changes': _changes} if _changes else {},
-            )
+            if _changes:  # csak akkor logolunk, ha tényleg változott valami
+                QuoteLog.objects.create(
+                    quote=qr,
+                    user=request.user,
+                    action='Árajánlat módosítva (alap adatok)',
+                    meta={'changes': _changes},
+                )
         except Exception:
             pass
         return Response(QuoteRequestSerializer(qr, context={'request': request}).data)
@@ -5744,16 +5760,32 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
             # Storno: revert invoiced items back to in_delivery
             order.items.filter(status='invoiced').update(status='in_delivery')
 
-        # Update linked RFQ status
+        # Update linked RFQ status and log the invoice event
         qr = getattr(order, 'quote_request', None)
         if qr:
             if invoice_number:
                 qr.status = 'invoiced'
                 qr.save(update_fields=['status'])
+                try:
+                    QuoteLog.objects.create(
+                        quote=qr,
+                        action=f'Kiszámlázva: {invoice_number}',
+                        meta={'category': 'invoice', 'invoice_number': invoice_number},
+                    )
+                except Exception:
+                    pass
             else:
                 if qr.status == 'invoiced':
                     qr.status = 'ordered'
                     qr.save(update_fields=['status'])
+                try:
+                    QuoteLog.objects.create(
+                        quote=qr,
+                        action=f'Számla sztornózva: {order.invoice_number or ""}',
+                        meta={'category': 'invoice'},
+                    )
+                except Exception:
+                    pass
 
         return Response(self.get_serializer(order).data)
 
