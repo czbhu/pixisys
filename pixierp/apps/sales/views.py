@@ -5713,6 +5713,12 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
         invoice_number = request.data.get('invoice_number')
         # Allow None/null to clear the invoice number (for storno)
         order.invoice_number = invoice_number
+        if invoice_number:
+            order.status = 'invoiced'
+        else:
+            # Storno: revert to delivered if it was invoiced
+            if order.status == 'invoiced':
+                order.status = 'delivered'
         order.save()
 
         # Update CustomerOrderItem statuses
@@ -5722,16 +5728,15 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
             # Storno: revert invoiced items back to in_delivery
             order.items.filter(status='invoiced').update(status='in_delivery')
 
-        # Update linked RFQ status: ordered when invoice set, accepted when cleared
+        # Update linked RFQ status
         qr = getattr(order, 'quote_request', None)
         if qr:
             if invoice_number:
-                if qr.status in ('new', 'in_progress', 'quoted', 'accepted'):
-                    qr.status = 'ordered'
-                    qr.save(update_fields=['status'])
+                qr.status = 'invoiced'
+                qr.save(update_fields=['status'])
             else:
-                if qr.status == 'ordered':
-                    qr.status = 'accepted'
+                if qr.status == 'invoiced':
+                    qr.status = 'ordered'
                     qr.save(update_fields=['status'])
 
         return Response(self.get_serializer(order).data)
