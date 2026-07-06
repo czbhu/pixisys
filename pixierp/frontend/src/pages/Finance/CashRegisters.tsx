@@ -217,7 +217,7 @@ const CashRegisters: React.FC = () => {
                 params.search = searchText;
             }
 
-            const response = await api.get('/finance/cash-transactions/', { params });
+            const response = await api.get('/finance/cash-transactions/', { params: { ...params, page_size: 1000 } });
             const data = response.data.results || response.data;
             setTransactions(Array.isArray(data) ? data : []);
         } catch (error) {
