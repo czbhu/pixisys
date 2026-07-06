@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Table, Button, Checkbox, message, Card, Select, Tag, Modal, Form, Input, Space, Statistic } from 'antd';
 import { FileTextOutlined, EyeOutlined, DollarOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../../contexts/AuthContext';
 import api from '../../services/api';
 import type { ColumnsType } from 'antd/es/table';
 import EnhancedTable, { renderCustomerName } from '../../components/EnhancedTable';
@@ -66,6 +67,7 @@ interface InvoiceableOrder {
 }
 
 const Invoicing: React.FC = () => {
+  const { user } = useAuth();
   const [orders, setOrders] = useState<InvoiceableOrder[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedRowKeys, setSelectedRowKeys] = useState<number[]>([]);
@@ -272,14 +274,15 @@ const Invoicing: React.FC = () => {
           items: items,
           notes: `ERP megrendelések: ${companyOrders.map(o => o.order_number).join(', ')}`,
           erp_order_ids: companyOrders.map(o => o.id), // Send order IDs for callback
+          erp_user_id: user?.id ?? null,
         };
 
-        // Encode data as base64 to pass in URL (sessionStorage doesn't work across different origins)
+        // Encode data as base64 to pass in URL hash (no 414 error)
         const encodedData = btoa(encodeURIComponent(JSON.stringify(invoiceData)));
 
-        // Open PixInvoice in new tab with data in URL parameter
+        // Open PixInvoice in new tab
         const PixInvoiceUrl = process.env.REACT_APP_PIXINVOICE_URL || 'https://i.pixisys.eu';
-        const pixinvoiceUrl = `${PixInvoiceUrl}/invoices/new?erp_data=${encodedData}`;
+        const pixinvoiceUrl = `${PixInvoiceUrl}/invoices/new#erp_data=${encodedData}`;
         window.open(pixinvoiceUrl, '_blank');
         
         message.success(`Számla előkészítve: ${companyName}`);

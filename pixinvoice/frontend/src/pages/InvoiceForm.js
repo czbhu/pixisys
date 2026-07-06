@@ -1675,6 +1675,7 @@ const InvoiceForm = () => {
   const hasERPDataRef = React.useRef(false);
   const erpOrderIdsRef = React.useRef([]); // Store ERP order IDs for callback
   const erpRfqIdsRef = React.useRef([]); // Store ERP RFQ IDs for callback (CO nélküli QR-ekhez)
+  const erpUserIdRef = React.useRef(null); // Store ERP user ID for log attribution
 
   // Load draft from localStorage on mount (skip for copy/correct/storno flows and ERP data)
   React.useEffect(() => {
@@ -1887,7 +1888,7 @@ const InvoiceForm = () => {
                   headers: {
                     'Content-Type': 'application/json',
                   },
-                  body: JSON.stringify({ invoice_number: invoiceNumToSend }),
+                  body: JSON.stringify({ invoice_number: invoiceNumToSend, erp_user_id: erpUserIdRef.current }),
                 });
                 
                 if (response.ok) {
@@ -1922,7 +1923,7 @@ const InvoiceForm = () => {
                 const resp = await fetch(`${erpBaseUrl}/sales/rfqs/${rfqId}/update_invoice_number/`, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ invoice_number: rfqInvoiceNum }),
+                  body: JSON.stringify({ invoice_number: rfqInvoiceNum, erp_user_id: erpUserIdRef.current }),
                 });
                 if (resp.ok) {
                   console.log(`[ERP RFQ Callback] QR ${rfqId} frissítve`);
@@ -3519,6 +3520,10 @@ const InvoiceForm = () => {
       if (draft.erp_rfq_ids && Array.isArray(draft.erp_rfq_ids)) {
         console.log('[ERP] Storing RFQ IDs for callback:', draft.erp_rfq_ids);
         erpRfqIdsRef.current = draft.erp_rfq_ids;
+      }
+      // Store ERP user ID for log attribution in callback
+      if (draft.erp_user_id) {
+        erpUserIdRef.current = draft.erp_user_id;
       }
       
       // Always set issue_date to today for new invoices from ERP (draft may have loaded a stale date)

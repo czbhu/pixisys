@@ -1103,43 +1103,17 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                 alias.save()
         except Exception:
             pass
+        try:
+            fname = att.original_filename or (att.file.name.split('/')[-1] if att.file else '')
+            QuoteLog.objects.create(
+                quote=qr,
+                user=request.user if request.user and request.user.is_authenticated else None,
+                action=f'Csatolány feltöltve: {fname}',
+                meta={'category': 'log'},
+            )
+        except Exception:
+            pass
         return Response(QuoteRequestAttachmentSerializer(att, context={'request': request}).data, status=status.HTTP_201_CREATED)
-
-    @action(detail=True, methods=['post'])
-    def approve_attachment(self, request, pk=None):
-        qr = self.get_object()
-        att_id = request.data.get('attachment_id')
-        if not att_id:
-            return Response({'error': 'attachment_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
-        att = get_object_or_404(QuoteRequestAttachment, id=att_id, quote_request=qr)
-        att.approved_by = request.user if request.user and request.user.is_authenticated else None
-        att.approved_at = timezone.now()
-        att.save(update_fields=['approved_by', 'approved_at'])
-        return Response(QuoteRequestAttachmentSerializer(att, context={'request': request}).data)
-
-    @action(detail=True, methods=['post'])
-    def approve_attachment(self, request, pk=None):
-        qr = self.get_object()
-        att_id = request.data.get('attachment_id')
-        if not att_id:
-            return Response({'error': 'attachment_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
-        att = get_object_or_404(QuoteRequestAttachment, id=att_id, quote_request=qr)
-        att.approved_by = request.user if request.user and request.user.is_authenticated else None
-        att.approved_at = timezone.now()
-        att.save(update_fields=['approved_by', 'approved_at'])
-        return Response(QuoteRequestAttachmentSerializer(att, context={'request': request}).data)
-
-    @action(detail=True, methods=['post'])
-    def approve_attachment(self, request, pk=None):
-        qr = self.get_object()
-        att_id = request.data.get('attachment_id')
-        if not att_id:
-            return Response({'error': 'attachment_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
-        att = get_object_or_404(QuoteRequestAttachment, id=att_id, quote_request=qr)
-        att.approved_by = request.user if request.user and request.user.is_authenticated else None
-        att.approved_at = timezone.now()
-        att.save(update_fields=['approved_by', 'approved_at'])
-        return Response(QuoteRequestAttachmentSerializer(att, context={'request': request}).data)
 
     @action(detail=True, methods=['post'])
     def update_attachment_remark(self, request, pk=None):
@@ -1630,8 +1604,17 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         qr.save(update_fields=['primary_invoice_number', 'status'])
         try:
             if invoice_number:
+                log_user = None
+                erp_user_id = request.data.get('erp_user_id')
+                if erp_user_id:
+                    from django.contrib.auth import get_user_model
+                    try:
+                        log_user = get_user_model().objects.get(pk=erp_user_id)
+                    except Exception:
+                        pass
                 QuoteLog.objects.create(
                     quote=qr,
+                    user=log_user,
                     action=f'Kiszámlázva: {invoice_number}',
                     meta={'category': 'invoice', 'invoice_number': invoice_number},
                 )
@@ -3750,6 +3733,41 @@ class QuoteRequestItemViewSet(viewsets.ModelViewSet):
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=['post'])
+    def update_cost_items_status(self, request, pk=None):
+        """Minden cost item státuszának bulk frissítése (RFQ lista popup)"""
+        item = self.get_object()
+        new_status = request.data.get('status')
+        if not new_status:
+            return Response({'error': 'status kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        old_data = item.cost_items_data or []
+        if isinstance(old_data, list) and old_data:
+            for ci in old_data:
+                if isinstance(ci, dict):
+                    ci['status'] = new_status
+            item.cost_items_data = old_data
+            item.save(update_fields=['cost_items_data'])
+        # Log to parent QR
+        try:
+            qr = item.quote_request
+            STATUS_LABELS = {
+                'new': 'Új', 'in_production': 'Gyártásban', 'ready': 'Kész',
+                'in_delivery': 'Szállítás alatt', 'delivered': 'Kiszállítva',
+                'quoted': 'Ár megadva', 'ordered': 'Megrendelve',
+            }
+            label = STATUS_LABELS.get(new_status, new_status)
+            item_name = item.description or item.item_name or f'Tétel #{item.id}'
+            QuoteLog.objects.create(
+                quote=qr,
+                user=request.user if request.user and request.user.is_authenticated else None,
+                action=f'Gyártási státusz: {item_name} → {label}',
+                meta={'category': 'production'},
+            )
+        except Exception:
+            pass
+        from apps.sales.serializers import QuoteRequestItemSerializer
+        return Response(QuoteRequestItemSerializer(item, context={'request': request}).data)
+
+    @action(detail=True, methods=['post'])
     def update_attachment_remark(self, request, pk=None):
         item = self.get_object()
         att_id = request.data.get('attachment_id')
@@ -5767,8 +5785,18 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
                 qr.status = 'invoiced'
                 qr.save(update_fields=['status'])
                 try:
+                    # Resolve user from callback body (pixinvoice passes erp_user_id)
+                    log_user = None
+                    erp_user_id = request.data.get('erp_user_id')
+                    if erp_user_id:
+                        from django.contrib.auth import get_user_model
+                        try:
+                            log_user = get_user_model().objects.get(pk=erp_user_id)
+                        except Exception:
+                            pass
                     QuoteLog.objects.create(
                         quote=qr,
+                        user=log_user,
                         action=f'Kiszámlázva: {invoice_number}',
                         meta={'category': 'invoice', 'invoice_number': invoice_number},
                     )

@@ -2981,6 +2981,7 @@ const RFQs: React.FC = () => {
           notes: `ERP árajánlat: ${rfqNumbers.join(', ')}`,
           erp_order_ids: erpOrderIds,
           erp_rfq_ids: group.rows.map(({ row }: any) => row.rfq_id),
+          erp_user_id: user?.id ?? null,
           delivery_date: dayjs().format('YYYY-MM-DD'),
         };
 
