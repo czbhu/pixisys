@@ -1677,9 +1677,12 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
 
             marker = f'Átadás: {serial}'
             for qr in qrs:
+                qr.status = 'invoiced'
+                qr.primary_invoice_number = marker
+                qr.save(update_fields=['status', 'primary_invoice_number'])
                 try:
                     QuoteLog.objects.create(
-                        quote=qr, user=user, action=marker, meta={'category': 'log'}
+                        quote=qr, user=user, action=marker, meta={'category': 'invoice', 'invoice_number': marker}
                     )
                 except Exception:
                     pass

@@ -2961,9 +2961,20 @@ const RFQs: React.FC = () => {
       message.success(`Átadás rögzítve: ${res.data?.serial}`);
       setHandoverOpen(false);
       setBulkSelectedKeys([]);
+      const marker = `Átadás: ${res.data?.serial}`;
+      // Helyi állapot frissítése: státusz → invoiced, invoice_number → marker
       setRfqs((prev: any[]) => prev.map((rfq: any) => {
         if (rfqIds.includes(rfq.id)) {
-          return { ...rfq, logs: [...(rfq.logs || []), { action: `Átadás: ${res.data?.serial}` }] };
+          const updatedItems = (rfq.items || []).map((it: any, idx: number) =>
+            idx === 0 ? { ...it, invoice_number: marker } : it
+          );
+          return {
+            ...rfq,
+            status: 'invoiced',
+            effective_status: 'invoiced',
+            primary_invoice_number: marker,
+            items: updatedItems,
+          };
         }
         return rfq;
       }));
