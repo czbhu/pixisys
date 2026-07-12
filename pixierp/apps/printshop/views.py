@@ -598,8 +598,10 @@ class PrintOrderViewSet(viewsets.ModelViewSet):
                             svc2 = Service.objects.prefetch_related('cost_items').get(id=print_service_id_2)
                             print_service_name_2 = svc2.name
                             c, items = _build_service_cost(svc2, quantity, sheets_needed)
-                            if fix_cost_first_side_only:
-                                # Remove fixed cost items from side 2
+                            # Fix-költség eltávolítása a 2. oldalról csak akkor, ha:
+                            # - "fix csak 1. oldalra" be van kapcsolva ÉS
+                            # - az 1. oldal nem Nyomatlan (volt beállási díj az 1. oldalon)
+                            if fix_cost_first_side_only and print_service_id_1:
                                 items = [i for i in items if i['type'] != 'fixed']
                                 c = sum(Decimal(str(i['total'])) for i in items)
                             print_cost_side2 = c
