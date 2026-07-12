@@ -695,6 +695,24 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
           </Text>
         )}
 
+        {/* Figyelmeztetés: méret nem fér fel az ívméretre → több darabban nyomtatva */}
+        {isClickSheet && !sizeExceeded && activeClickPricing && (() => {
+          const prodW = (params.width_mm ?? 0) + 2 * clickBleed;
+          const prodH = (params.height_mm ?? 0) + 2 * clickBleed;
+          const exceedsSheet = prodW > activeClickPricing.sheet_w_mm || prodH > activeClickPricing.sheet_h_mm;
+          if (!exceedsSheet) return null;
+          return (
+            <div style={{ marginBottom: 4, marginTop: 2, padding: '5px 8px', background: '#fff1f0', border: '1px solid #ffccc7', borderRadius: 4 }}>
+              <Text style={{ fontSize: 11, color: '#cf1322', fontWeight: 500 }}>
+                ⚠ A megadott méret több darabban lesz kinyomva!
+              </Text>
+              <div style={{ fontSize: 10, color: '#cf1322', marginTop: 2 }}>
+                Termékméret ({prodW}×{prodH} mm) &gt; ívméret ({activeClickPricing.sheet_w_mm}×{activeClickPricing.sheet_h_mm} mm)
+              </div>
+            </div>
+          );
+        })()}
+
           {/* Klikkdíjas nyomtatás: alapanyag → oldalszám → oldalankénti szolgáltatás → ívméret */}
           {isClickSheet && (
             <>
