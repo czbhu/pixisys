@@ -444,6 +444,7 @@ const Materials: React.FC = () => {
   // Material sizes management
   const [materialSizes, setMaterialSizes] = useState<MaterialSizeItem[]>([]);
   const [sizeModalVisible, setSizeModalVisible] = useState(false);
+  const sizeNameManualRef = React.useRef(false); // true if user manually typed a name
   const [editingSizeItem, setEditingSizeItem] = useState<MaterialSizeItem | null>(null);
   const [sizeForm] = Form.useForm();
   
@@ -801,6 +802,7 @@ const Materials: React.FC = () => {
 
   const handleAddSize = () => {
     if (!editingMaterial) { message.warning('Először mentsd el az alapanyagot'); return; }
+    sizeNameManualRef.current = false;
     setEditingSizeItem(null);
     sizeForm.resetFields();
     sizeForm.setFieldsValue({
@@ -815,13 +817,14 @@ const Materials: React.FC = () => {
   };
 
   const handleEditSize = (item: MaterialSizeItem) => {
+    sizeNameManualRef.current = !!item.name; // existing name = manual
     setEditingSizeItem(item);
     sizeForm.setFieldsValue(item);
     setSizeModalVisible(true);
   };
 
   const handleDuplicateSize = (item: MaterialSizeItem) => {
-    setEditingSizeItem(null);
+    sizeNameManualRef.current = false;
     sizeForm.setFieldsValue({ ...item, id: undefined, name: item.name ? `${item.name} (másolat)` : '' });
     setSizeModalVisible(true);
   };
@@ -846,8 +849,7 @@ const Materials: React.FC = () => {
   };
 
   const autoFillSizeName = () => {
-    const currentName = sizeForm.getFieldValue('name');
-    if (currentName) return; // don't overwrite manual name
+    if (sizeNameManualRef.current) return; // user manually edited: don't overwrite
     const w = sizeForm.getFieldValue('width');
     const l = sizeForm.getFieldValue('length');
     const h = sizeForm.getFieldValue('height');
@@ -3330,9 +3332,9 @@ const Materials: React.FC = () => {
           <Form.Item name="name" label="Megnevezés (opcionális)">
             <Input
               placeholder="pl. A4, A3, Egyedi – ha üres, automatikusan kitöltődik"
-              onChange={() => {/* manual edit: keep as-is */}}
+              onChange={(e) => { sizeNameManualRef.current = !!e.target.value; }}
               allowClear
-              onClear={() => setTimeout(autoFillSizeName, 0)}
+              onClear={() => { sizeNameManualRef.current = false; setTimeout(autoFillSizeName, 0); }}
             />
           </Form.Item>
           <Row gutter={12}>
