@@ -295,9 +295,15 @@ const Materials: React.FC = () => {
   const [currencyList, setCurrencyList] = useState<MCurrency[]>([]);
   const [selectedMaterialFormat, setSelectedMaterialFormat] = useState<string>('piece');
   const [searchText, setSearchText] = useState<string>('');
-  const [filterType, setFilterType] = useState<string>('all');
-  const [filterGroupId, setFilterGroupId] = useState<number | undefined>(undefined);
-  const [filterSupplierId, setFilterSupplierId] = useState<number | undefined>(undefined);
+  const [filterType, setFilterType] = useState<string>(() => {
+    try { return sessionStorage.getItem('materials_filterType') || 'all'; } catch { return 'all'; }
+  });
+  const [filterGroupId, setFilterGroupId] = useState<number | undefined>(() => {
+    try { const v = sessionStorage.getItem('materials_filterGroupId'); return v ? Number(v) : undefined; } catch { return undefined; }
+  });
+  const [filterSupplierId, setFilterSupplierId] = useState<number | undefined>(() => {
+    try { const v = sessionStorage.getItem('materials_filterSupplierId'); return v ? Number(v) : undefined; } catch { return undefined; }
+  });
   const [netUnitPrice, setNetUnitPrice] = useState<number>(0);
   const [calculatedVat, setCalculatedVat] = useState<number>(0);
   const [calculatedGross, setCalculatedGross] = useState<number>(0);
@@ -2140,33 +2146,30 @@ const Materials: React.FC = () => {
           <Space wrap>
             <Select
               value={filterType}
-              onChange={setFilterType}
+              onChange={(val) => { setFilterType(val); try { sessionStorage.setItem('materials_filterType', val); } catch {} }}
               style={{ width: 140 }}
             >
               <Option value="all">Mind</Option>
               <Option value="materials">Alapanyagok</Option>
               <Option value="products">Termékek</Option>
             </Select>
-            <Select
+            <TreeSelect
               allowClear
               placeholder="Kategória"
               value={filterGroupId}
-              onChange={(val) => setFilterGroupId(val)}
+              onChange={(val) => { setFilterGroupId(val); try { if (val != null) sessionStorage.setItem('materials_filterGroupId', String(val)); else sessionStorage.removeItem('materials_filterGroupId'); } catch {} }}
               style={{ width: 180 }}
               showSearch
-              filterOption={(input, option) =>
-                String(option?.children || '').toLowerCase().includes(input.toLowerCase())
-              }
-            >
-              {materialGroups.map(g => (
-                <Option key={g.id} value={g.id}>{g.name}</Option>
-              ))}
-            </Select>
+              treeData={materialGroupTree}
+              treeDefaultExpandAll={false}
+              filterTreeNode={(input, node) => String(node?.title ?? '').toLowerCase().includes(input.toLowerCase())}
+              styles={{ popup: { root: { maxHeight: 400, overflow: 'auto' } } }}
+            />
             <Select
               allowClear
               placeholder="Beszállító"
               value={filterSupplierId}
-              onChange={(val) => setFilterSupplierId(val)}
+              onChange={(val) => { setFilterSupplierId(val); try { if (val != null) sessionStorage.setItem('materials_filterSupplierId', String(val)); else sessionStorage.removeItem('materials_filterSupplierId'); } catch {} }}
               style={{ width: 200 }}
               showSearch
               filterOption={(input, option) =>
