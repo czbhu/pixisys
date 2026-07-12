@@ -2928,7 +2928,7 @@ const RFQs: React.FC = () => {
     if (!selectedRows.length) { message.warning('Nincs kijelölt ajánlat'); return; }
     try {
       const [serialRes, regsRes] = await Promise.all([
-        api.get('/sales/rfqs/handover_serial_suggest/'),
+        api.get('/sales/quote-requests/handover_serial_suggest/'),
         api.get('/finance/cash-registers/?can_deposit_for_me=1'),
       ]);
       setHandoverCashRegisters(regsRes.data?.results || regsRes.data || []);
@@ -2952,7 +2952,7 @@ const RFQs: React.FC = () => {
       setHandoverLoading(true);
       const selectedRows = flattenedItems.filter((item: any) => bulkSelectedKeys.includes(item.uniqueId));
       const rfqIds = Array.from(new Set(selectedRows.map((r: any) => r.rfq_pk).filter(Boolean)));
-      const res = await api.post('/sales/rfqs/handover/', {
+      const res = await api.post('/sales/quote-requests/handover/', {
         rfq_ids: rfqIds,
         serial: values.serial,
         cash_register: values.cash_register,
