@@ -2485,7 +2485,9 @@ const Materials: React.FC = () => {
                     </Form.Item>
                     <Form.Item name="weight_unit" label="Súly egység">
                       <Select onChange={() => calculateWeightFromDimensions()}>
+                        <Option value="g">g</Option>
                         <Option value="kg">kg</Option>
+                        <Option value="t">t</Option>
                       </Select>
                     </Form.Item>
                   </div>
