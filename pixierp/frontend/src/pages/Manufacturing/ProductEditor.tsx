@@ -740,17 +740,21 @@ const ProductEditor: React.FC = () => {
 
     const fmt = (v: any) => v != null && v !== '' ? `${Number(v).toLocaleString('hu-HU')} Ft` : '–';
 
-    // Breakdown: fix + egységár/klikk for services
+    // Breakdown: minden calculation_type megjelenítése
+    const TYPE_LABELS: Record<string, string> = {
+      fixed: 'fix', unit: 'egységár', click: 'klikk',
+      length: 'hossz', perimeter: 'kerület', area: 'terület',
+      weight: 'súly', time: 'idő', sheet: 'ív',
+    };
     const renderPriceBreakdown = (r: any, priceField: 'unit_cost_price' | 'unit_selling_price') => {
       const main = fmt(r[priceField]);
       if (r._type !== 'Szolgáltatás') return <span>{main}</span>;
-      const summary = r.cost_summary as { fixed?: number; unit?: number } | undefined;
-      const costItems: any[] = r.cost_items_data || [];
-      if (!summary || (!(summary.fixed) && !(summary.unit))) return <span>{main}</span>;
-      const hasClick = costItems.some((ci: any) => ci.calculation_type === 'click');
+      const summary = r.cost_summary as Record<string, number> | undefined;
+      if (!summary || !Object.values(summary).some(v => v)) return <span>{main}</span>;
       const parts: string[] = [];
-      if (summary.fixed) parts.push(`fix: ${Number(summary.fixed).toLocaleString('hu-HU')} Ft`);
-      if (summary.unit) parts.push(`${hasClick ? 'klikk' : 'egységár'}: ${Number(summary.unit).toLocaleString('hu-HU')} Ft`);
+      Object.entries(summary).forEach(([type, val]) => {
+        if (val) parts.push(`${TYPE_LABELS[type] || type}: ${Number(val).toLocaleString('hu-HU')} Ft`);
+      });
       return (
         <span>
           {main}

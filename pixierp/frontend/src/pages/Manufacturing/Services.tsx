@@ -50,7 +50,7 @@ interface Service {
   unit_cost_selling?: number;
   capacity?: number | null;
   is_protected?: boolean;
-  cost_summary?: { fixed: number; unit: number };
+  cost_summary?: Record<string, number>;
   cost_items_data?: { calculation_type: string; unit_price: number; selling_price: number }[];
 }
 
@@ -1139,12 +1139,18 @@ const Services: React.FC = () => {
       sorter: (a: Service, b: Service) => (a.unit_selling_price || 0) - (b.unit_selling_price || 0),
       render: (_: any, r: Service) => {
         const main = r.unit_selling_price ? `${Number(r.unit_selling_price).toLocaleString('hu-HU')} Ft` : '–';
-        const summary = r.cost_summary;
-        const costItems = r.cost_items_data || [];
-        const hasClick = costItems.some(ci => ci.calculation_type === 'click');
+        const summary = r.cost_summary as Record<string, number> | undefined;
+        const TYPE_LABELS: Record<string, string> = {
+          fixed: 'fix', unit: 'egységár', click: 'klikk',
+          length: 'hossz', perimeter: 'kerület', area: 'terület',
+          weight: 'súly', time: 'idő', sheet: 'ív',
+        };
         const parts: string[] = [];
-        if (summary?.fixed) parts.push(`fix: ${Number(summary.fixed).toLocaleString('hu-HU')} Ft`);
-        if (summary?.unit) parts.push(`${hasClick ? 'klikk' : 'egységár'}: ${Number(summary.unit).toLocaleString('hu-HU')} Ft`);
+        if (summary) {
+          Object.entries(summary).forEach(([type, val]) => {
+            if (val) parts.push(`${TYPE_LABELS[type] || type}: ${Number(val).toLocaleString('hu-HU')} Ft`);
+          });
+        }
         return (
           <span>
             {main}

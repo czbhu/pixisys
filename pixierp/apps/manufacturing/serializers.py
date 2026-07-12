@@ -446,20 +446,15 @@ class ServiceSerializer(serializers.ModelSerializer):
         return [g.name for g in obj.groups.all()]
 
     def get_cost_summary(self, obj):
-        """Aggregate fixed + per-unit selling prices from active cost items."""
-        fixed_total = 0
-        unit_total = 0
+        """Aggregate selling prices from active cost items, grouped by calculation_type."""
+        totals: dict = {}
         for ci in obj.cost_items.filter(is_active=True):
-            if ci.calculation_type in ('length', 'perimeter', 'area', 'weight', 'time'):
-                continue
             if not (ci.supplier_id or ci.is_internal):
                 continue
             price = float(ci.selling_price or 0)
-            if ci.calculation_type == 'fixed':
-                fixed_total += price
-            elif ci.calculation_type in ('unit', 'click'):
-                unit_total += price
-        return {'fixed': fixed_total, 'unit': unit_total}
+            ct = ci.calculation_type or 'unit'
+            totals[ct] = totals.get(ct, 0) + price
+        return totals
 
     def get_cost_items_data(self, obj):
         """Return active cost items with supplier/department info for RFQ preload."""
