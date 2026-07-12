@@ -239,6 +239,9 @@ const ProductEditor: React.FC = () => {
   );
   const [query, setQuery]                   = useState('');
 
+  // Expandable rows: cached data per product id
+  const [expandedData, setExpandedData] = useState<Record<number, {services: any[]; materials: any[]; loading: boolean}>>({});
+
   // Drawer state
   const [drawerOpen, setDrawerOpen]     = useState(false);
   const [editing, setEditing]           = useState<ProductTemplate | null>(null);
@@ -694,6 +697,76 @@ const ProductEditor: React.FC = () => {
     setDetailOpen(true);
   };
 
+  // ── Expandable rows ───────────────────────────────────────────────────────────
+
+  const handleExpand = async (expanded: boolean, record: ProductTemplate) => {
+    if (!expanded || expandedData[record.id]) return;
+    setExpandedData(prev => ({ ...prev, [record.id]: { services: [], materials: [], loading: true } }));
+    try {
+      const svcIds = [
+        ...record.allowed_services,
+        ...record.required_services,
+        ...record.finishing_services,
+        ...record.binding_services,
+        ...(record.print_service ? [record.print_service] : []),
+        ...(record.print_service_options || []),
+      ].filter((v, i, a) => v != null && a.indexOf(v) === i);
+
+      const matIds = [...record.allowed_materials].filter((v, i, a) => v != null && a.indexOf(v) === i);
+
+      const [svcRes, matRes] = await Promise.all([
+        svcIds.length ? api.get(`/manufacturing/services/?ids=${svcIds.join(',')}&page_size=500`) : Promise.resolve({ data: [] }),
+        matIds.length ? api.get(`/warehouse/materials/?ids=${matIds.join(',')}&page_size=500`) : Promise.resolve({ data: [] }),
+      ]);
+      const svcData = Array.isArray(svcRes.data) ? svcRes.data : (svcRes.data.results || []);
+      const matData = Array.isArray(matRes.data) ? matRes.data : (matRes.data.results || []);
+      setExpandedData(prev => ({ ...prev, [record.id]: { services: svcData, materials: matData, loading: false } }));
+    } catch {
+      setExpandedData(prev => ({ ...prev, [record.id]: { services: [], materials: [], loading: false } }));
+    }
+  };
+
+  const expandedRowRender = (record: ProductTemplate) => {
+    const data = expandedData[record.id];
+    if (!data || data.loading) return <div style={{ padding: '8px 16px', color: '#888' }}>Betöltés…</div>;
+
+    const rows = [
+      ...data.services.map((s: any) => ({ ...s, _type: 'Szolgáltatás', _url: `/manufacturing/services?edit=${s.id}` })),
+      ...data.materials.map((m: any) => ({ ...m, _type: 'Alapanyag', _url: `/warehouse/materials?edit=${m.id}` })),
+    ];
+
+    if (!rows.length) return <div style={{ padding: '8px 16px', color: '#888' }}>Nincs kapcsolódó tétel.</div>;
+
+    const fmt = (v: any) => v != null && v !== '' ? `${Number(v).toLocaleString('hu-HU')} Ft` : '–';
+
+    const subColumns = [
+      { title: 'Típus', key: '_type', width: 110, render: (_: any, r: any) => <Tag color={r._type === 'Szolgáltatás' ? 'blue' : 'green'}>{r._type}</Tag> },
+      { title: 'Megnevezés', dataIndex: 'name', key: 'name', render: (v: string, r: any) => <span style={{ fontWeight: 500 }}>{v}</span> },
+      { title: 'Cikkszám', dataIndex: 'code', key: 'code', width: 130, render: (v: string) => v ? <Text code>{v}</Text> : '–' },
+      { title: 'Besz. ár', key: 'cost', width: 120, render: (_: any, r: any) => fmt(r.unit_cost_price) },
+      { title: 'Elad. ár', key: 'sell', width: 120, render: (_: any, r: any) => fmt(r.unit_selling_price) },
+      {
+        title: 'Műveletek', key: 'actions', width: 90,
+        render: (_: any, r: any) => (
+          <Tooltip title="Megnyitás új lapon">
+            <Button size="small" icon={<EditOutlined />} onClick={() => window.open(r._url, '_blank')} />
+          </Tooltip>
+        ),
+      },
+    ];
+
+    return (
+      <Table
+        dataSource={rows}
+        columns={subColumns}
+        rowKey={(r: any) => `${r._type}_${r.id}`}
+        pagination={false}
+        size="small"
+        style={{ margin: '0 16px 8px 48px' }}
+      />
+    );
+  };
+
   // ── Columns ──────────────────────────────────────────────────────────────────
 
   const columns = [
@@ -808,6 +881,14 @@ const ProductEditor: React.FC = () => {
         pagination={{ pageSize: 25, showSizeChanger: true }}
         locale={{ emptyText: <Empty description="Nincs termék rögzítve" /> }}
         rowSelection={{ selectedRowKeys, onChange: setSelectedRowKeys }}
+        expandable={{
+          expandedRowRender,
+          onExpand: handleExpand,
+          rowExpandable: (r: ProductTemplate) =>
+            r.allowed_services.length + r.required_services.length + r.finishing_services.length +
+            r.binding_services.length + r.allowed_materials.length +
+            (r.print_service ? 1 : 0) + (r.print_service_options?.length ?? 0) > 0,
+        }}
       />
 
       {/* ── Create / Edit Drawer ─────────────────────────────────────────── */}
