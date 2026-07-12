@@ -606,8 +606,8 @@ class PrintOrderViewSet(viewsets.ModelViewSet):
                             print_service_items_2 = items
                         except Service.DoesNotExist:
                             pass
-                    elif print_service_id_1:
-                        # Same service for both sides
+                    elif print_service_id_2 and str(print_service_id_2) == str(print_service_id_1):
+                        # Same service explicitly selected for both sides
                         print_service_name_2 = print_service_name_1
                         for ci_item in print_service_items_1:
                             if ci_item['type'] == 'click':
