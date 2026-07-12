@@ -699,7 +699,9 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
         {isClickSheet && !sizeExceeded && activeClickPricing && (() => {
           const prodW = (params.width_mm ?? 0) + 2 * clickBleed;
           const prodH = (params.height_mm ?? 0) + 2 * clickBleed;
-          const exceedsSheet = prodW > activeClickPricing.sheet_w_mm || prodH > activeClickPricing.sheet_h_mm;
+          const fitsNormal  = prodW <= activeClickPricing.sheet_w_mm && prodH <= activeClickPricing.sheet_h_mm;
+          const fitsRotated = prodH <= activeClickPricing.sheet_w_mm && prodW <= activeClickPricing.sheet_h_mm;
+          const exceedsSheet = !fitsNormal && !fitsRotated;
           if (!exceedsSheet) return null;
           return (
             <div style={{ marginBottom: 4, marginTop: 2, padding: '5px 8px', background: '#fff1f0', border: '1px solid #ffccc7', borderRadius: 4 }}>
