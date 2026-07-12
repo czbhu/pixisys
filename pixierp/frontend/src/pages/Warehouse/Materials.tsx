@@ -433,6 +433,7 @@ const Materials: React.FC = () => {
   const [costItemModalVisible, setCostItemModalVisible] = useState(false);
   const [selectedCalculationType, setSelectedCalculationType] = useState<string>('unit');
   const [duplicateSourceId, setDuplicateSourceId] = useState<number | null>(null);
+  const [duplicateSourceSizes, setDuplicateSourceSizes] = useState<any[]>([]);
 
   // Material sizes management
   const [materialSizes, setMaterialSizes] = useState<MaterialSizeItem[]>([]);
@@ -1158,8 +1159,31 @@ const Materials: React.FC = () => {
         console.log('✅ Backend response - savedMaterial.vat_type_id:', savedMaterial.vat_type_id);
         message.success('Alapanyag/Termék frissítve');
       } else {
-        const res = await api.post('/warehouse/materials/', submitData);
-        savedMaterial = res.data;
+        // Auto-increment code if already taken
+        const tryPost = async (data: any): Promise<any> => {
+          try {
+            const res = await api.post('/warehouse/materials/', data);
+            return res.data;
+          } catch (err: any) {
+            const errData = err?.response?.data;
+            const isCodeConflict = errData?.code && (
+              String(errData.code).toLowerCase().includes('unique') ||
+              String(errData.code).toLowerCase().includes('unique') ||
+              (Array.isArray(errData.code) && errData.code.some((e: string) => String(e).toLowerCase().includes('unique')))
+            );
+            if (!isCodeConflict) throw err;
+            // Strip existing suffix like -2, -3, ... then increment
+            const base = String(data.code || '').replace(/-(\d+)$/, '');
+            const codes = new Set(materials.map((m: any) => m.code));
+            let i = 2;
+            while (codes.has(`${base}-${i}`) && i < 9999) i++;
+            const newCode = `${base}-${i}`;
+            form.setFieldsValue({ code: newCode });
+            const res = await api.post('/warehouse/materials/', { ...data, code: newCode });
+            return res.data;
+          }
+        };
+        savedMaterial = await tryPost(submitData);
         message.success('Alapanyag/Termék létrehozva');
         
         // Copy cost items from source material when duplicating
@@ -1190,7 +1214,21 @@ const Materials: React.FC = () => {
             console.error('Failed to copy cost items:', err);
             message.warning('Költségelemek másolása sikertelen');
           }
+          // Copy sizes
+          if (duplicateSourceSizes.length > 0) {
+            try {
+              for (const sz of duplicateSourceSizes) {
+                const { id: _sid, material: _smid, created_at: _sc, ...szRest } = sz;
+                await api.post('/warehouse/material-sizes/', { ...szRest, material: savedMaterial.id });
+              }
+              message.success(`${duplicateSourceSizes.length} méret átmásolva`);
+            } catch (err) {
+              console.error('Failed to copy sizes:', err);
+              message.warning('Méretek másolása sikertelen');
+            }
+          }
           setDuplicateSourceId(null);
+          setDuplicateSourceSizes([]);
         }
 
         // Save added suppliers immediately for new material
@@ -1893,12 +1931,17 @@ const Materials: React.FC = () => {
   const handleDuplicate = async (record: Material) => {
     setLoading(true);
     try {
-        const res = await api.get(`/warehouse/materials/${record.id}/`);
+        const [res, sizesRes] = await Promise.all([
+          api.get(`/warehouse/materials/${record.id}/`),
+          api.get(`/warehouse/material-sizes/?material_id=${record.id}`),
+        ]);
         const data = res.data;
         const { id, created_at, created_by_name, ...rest } = data;
+        const sizes = Array.isArray(sizesRes.data) ? sizesRes.data : (sizesRes.data.results || []);
         
         setEditingMaterial(null);
         setDuplicateSourceId(record.id);
+        setDuplicateSourceSizes(sizes);
         form.setFieldsValue(rest);
         setModalVisible(true);
     } catch (err) {
