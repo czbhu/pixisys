@@ -189,6 +189,7 @@ interface MaterialReceipt {
 const Materials: React.FC = () => {
   const [searchParams] = useSearchParams();
   const [materials, setMaterials] = useState<Material[]>([]);
+  const fetchSeqRef = React.useRef(0); // race-condition guard
   const [loading, setLoading] = useState(false);
   const [csvImporting, setCsvImporting] = useState(false);
   const csvImportRef = React.useRef<HTMLInputElement>(null);
@@ -299,7 +300,12 @@ const Materials: React.FC = () => {
     try { return sessionStorage.getItem('materials_filterType') || 'all'; } catch { return 'all'; }
   });
   const [filterGroupId, setFilterGroupId] = useState<number | undefined>(() => {
-    try { const v = sessionStorage.getItem('materials_filterGroupId'); return v ? Number(v) : undefined; } catch { return undefined; }
+    try {
+      // URL param takes priority over sessionStorage
+      const urlGroup = new URLSearchParams(window.location.search).get('group');
+      if (urlGroup) { const n = Number(urlGroup); if (!Number.isNaN(n)) return n; }
+      const v = sessionStorage.getItem('materials_filterGroupId'); return v ? Number(v) : undefined;
+    } catch { return undefined; }
   });
   const [filterSupplierId, setFilterSupplierId] = useState<number | undefined>(() => {
     try { const v = sessionStorage.getItem('materials_filterSupplierId'); return v ? Number(v) : undefined; } catch { return undefined; }
@@ -608,6 +614,7 @@ const Materials: React.FC = () => {
   */
 
   const fetchMaterials = async () => {
+    const seq = ++fetchSeqRef.current;
     setLoading(true);
     try {
       let url = '/warehouse/materials/';
@@ -639,7 +646,7 @@ const Materials: React.FC = () => {
       
       const response = await api.get(url);
       const data = Array.isArray(response.data) ? response.data : (response.data.results || []);
-      setMaterials(data);
+      if (seq === fetchSeqRef.current) setMaterials(data);
     } catch (error) {
       message.error('Hiba az alapanyagok/termékek betöltésekor');
       console.error(error);
