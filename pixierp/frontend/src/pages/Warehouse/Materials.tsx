@@ -445,6 +445,12 @@ const Materials: React.FC = () => {
   const [materialSizes, setMaterialSizes] = useState<MaterialSizeItem[]>([]);
   const [sizeModalVisible, setSizeModalVisible] = useState(false);
   const sizeNameManualRef = React.useRef(false); // true if user manually typed a name
+  // Copy sizes from another material
+  const [copySizesModalOpen, setCopySizesModalOpen] = useState(false);
+  const [copySizesSourceId, setCopySizesSourceId] = useState<number | null>(null);
+  const [copySizesLoading, setCopySizesLoading] = useState(false);
+  // materialSizes tooltips: id→size summary string
+  const [materialSizeSummaries, setMaterialSizeSummaries] = useState<Record<number, string>>({});
   const [editingSizeItem, setEditingSizeItem] = useState<MaterialSizeItem | null>(null);
   const [sizeForm] = Form.useForm();
   
@@ -835,6 +841,45 @@ const Materials: React.FC = () => {
       message.success('Méret törölve');
       if (editingMaterial) fetchMaterialSizes(editingMaterial.id);
     } catch { message.error('Hiba a törlés során'); }
+  };
+
+  const openCopySizesModal = async () => {
+    setCopySizesSourceId(null);
+    setCopySizesModalOpen(true);
+    // Load size summaries for all materials that have sizes
+    try {
+      const res = await api.get('/warehouse/material-sizes/?page_size=5000');
+      const data: any[] = Array.isArray(res.data) ? res.data : (res.data.results || []);
+      const summaries: Record<number, string> = {};
+      data.forEach((sz: any) => {
+        const mid = sz.material;
+        if (!mid) return;
+        const dims = [sz.width, sz.length, sz.height].filter(Boolean).map(String).join('×');
+        const entry = `${sz.name || dims} (${dims} ${sz.dimension_unit})`;
+        summaries[mid] = summaries[mid] ? summaries[mid] + '\n' + entry : entry;
+      });
+      setMaterialSizeSummaries(summaries);
+    } catch {}
+  };
+
+  const handleCopySizesFromMaterial = async () => {
+    if (!editingMaterial || !copySizesSourceId) return;
+    setCopySizesLoading(true);
+    try {
+      const res = await api.get(`/warehouse/material-sizes/?material_id=${copySizesSourceId}&page_size=500`);
+      const sizes: any[] = Array.isArray(res.data) ? res.data : (res.data.results || []);
+      for (const sz of sizes) {
+        const { id: _id, material: _mid, created_at: _ca, ...rest } = sz;
+        await api.post('/warehouse/material-sizes/', { ...rest, material: editingMaterial.id });
+      }
+      message.success(`${sizes.length} méret átmásolva`);
+      fetchMaterialSizes(editingMaterial.id);
+      setCopySizesModalOpen(false);
+    } catch {
+      message.error('Hiba a méretek másolásakor');
+    } finally {
+      setCopySizesLoading(false);
+    }
   };
 
   const buildSizeName = (width: number | undefined, length: number | undefined, height: number | undefined, unit: string, format: string): string => {
@@ -3266,9 +3311,14 @@ const Materials: React.FC = () => {
                 <div>
                   <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <span style={{ fontWeight: 600 }}>Rendelhető méret variánsok</span>
-                    <Button type="primary" icon={<PlusOutlined />} onClick={handleAddSize} size="small">
-                      Új méret
-                    </Button>
+                    <Space size={8}>
+                      <Button size="small" icon={<CopyOutlined />} onClick={openCopySizesModal} disabled={!editingMaterial}>
+                        Másolás másik tételről
+                      </Button>
+                      <Button type="primary" icon={<PlusOutlined />} onClick={handleAddSize} size="small">
+                        Új méret
+                      </Button>
+                    </Space>
                   </div>
                   <Table
                     size="small"
@@ -3314,6 +3364,55 @@ const Materials: React.FC = () => {
               ),
             },
           ]}
+        />
+      </Modal>
+
+      {/* Copy Sizes from Another Material Modal */}
+      <Modal
+        title="Méretek másolása másik tételről"
+        open={copySizesModalOpen}
+        onCancel={() => setCopySizesModalOpen(false)}
+        onOk={handleCopySizesFromMaterial}
+        okText="Méretek másolása"
+        cancelText="Mégse"
+        confirmLoading={copySizesLoading}
+        okButtonProps={{ disabled: !copySizesSourceId }}
+        width={520}
+        destroyOnHidden
+      >
+        <div style={{ marginBottom: 12, color: '#666', fontSize: 13 }}>
+          Válaszd ki, melyik alapanyag/termék méreteit szeretnéd átmásolni az aktuális tételre.
+        </div>
+        <Select
+          showSearch
+          allowClear
+          style={{ width: '100%' }}
+          placeholder="Keresés alapanyag neve alapján…"
+          value={copySizesSourceId}
+          onChange={(val) => setCopySizesSourceId(val ?? null)}
+          filterOption={(input, option) =>
+            String(option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+          }
+          optionRender={(option) => {
+            const summary = materialSizeSummaries[option.value as number];
+            return (
+              <Tooltip
+                title={summary ? <pre style={{ margin: 0, fontSize: 12 }}>{summary}</pre> : 'Nincs rendelhető méret'}
+                placement="right"
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span>{option.label}</span>
+                  {summary && <span style={{ fontSize: 11, color: '#1677ff', marginLeft: 8 }}>
+                    {summary.split('\n').length} méret
+                  </span>}
+                </div>
+              </Tooltip>
+            );
+          }}
+          options={materials
+            .filter(m => m.id !== editingMaterial?.id)
+            .map(m => ({ value: m.id, label: `${m.name}${m.code ? ` (${m.code})` : ''}` }))
+          }
         />
       </Modal>
 
