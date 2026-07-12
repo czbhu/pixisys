@@ -739,12 +739,33 @@ const ProductEditor: React.FC = () => {
 
     const fmt = (v: any) => v != null && v !== '' ? `${Number(v).toLocaleString('hu-HU')} Ft` : '–';
 
+    // Breakdown: fix + egységár/klikk for services
+    const renderPriceBreakdown = (r: any, priceField: 'unit_cost_price' | 'unit_selling_price') => {
+      const main = fmt(r[priceField]);
+      if (r._type !== 'Szolgáltatás') return <span>{main}</span>;
+      const summary = r.cost_summary as { fixed?: number; unit?: number } | undefined;
+      const costItems: any[] = r.cost_items_data || [];
+      if (!summary || (!(summary.fixed) && !(summary.unit))) return <span>{main}</span>;
+      const hasClick = costItems.some((ci: any) => ci.calculation_type === 'click');
+      const parts: string[] = [];
+      if (summary.fixed) parts.push(`fix: ${Number(summary.fixed).toLocaleString('hu-HU')} Ft`);
+      if (summary.unit) parts.push(`${hasClick ? 'klikk' : 'egységár'}: ${Number(summary.unit).toLocaleString('hu-HU')} Ft`);
+      return (
+        <span>
+          {main}
+          {parts.length > 0 && (
+            <div style={{ fontSize: 11, color: '#888', marginTop: 1 }}>({parts.join(' | ')})</div>
+          )}
+        </span>
+      );
+    };
+
     const subColumns = [
       { title: 'Típus', key: '_type', width: 110, render: (_: any, r: any) => <Tag color={r._type === 'Szolgáltatás' ? 'blue' : 'green'}>{r._type}</Tag> },
-      { title: 'Megnevezés', dataIndex: 'name', key: 'name', render: (v: string, r: any) => <span style={{ fontWeight: 500 }}>{v}</span> },
+      { title: 'Megnevezés', dataIndex: 'name', key: 'name', render: (v: string) => <span style={{ fontWeight: 500 }}>{v}</span> },
       { title: 'Cikkszám', dataIndex: 'code', key: 'code', width: 130, render: (v: string) => v ? <Text code>{v}</Text> : '–' },
-      { title: 'Besz. ár', key: 'cost', width: 120, render: (_: any, r: any) => fmt(r.unit_cost_price) },
-      { title: 'Elad. ár', key: 'sell', width: 120, render: (_: any, r: any) => fmt(r.unit_selling_price) },
+      { title: 'Besz. ár', key: 'cost', width: 150, render: (_: any, r: any) => renderPriceBreakdown(r, 'unit_cost_price') },
+      { title: 'Elad. ár', key: 'sell', width: 150, render: (_: any, r: any) => renderPriceBreakdown(r, 'unit_selling_price') },
       {
         title: 'Műveletek', key: 'actions', width: 90,
         render: (_: any, r: any) => (
