@@ -50,6 +50,8 @@ interface Service {
   unit_cost_selling?: number;
   capacity?: number | null;
   is_protected?: boolean;
+  cost_summary?: { fixed: number; unit: number };
+  cost_items_data?: { calculation_type: string; unit_price: number; selling_price: number }[];
 }
 
 interface Supplier {
@@ -1116,6 +1118,39 @@ const Services: React.FC = () => {
                 <Tag color="default">Nincs</Tag>
             );
         }
+      },
+    },
+    {
+      title: 'Besz. ár',
+      key: 'cost_price',
+      width: 150,
+      sorter: (a: Service, b: Service) => (a.unit_cost_price || 0) - (b.unit_cost_price || 0),
+      render: (_: any, r: Service) => {
+        const main = r.unit_cost_price ? `${Number(r.unit_cost_price).toLocaleString('hu-HU')} Ft` : '–';
+        return <span>{main}</span>;
+      },
+    },
+    {
+      title: 'Elad. ár',
+      key: 'sell_price',
+      width: 180,
+      sorter: (a: Service, b: Service) => (a.unit_selling_price || 0) - (b.unit_selling_price || 0),
+      render: (_: any, r: Service) => {
+        const main = r.unit_selling_price ? `${Number(r.unit_selling_price).toLocaleString('hu-HU')} Ft` : '–';
+        const summary = r.cost_summary;
+        const costItems = r.cost_items_data || [];
+        const hasClick = costItems.some(ci => ci.calculation_type === 'click');
+        const parts: string[] = [];
+        if (summary?.fixed) parts.push(`fix: ${Number(summary.fixed).toLocaleString('hu-HU')} Ft`);
+        if (summary?.unit) parts.push(`${hasClick ? 'klikk' : 'egységár'}: ${Number(summary.unit).toLocaleString('hu-HU')} Ft`);
+        return (
+          <span>
+            {main}
+            {parts.length > 0 && (
+              <div style={{ fontSize: 11, color: '#888', marginTop: 1 }}>({parts.join(' | ')})</div>
+            )}
+          </span>
+        );
       },
     },
     {
