@@ -5,6 +5,7 @@ import {
   message, Tag, Popconfirm, Tooltip, Drawer, Row, Col, Divider,
   Switch, Empty, Typography, Checkbox, Collapse, TreeSelect, Upload,
 } from 'antd';
+import EnhancedTable from '../../components/EnhancedTable';
 import NumInput from '../../components/NumInput';
 import {
   PlusOutlined, EditOutlined, DeleteOutlined, MinusCircleOutlined, CopyOutlined,
@@ -893,7 +894,8 @@ const ProductEditor: React.FC = () => {
         }
       />
 
-      <Table
+      <EnhancedTable
+        tableKey="product_editor"
         dataSource={filtered}
         columns={columns}
         rowKey="id"
@@ -902,6 +904,7 @@ const ProductEditor: React.FC = () => {
         pagination={{ pageSize: 25, showSizeChanger: true }}
         locale={{ emptyText: <Empty description="Nincs termék rögzítve" /> }}
         rowSelection={{ selectedRowKeys, onChange: setSelectedRowKeys }}
+        cardBreakpoint={900}
         expandable={{
           expandedRowRender,
           onExpand: handleExpand,
