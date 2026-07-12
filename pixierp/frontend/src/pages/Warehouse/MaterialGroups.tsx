@@ -33,6 +33,7 @@ interface MaterialGroup {
   description: string;
   is_active: boolean;
   materials_count: number;
+  total_materials_count?: number;
   created_at: string;
   created_by_name?: string;
   parent?: number | null;
@@ -101,6 +102,14 @@ const MaterialGroups: React.FC = () => {
         })
     };
     cleanup(roots);
+
+    // Compute total_materials_count (direct + all descendants)
+    const computeTotal = (node: MaterialGroup): number => {
+      const childTotal = (node.children || []).reduce((sum, c) => sum + computeTotal(c), 0);
+      node.total_materials_count = (node.materials_count || 0) + childTotal;
+      return node.total_materials_count;
+    };
+    roots.forEach(computeTotal);
     
     return roots;
   };
@@ -261,11 +270,22 @@ const MaterialGroups: React.FC = () => {
       title: 'Alapanyagok',
       dataIndex: 'materials_count',
       key: 'materials_count',
-      width: 120,
-      sorter: (a: any, b: any) => (a.materials_count || 0) - (b.materials_count || 0),
-      render: (count: number) => (
-        <Tag color={count > 0 ? 'blue' : 'default'}>{count} db</Tag>
-      ),
+      width: 150,
+      sorter: (a: any, b: any) => (a.total_materials_count || 0) - (b.total_materials_count || 0),
+      render: (count: number, record: MaterialGroup) => {
+        const total = record.total_materials_count ?? count;
+        const hasChildren = total > count;
+        return (
+          <span>
+            <Tag color={count > 0 ? 'blue' : 'default'} style={{ marginRight: 0 }}>{count} db</Tag>
+            {hasChildren && (
+              <span style={{ fontSize: 11, color: '#888', marginLeft: 4 }}>
+                (összesen: {total})
+              </span>
+            )}
+          </span>
+        );
+      },
     },
     {
       title: 'Státusz',
