@@ -111,7 +111,7 @@ const Services: React.FC = () => {
   // Cost items management
   const [costItems, setCostItems] = useState<CostItem[]>([]);
   const [allCostItems, setAllCostItems] = useState<CostItem[]>([]);
-  const [selectedSourceForCost, setSelectedSourceForCost] = useState<'internal' | number | null>(null);
+  const [selectedSourceForCost, setSelectedSourceForCost] = useState<string | null>(null);
   const [selectedVersionForCost, setSelectedVersionForCost] = useState<string | null>(null);
   const [versionNameModal, setVersionNameModal] = useState<{ visible: boolean; mode: 'add' | 'rename' | 'copy'; sourceVersion?: string } | null>(null);
   const [versionNameInput, setVersionNameInput] = useState('');
@@ -792,7 +792,7 @@ const Services: React.FC = () => {
   const handleSupplierSelect = (value: string) => {
     const supplier = suppliers.find(s => s.name === value);
     if (supplier && editingService) {
-      setSelectedSourceForCost(supplier.id);
+      setSelectedSourceForCost(String(supplier.id));
       fetchCostItems(editingService.id, supplier.id);
     }
   };
@@ -854,8 +854,9 @@ const Services: React.FC = () => {
       ));
       
       // Clear selection if this was the selected source
-      if ((isInternal && selectedSourceForCost === 'internal') || 
-          (!isInternal && selectedSourceForCost === supplierId)) {
+      const srcIsInternal = selectedSourceForCost === 'internal' || String(selectedSourceForCost || '').startsWith('dept_');
+      if ((isInternal && srcIsInternal) ||
+          (!isInternal && selectedSourceForCost === String(supplierId))) {
         setSelectedSourceForCost(null);
         setCostItems([]);
       }
@@ -867,17 +868,15 @@ const Services: React.FC = () => {
     }
   };
 
-  const handleSourceChange = (value: string | number) => {
+  const handleSourceChange = (value: string) => {
     if (!editingService) return;
-    
-    if (value === 'internal') {
-      setSelectedSourceForCost('internal');
+    setSelectedSourceForCost(value ?? null);
+    const isInternal = value === 'internal' || String(value || '').startsWith('dept_');
+    if (isInternal) {
       fetchCostItems(editingService.id, 'internal');
-    } else if (typeof value === 'number') {
-      setSelectedSourceForCost(value);
-      fetchCostItems(editingService.id, value);
+    } else if (value) {
+      fetchCostItems(editingService.id, Number(value));
     } else {
-      setSelectedSourceForCost(null);
       setCostItems([]);
     }
   };
@@ -892,15 +891,18 @@ const Services: React.FC = () => {
     setSelectedCalculationType('unit');
     costItemForm.resetFields();
 
-    // Determine is_internal and supplier/department from selectedSourceForCost
-    const isInternal = selectedSourceForCost === 'internal';
-    const supplierId = !isInternal && typeof selectedSourceForCost === 'number' ? selectedSourceForCost : undefined;
+    const isInternal = selectedSourceForCost === 'internal' || String(selectedSourceForCost || '').startsWith('dept_');
+    const supplierId = !isInternal && selectedSourceForCost != null ? Number(selectedSourceForCost) : undefined;
+    // Parse department ID from 'dept_X' format
+    const deptId = isInternal && String(selectedSourceForCost || '').startsWith('dept_')
+      ? Number(String(selectedSourceForCost).replace('dept_', ''))
+      : (isInternal && editingService?.internal_production_department ? editingService.internal_production_department : undefined);
 
     costItemForm.setFieldsValue({
       service: editingService.id,
       is_internal: isInternal,
       supplier: supplierId,
-      department: undefined,
+      department: deptId,
       price_calculation_version: selectedVersionForCost || '1. verzió',
       calculation_type: 'unit',
       unit: 'db',
@@ -1657,16 +1659,18 @@ const Services: React.FC = () => {
                   <Select
                     style={{ width: 300 }}
                     placeholder="Forrás (belső osztály / külső szállító)"
-                    onChange={(val: string | number) => {
-                      if (val === 'internal' || String(val).startsWith('dept_')) {
-                        setSelectedSourceForCost('internal');
+                    onChange={(val: string) => {
+                      setSelectedSourceForCost(val ?? null);
+                      const isInternal = val === 'internal' || String(val || '').startsWith('dept_');
+                      if (isInternal) {
                         if (editingService) fetchCostItems(editingService.id, 'internal');
+                      } else if (val != null) {
+                        if (editingService) fetchCostItems(editingService.id, Number(val));
                       } else {
-                        setSelectedSourceForCost(val as number);
-                        if (editingService) fetchCostItems(editingService.id, val as number);
+                        setCostItems([]);
                       }
                     }}
-                    value={selectedSourceForCost === 'internal' ? 'internal' : selectedSourceForCost}
+                    value={selectedSourceForCost}
                     showSearch
                     optionFilterProp="children"
                     allowClear
