@@ -130,6 +130,11 @@ const Services: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<string>('active');
   const [serviceGroups, setServiceGroups] = useState<any[]>([]);
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<number | undefined>(undefined);
+  // Termék szűrő
+  const [productTemplates, setProductTemplates] = useState<{id: number; name: string}[]>([]);
+  const [selectedProductFilter, setSelectedProductFilter] = useState<number | undefined>(undefined);
+  const [productServiceIds, setProductServiceIds] = useState<Set<number> | null>(null);
+  const [productFilterLoading, setProductFilterLoading] = useState(false);
 
   const normalizeForCompare = (value: any): any => {
     if (value === null || value === undefined) return undefined;
@@ -235,6 +240,11 @@ const Services: React.FC = () => {
     fetchSuppliers();
     fetchDepartments();
     fetchServiceGroups();
+    // Termék sablonok betöltése a szűrőhöz
+    api.get('/manufacturing/product-templates/?page_size=1000').then(res => {
+      const data = Array.isArray(res.data) ? res.data : (res.data.results || []);
+      setProductTemplates(data.map((p: any) => ({ id: p.id, name: p.name })).sort((a: any, b: any) => a.name.localeCompare(b.name, 'hu')));
+    }).catch(() => {});
     
     const create = searchParams.get('create') === 'true';
     const copyFrom = searchParams.get('copy_from');
@@ -1013,6 +1023,10 @@ const Services: React.FC = () => {
         result = result.filter(s => s.groups && s.groups.some(g => relevantGroupIds.includes(g)));
     }
 
+    if (productServiceIds !== null) {
+        result = result.filter(s => productServiceIds.has(s.id));
+    }
+
     if (q) {
         result = result.filter(service => {
             const hay = [
@@ -1247,6 +1261,35 @@ const Services: React.FC = () => {
         searchPlaceholder="Keresés (név, cikkszám, leírás, kategória)..."
         toolbarExtra={
             <Space>
+                <Select
+                    style={{ width: 220 }}
+                    value={selectedProductFilter}
+                    placeholder="Szűrés termék szerint…"
+                    allowClear
+                    showSearch
+                    loading={productFilterLoading}
+                    filterOption={(input, opt) => (opt?.label as string ?? '').toLowerCase().includes(input.toLowerCase())}
+                    options={productTemplates.map(p => ({ value: p.id, label: p.name }))}
+                    onChange={async (val) => {
+                      setSelectedProductFilter(val);
+                      if (!val) { setProductServiceIds(null); return; }
+                      setProductFilterLoading(true);
+                      try {
+                        const res = await api.get(`/manufacturing/product-templates/${val}/`);
+                        const pt = res.data;
+                        const ids = new Set<number>([
+                          ...(pt.allowed_services || []),
+                          ...(pt.required_services || []),
+                          ...(pt.finishing_services || []),
+                          ...(pt.binding_services || []),
+                          ...(pt.print_service_options || []),
+                          ...(pt.print_service ? [pt.print_service] : []),
+                        ]);
+                        setProductServiceIds(ids);
+                      } catch { setProductServiceIds(null); }
+                      finally { setProductFilterLoading(false); }
+                    }}
+                />
                 <TreeSelect
                     style={{ width: 250 }}
                     value={selectedCategoryFilter}
