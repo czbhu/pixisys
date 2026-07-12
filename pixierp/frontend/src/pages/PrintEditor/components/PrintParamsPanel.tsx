@@ -40,6 +40,7 @@ interface MaterialDetail {
   id: number;
   name: string;
   code?: string | null;
+  material_group?: number | null;
   width_mm?: number | null;
   length_mm?: number | null;
   unit_selling_price?: number;
@@ -72,6 +73,7 @@ interface ProductTemplate {
   print_service_options_details?: PrintServiceOption[];
   fix_cost_first_side_only?: boolean;
   allowed_materials_details?: MaterialDetail[];
+  allowed_material_groups?: number[];
   required_services?: number[];
   finishing_services?: number[];
   binding_services_details?: { id: number; name: string; code: string }[];
@@ -595,8 +597,17 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
     return total / qty;
   }, [params.quantity, clickPricing?.sheets_needed]);
   const materials = useMemo(() => {
-    const allowed = selectedProduct?.allowed_materials_details ?? [];
-    return allowed.length > 0 ? allowed : allMaterials;
+    const allowedSpecific = selectedProduct?.allowed_materials_details ?? [];
+    const allowedGroups = selectedProduct?.allowed_material_groups ?? [];
+    if (allowedSpecific.length === 0 && allowedGroups.length === 0) return allMaterials;
+    const groupFiltered = allowedGroups.length > 0
+      ? allMaterials.filter(m => m.material_group != null && allowedGroups.includes(m.material_group))
+      : [];
+    if (allowedSpecific.length === 0) return groupFiltered;
+    if (allowedGroups.length === 0) return allowedSpecific;
+    // Union: specific + group-filtered (deduped)
+    const specificIds = new Set(allowedSpecific.map(m => m.id));
+    return [...allowedSpecific, ...groupFiltered.filter(m => !specificIds.has(m.id))];
   }, [selectedProduct, allMaterials]);
   const activePricing = isClickSheet ? null : pricing;
   const activeClickPricing = isClickSheet ? clickPricing : null;
