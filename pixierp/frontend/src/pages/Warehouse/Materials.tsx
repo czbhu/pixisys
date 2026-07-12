@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Table, Card, Button, Modal, Form, Input, Select, message, Space, Tag, Popconfirm, Tabs, Upload, Checkbox, Row, Col, Radio, Tooltip } from 'antd';
+import { Table, Card, Button, Modal, Form, Input, Select, message, Space, Tag, Popconfirm, Tabs, Upload, Checkbox, Row, Col, Radio, Tooltip, TreeSelect } from 'antd';
 import NumInput from '../../components/NumInput';
 import { PlusOutlined, EditOutlined, DeleteOutlined, UploadOutlined, ExclamationCircleOutlined, ThunderboltOutlined, CopyOutlined, DownloadOutlined, ImportOutlined } from '@ant-design/icons';
 import { useSearchParams } from 'react-router-dom';
@@ -72,6 +72,8 @@ interface MaterialGroup {
   name: string;
   description: string;
   is_active: boolean;
+  parent?: number | null;
+  children?: MaterialGroup[];
 }
 
 interface Supplier {
@@ -288,6 +290,7 @@ const Materials: React.FC = () => {
   }, [searchParams]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [materialGroups, setMaterialGroups] = useState<MaterialGroup[]>([]);
+  const [materialGroupTree, setMaterialGroupTree] = useState<any[]>([]);
   const [vatTypes, setVatTypes] = useState<VatType[]>([]);
   const [currencyList, setCurrencyList] = useState<MCurrency[]>([]);
   const [selectedMaterialFormat, setSelectedMaterialFormat] = useState<string>('piece');
@@ -661,6 +664,25 @@ const Materials: React.FC = () => {
       const data = Array.isArray(response.data) ? response.data : (response.data.results || []);
       const sorted = data.sort((a: MaterialGroup, b: MaterialGroup) => a.name.localeCompare(b.name, 'hu'));
       setMaterialGroups(sorted);
+      // Build tree for TreeSelect
+      const buildTree = (items: MaterialGroup[]): MaterialGroup[] => {
+        const map = new Map<number, MaterialGroup>();
+        const roots: MaterialGroup[] = [];
+        const cloned = items.map(item => ({ ...item, children: [] as MaterialGroup[] }));
+        cloned.forEach(item => map.set(item.id, item));
+        cloned.forEach(item => {
+          if (item.parent) { const p = map.get(item.parent); if (p) { p.children!.push(item); } else { roots.push(item); } }
+          else { roots.push(item); }
+        });
+        const cleanup = (nodes: MaterialGroup[]) => nodes.forEach(n => { if (!n.children?.length) delete n.children; else cleanup(n.children!); });
+        cleanup(roots);
+        return roots;
+      };
+      const toTreeData = (nodes: MaterialGroup[]): any[] => nodes.map(n => ({
+        value: n.id, title: n.name,
+        children: n.children ? toTreeData(n.children) : undefined,
+      }));
+      setMaterialGroupTree(toTreeData(buildTree(sorted)));
     } catch (error) {
       console.error('Hiba az alapanyag gyűjtők betöltésekor:', error);
     }
@@ -2303,23 +2325,17 @@ const Materials: React.FC = () => {
                   help="Opcionális - csoportosítás pl. Épületháló, Fólia, stb."
                   style={{ flex: 1, marginBottom: 0 }}
                 >
-                  <Select
+                  <TreeSelect
                     allowClear
                     showSearch
                     placeholder="Válassz gyűjtőt (opcionális)"
-                    optionFilterProp="children"
-                    filterOption={(input, option) =>
-                      (option?.children as unknown as string)
-                        .toLowerCase()
-                        .includes(input.toLowerCase())
+                    treeData={materialGroupTree}
+                    treeDefaultExpandAll={false}
+                    filterTreeNode={(input, node) =>
+                      String(node?.title ?? '').toLowerCase().includes(input.toLowerCase())
                     }
-                  >
-                    {materialGroups.map((group) => (
-                      <Option key={group.id} value={group.id}>
-                        {group.name}
-                      </Option>
-                    ))}
-                  </Select>
+                    styles={{ popup: { root: { maxHeight: 400, overflow: 'auto' } } }}
+                  />
                 </Form.Item>
                 <Button 
                   icon={<EditOutlined />}
