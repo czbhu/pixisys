@@ -41,6 +41,7 @@ interface ResourceItem {
 interface MaterialGroup {
   id: number;
   name: string;
+  parent?: number | null;
 }
 
 interface QuantityDiscount {
@@ -191,6 +192,7 @@ const ProductEditor: React.FC = () => {
   const [categories, setCategories]         = useState<ProductClass[]>([]);
   const [materials, setMaterials]           = useState<MaterialItem[]>([]);
   const [materialGroups, setMaterialGroups] = useState<MaterialGroup[]>([]);
+  const [materialGroupTreeData, setMaterialGroupTreeData] = useState<any[]>([]);
   const [services, setServices]             = useState<ServiceItem[]>([]);
   const [serviceGroups, setServiceGroups]   = useState<ServiceGroupItem[]>([]);
   const [serviceGroupId, setServiceGroupId] = useState<number | null>(null);
@@ -297,7 +299,20 @@ const ProductEditor: React.FC = () => {
       setProducts(Array.isArray(prodRes.data) ? prodRes.data : (prodRes.data.results ?? []));
       setCategories(Array.isArray(catRes.data) ? catRes.data : (catRes.data.results ?? []));
       setMaterials(Array.isArray(matRes.data) ? matRes.data : (matRes.data.results ?? []));
-      setMaterialGroups(Array.isArray(matGrpRes.data) ? matGrpRes.data : (matGrpRes.data.results ?? []));
+      const rawGroups = Array.isArray(matGrpRes.data) ? matGrpRes.data : (matGrpRes.data.results ?? []);
+      setMaterialGroups(rawGroups);
+      // Build tree for TreeSelect
+      const buildGroupTree = (items: MaterialGroup[]): any[] => {
+        const map = new Map<number, any>();
+        const roots: any[] = [];
+        const cloned = items.map(g => ({ value: g.id, title: g.name, _parent: g.parent, children: [] as any[] }));
+        cloned.forEach(g => map.set(g.value, g));
+        cloned.forEach(g => { if (g._parent) { const p = map.get(g._parent); if (p) p.children.push(g); else roots.push(g); } else roots.push(g); });
+        const cleanup = (nodes: any[]) => nodes.forEach(n => { if (!n.children.length) delete n.children; else cleanup(n.children); });
+        cleanup(roots);
+        return roots;
+      };
+      setMaterialGroupTreeData(buildGroupTree(rawGroups));
       setServices(Array.isArray(svcRes.data) ? svcRes.data : (svcRes.data.results ?? []));
       setTemplateCategories(Array.isArray(tplCatRes.data) ? tplCatRes.data : (tplCatRes.data.results ?? []));
       setServiceGroups(Array.isArray(svcGrpRes.data) ? svcGrpRes.data : (svcGrpRes.data.results ?? []));
@@ -1187,15 +1202,21 @@ const ProductEditor: React.FC = () => {
                 children: (
                   <>
                     <Form.Item label="Engedélyezett alapanyag kategóriák">
-                      <Select
-                        mode="multiple"
+                      <TreeSelect
+                        treeCheckable
+                        showCheckedStrategy="SHOW_ALL"
                         allowClear
                         showSearch
                         placeholder="Kategóriák kiválasztása…"
                         value={selectedMaterialGroups}
                         onChange={setSelectedMaterialGroups}
-                        optionFilterProp="label"
-                        options={materialGroups.map(g => ({ label: g.name, value: g.id }))}
+                        treeData={materialGroupTreeData}
+                        treeDefaultExpandAll={false}
+                        filterTreeNode={(input, node) =>
+                          String(node?.title ?? '').toLowerCase().includes(input.toLowerCase())
+                        }
+                        styles={{ popup: { root: { maxHeight: 400, overflow: 'auto' } } }}
+                        maxTagCount={5}
                       />
                     </Form.Item>
 
