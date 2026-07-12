@@ -903,11 +903,12 @@ const ProductEditor: React.FC = () => {
         size="middle"
         pagination={{ pageSize: 25, showSizeChanger: true }}
         locale={{ emptyText: <Empty description="Nincs termék rögzítve" /> }}
-        rowSelection={{ selectedRowKeys, onChange: setSelectedRowKeys }}
+        rowSelection={{ selectedRowKeys, onChange: setSelectedRowKeys, columnWidth: 32 }}
         cardBreakpoint={900}
         expandable={{
           expandedRowRender,
           onExpand: handleExpand,
+          columnWidth: 24,
           rowExpandable: (r: ProductTemplate) =>
             r.allowed_services.length + r.required_services.length + r.finishing_services.length +
             r.binding_services.length + r.allowed_materials.length +
