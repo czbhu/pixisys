@@ -1588,6 +1588,111 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             })
         return Response(events)
 
+    @action(detail=False, methods=['get'])
+    def handover_serial_suggest(self, request):
+        """Javasolt átadási sorszám az aktuális felhasználóhoz (azonos logika mint CO-n)."""
+        from apps.finance.models import CashRegisterTransaction
+        user = request.user
+        if not getattr(user, 'is_authenticated', False):
+            return Response({'error': 'Bejelentkezés szükséges'}, status=status.HTTP_401_UNAUTHORIZED)
+        username = (user.username or '').lower()
+        today = timezone.now().strftime('%Y%m%d')
+        prefix = f"{username}{today}_"
+        count = CashRegisterTransaction.objects.filter(
+            employee__user=user,
+            note__startswith=prefix,
+        ).count()
+        serial = f"{prefix}{count:02d}"
+        return Response({'serial': serial, 'prefix': prefix, 'count': count})
+
+    @action(detail=False, methods=['post'])
+    def handover(self, request):
+        """Átadás — RFQ ID-k alapján (CO nélkül). Body: {rfq_ids, serial, cash_register, note?}"""
+        from decimal import Decimal
+        from django.db import transaction as db_tx
+        from apps.finance.models import CashRegister, CashRegisterEmployee, CashRegisterTransaction
+
+        user = request.user
+        if not getattr(user, 'is_authenticated', False):
+            return Response({'error': 'Bejelentkezés szükséges'}, status=status.HTTP_401_UNAUTHORIZED)
+        try:
+            employee = user.employee_profile
+        except Exception:
+            return Response({'error': 'Nincs alkalmazotti profil'}, status=status.HTTP_400_BAD_REQUEST)
+
+        rfq_ids = request.data.get('rfq_ids') or []
+        serial = (request.data.get('serial') or '').strip()
+        cash_register_id = request.data.get('cash_register')
+        extra_note = (request.data.get('note') or '').strip()
+
+        if not rfq_ids:
+            return Response({'error': 'rfq_ids kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        if not serial:
+            return Response({'error': 'serial kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        if not cash_register_id:
+            return Response({'error': 'cash_register kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            cash_register = CashRegister.objects.get(id=cash_register_id, is_active=True)
+        except CashRegister.DoesNotExist:
+            return Response({'error': 'Kassza nem található'}, status=status.HTTP_404_NOT_FOUND)
+
+        if not CashRegisterEmployee.objects.filter(
+            cash_register=cash_register, employee=employee, can_deposit=True
+        ).exists():
+            return Response({'error': 'Nincs jogosultság a kasszába betenni'}, status=status.HTTP_403_FORBIDDEN)
+
+        qrs = list(QuoteRequest.objects.filter(id__in=rfq_ids).prefetch_related('items'))
+        if len(qrs) != len(set(int(x) for x in rfq_ids)):
+            return Response({'error': 'Egy vagy több ajánlat nem található'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Összeg számítása az összes QRI tétel alapján
+        total = Decimal('0')
+        for qr in qrs:
+            for item in qr.items.all():
+                net = (Decimal(str(item.net_unit_price or 0))) * (Decimal(str(item.quantity or 1)))
+                discount = Decimal(str(item.discount_percent or 0)) / Decimal('100')
+                total += net * (1 - discount)
+
+        with db_tx.atomic():
+            qr_refs = [qr.number or qr.request_number or f'#{qr.id}' for qr in qrs]
+            note_lines = [serial, 'Ajánlatok: ' + ', '.join(qr_refs)]
+            if extra_note:
+                note_lines.append(extra_note)
+            tx_note = '\n'.join(note_lines)
+
+            balance_before = cash_register.current_balance
+            balance_after = balance_before + total
+            tx = CashRegisterTransaction.objects.create(
+                cash_register=cash_register,
+                employee=employee,
+                amount=total,
+                reason=None,
+                note=tx_note,
+                balance_before=balance_before,
+                balance_after=balance_after,
+            )
+            cash_register.current_balance = balance_after
+            cash_register.save(update_fields=['current_balance'])
+
+            marker = f'Átadás: {serial}'
+            for qr in qrs:
+                try:
+                    QuoteLog.objects.create(
+                        quote=qr, user=user, action=marker, meta={'category': 'log'}
+                    )
+                except Exception:
+                    pass
+
+        return Response({
+            'serial': serial,
+            'cash_register_id': cash_register.id,
+            'cash_register_name': cash_register.name,
+            'transaction_id': tx.id,
+            'amount': str(total),
+            'rfq_ids': [qr.id for qr in qrs],
+        })
+
     @action(detail=True, methods=['patch', 'post'], permission_classes=[permissions.AllowAny])
     def update_invoice_number(self, request, pk=None):
         """QR számlaszámának frissítése (PixInvoice callback, CO nélküli QR-ekhez)"""

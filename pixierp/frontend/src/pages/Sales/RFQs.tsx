@@ -7,7 +7,7 @@ import { Card, Table, Button, Space, Tag, Spin, Alert, message, Tooltip, Modal, 
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
 import type { UploadFile } from 'antd/es/upload/interface';
-import { PlusOutlined, EyeOutlined, SendOutlined, MailOutlined, EditOutlined, SearchOutlined, CopyOutlined, PlusCircleOutlined, ExclamationCircleOutlined, FileTextOutlined, DeleteOutlined, FilterOutlined, CameraOutlined, PictureOutlined, UploadOutlined, PaperClipOutlined, LeftOutlined, RightOutlined, ShoppingCartOutlined, HistoryOutlined, WarningOutlined, PrinterOutlined, UserSwitchOutlined, FolderAddOutlined, RocketOutlined, CarOutlined, CheckCircleOutlined } from '@ant-design/icons';
+import { PlusOutlined, EyeOutlined, SendOutlined, MailOutlined, EditOutlined, SearchOutlined, CopyOutlined, PlusCircleOutlined, ExclamationCircleOutlined, FileTextOutlined, DeleteOutlined, FilterOutlined, CameraOutlined, PictureOutlined, UploadOutlined, PaperClipOutlined, LeftOutlined, RightOutlined, ShoppingCartOutlined, HistoryOutlined, WarningOutlined, PrinterOutlined, UserSwitchOutlined, FolderAddOutlined, RocketOutlined, CarOutlined, CheckCircleOutlined, DollarOutlined } from '@ant-design/icons';
 import { isPdf, openPdfPreview } from '../../utils/pdfPreview';
 import { useNewRowTracker, newDotColumn } from '../../hooks/useNewRowTracker';
 import { useNavigate, useSearchParams } from 'react-router-dom'; // Add useSearchParams
@@ -235,6 +235,12 @@ const RFQs: React.FC = () => {
   const [bulkDeliveryLoading, setBulkDeliveryLoading] = useState(false);
   // Bulk invoice (Számlázás) state
   const [bulkInvoiceLoading, setBulkInvoiceLoading] = useState(false);
+  // Bulk handover (Átadás) state
+  const [handoverOpen, setHandoverOpen] = useState(false);
+  const [handoverLoading, setHandoverLoading] = useState(false);
+  const [handoverForm] = Form.useForm();
+  const [handoverCashRegisters, setHandoverCashRegisters] = useState<any[]>([]);
+  const [handoverNetTotal, setHandoverNetTotal] = useState(0);
   // Bulk customer/contact change state
   const [bulkCustomerModalOpen, setBulkCustomerModalOpen] = useState(false);
   const [bulkCustomerLoading, setBulkCustomerLoading] = useState(false);
@@ -2917,6 +2923,58 @@ const RFQs: React.FC = () => {
     }
   };
 
+  const openHandover = async () => {
+    const selectedRows = flattenedItems.filter((item: any) => bulkSelectedKeys.includes(item.uniqueId));
+    if (!selectedRows.length) { message.warning('Nincs kijelölt ajánlat'); return; }
+    try {
+      const [serialRes, regsRes] = await Promise.all([
+        api.get('/sales/rfqs/handover_serial_suggest/'),
+        api.get('/finance/cash-registers/?can_deposit_for_me=1'),
+      ]);
+      setHandoverCashRegisters(regsRes.data?.results || regsRes.data || []);
+      // Nettó összeg becslése a kijelölt sorokból (elsődleges tétel alapján)
+      const net = selectedRows.reduce((sum: number, r: any) => {
+        const lineNet = Number(r.net_unit_price || 0) * Number(r.quantity || 1);
+        const discount = Number(r.discount_percent || 0);
+        return sum + lineNet * (1 - discount / 100);
+      }, 0);
+      setHandoverNetTotal(net);
+      handoverForm.setFieldsValue({ serial: serialRes.data?.serial || '', cash_register: undefined, note: '' });
+      setHandoverOpen(true);
+    } catch (e: any) {
+      message.error('Nem sikerült megnyitni az átadás ablakot: ' + (e?.response?.data?.error || e.message));
+    }
+  };
+
+  const submitHandover = async () => {
+    try {
+      const values = await handoverForm.validateFields();
+      setHandoverLoading(true);
+      const selectedRows = flattenedItems.filter((item: any) => bulkSelectedKeys.includes(item.uniqueId));
+      const rfqIds = Array.from(new Set(selectedRows.map((r: any) => r.rfq_pk).filter(Boolean)));
+      const res = await api.post('/sales/rfqs/handover/', {
+        rfq_ids: rfqIds,
+        serial: values.serial,
+        cash_register: values.cash_register,
+        note: values.note || '',
+      });
+      message.success(`Átadás rögzítve: ${res.data?.serial}`);
+      setHandoverOpen(false);
+      setBulkSelectedKeys([]);
+      setRfqs((prev: any[]) => prev.map((rfq: any) => {
+        if (rfqIds.includes(rfq.id)) {
+          return { ...rfq, logs: [...(rfq.logs || []), { action: `Átadás: ${res.data?.serial}` }] };
+        }
+        return rfq;
+      }));
+    } catch (e: any) {
+      if (e?.errorFields) return;
+      message.error('Átadás sikertelen: ' + (e?.response?.data?.error || e.message));
+    } finally {
+      setHandoverLoading(false);
+    }
+  };
+
   const handleBulkInvoice = async () => {
     const selectedRows = flattenedItems.filter((item: any) => bulkSelectedKeys.includes(item.uniqueId));
     if (!selectedRows.length) {
@@ -3408,6 +3466,9 @@ const RFQs: React.FC = () => {
             </Tooltip>
             <Tooltip title="Számla generálása">
               <Button icon={<FileTextOutlined />} size="small" loading={bulkInvoiceLoading} onClick={handleBulkInvoice} style={{ background: '#f6ffed', borderColor: '#b7eb8f', color: '#389e0d' }} />
+            </Tooltip>
+            <Tooltip title="Átadás (kassza)">
+              <Button icon={<DollarOutlined />} size="small" onClick={openHandover} style={{ background: '#fff7e6', borderColor: '#ffd591', color: '#d46b08' }} />
             </Tooltip>
             <Tooltip title="Ügyfél / kapcsolattartó csere">
               <Button icon={<UserSwitchOutlined />} size="small" onClick={openBulkCustomerModal} />
@@ -5503,6 +5564,41 @@ const RFQs: React.FC = () => {
             </div>
           </div>
         )}
+      </Modal>
+
+      {/* Bulk Átadás modal */}
+      <Modal
+        title="Átadás"
+        open={handoverOpen}
+        onCancel={() => setHandoverOpen(false)}
+        onOk={submitHandover}
+        okText="Átadás rögzítése"
+        cancelText="Mégse"
+        confirmLoading={handoverLoading}
+        width={520}
+        destroyOnHidden
+      >
+        <Space direction="vertical" style={{ width: '100%' }} size="middle">
+          <div style={{ fontSize: 13, color: '#555' }}>
+            <b>{Array.from(new Set(flattenedItems.filter((r: any) => bulkSelectedKeys.includes(r.uniqueId)).map((r: any) => r.rfq_pk).filter(Boolean))).length} ajánlat</b> kerül átadásra.
+            Becsült nettó összeg: <b>{Math.round(handoverNetTotal).toLocaleString('hu-HU')} Ft</b>
+          </div>
+          <Form form={handoverForm} layout="vertical">
+            <Form.Item name="serial" label="Sorszám" rules={[{ required: true, message: 'Sorszám kötelező' }]}>
+              <Input placeholder="username20260101_00" />
+            </Form.Item>
+            <Form.Item name="cash_register" label="Kassza" rules={[{ required: true, message: 'Válassz kasszát' }]}>
+              <Select
+                placeholder="Válassz kasszát…"
+                options={handoverCashRegisters.map((r: any) => ({ value: r.id, label: r.name }))}
+                notFoundContent="Nincs olyan kassza, amibe betehetsz"
+              />
+            </Form.Item>
+            <Form.Item name="note" label="Megjegyzés (opcionális)">
+              <Input.TextArea rows={2} />
+            </Form.Item>
+          </Form>
+        </Space>
       </Modal>
 
       {/* Bulk Szállítás modal */}
