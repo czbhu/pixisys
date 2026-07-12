@@ -427,6 +427,7 @@ class ServiceSerializer(serializers.ModelSerializer):
     )
     group_names = serializers.SerializerMethodField()
     cost_summary = serializers.SerializerMethodField()
+    cost_summary_cost = serializers.SerializerMethodField()
     is_protected = serializers.SerializerMethodField()
     cost_items_data = serializers.SerializerMethodField()
 
@@ -452,6 +453,17 @@ class ServiceSerializer(serializers.ModelSerializer):
             if not (ci.supplier_id or ci.is_internal):
                 continue
             price = float(ci.selling_price or 0)
+            ct = ci.calculation_type or 'unit'
+            totals[ct] = totals.get(ct, 0) + price
+        return totals
+
+    def get_cost_summary_cost(self, obj):
+        """Aggregate purchase (unit_price) from active cost items, grouped by calculation_type."""
+        totals: dict = {}
+        for ci in obj.cost_items.filter(is_active=True):
+            if not (ci.supplier_id or ci.is_internal):
+                continue
+            price = float(ci.unit_price or 0)
             ct = ci.calculation_type or 'unit'
             totals[ct] = totals.get(ct, 0) + price
         return totals

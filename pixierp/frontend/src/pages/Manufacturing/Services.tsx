@@ -51,6 +51,7 @@ interface Service {
   capacity?: number | null;
   is_protected?: boolean;
   cost_summary?: Record<string, number>;
+  cost_summary_cost?: Record<string, number>;
   cost_items_data?: { calculation_type: string; unit_price: number; selling_price: number }[];
 }
 
@@ -1129,7 +1130,26 @@ const Services: React.FC = () => {
       sorter: (a: Service, b: Service) => (a.unit_cost_price || 0) - (b.unit_cost_price || 0),
       render: (_: any, r: Service) => {
         const main = r.unit_cost_price ? `${Number(r.unit_cost_price).toLocaleString('hu-HU')} Ft` : '–';
-        return <span>{main}</span>;
+        const summary = r.cost_summary_cost as Record<string, number> | undefined;
+        const TYPE_LABELS: Record<string, string> = {
+          fixed: 'fix', unit: 'egységár', click: 'klikk',
+          length: 'hossz', perimeter: 'kerület', area: 'terület',
+          weight: 'súly', time: 'idő', sheet: 'ív',
+        };
+        const parts: string[] = [];
+        if (summary) {
+          Object.entries(summary).forEach(([type, val]) => {
+            if (val) parts.push(`${TYPE_LABELS[type] || type}: ${Number(val).toLocaleString('hu-HU')} Ft`);
+          });
+        }
+        return (
+          <span>
+            {main}
+            {parts.length > 0 && (
+              <div style={{ fontSize: 11, color: '#888', marginTop: 1 }}>({parts.join(' | ')})</div>
+            )}
+          </span>
+        );
       },
     },
     {

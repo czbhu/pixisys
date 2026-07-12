@@ -749,7 +749,8 @@ const ProductEditor: React.FC = () => {
     const renderPriceBreakdown = (r: any, priceField: 'unit_cost_price' | 'unit_selling_price') => {
       const main = fmt(r[priceField]);
       if (r._type !== 'Szolgáltatás') return <span>{main}</span>;
-      const summary = r.cost_summary as Record<string, number> | undefined;
+      const summaryKey = priceField === 'unit_cost_price' ? 'cost_summary_cost' : 'cost_summary';
+      const summary = r[summaryKey] as Record<string, number> | undefined;
       if (!summary || !Object.values(summary).some(v => v)) return <span>{main}</span>;
       const parts: string[] = [];
       Object.entries(summary).forEach(([type, val]) => {
