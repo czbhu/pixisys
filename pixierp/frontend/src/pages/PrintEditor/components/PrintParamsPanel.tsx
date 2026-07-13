@@ -260,6 +260,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
   // Forced material size from size_comparison selection
   const [forcedSizeId, setForcedSizeId] = useState<number | null>(null);
   const [autoSizeMode, setAutoSizeMode] = useState<boolean>(true); // true = auto pick cheapest
+  const calcSeqRef = React.useRef(0); // race condition guard: only apply latest response
 
   // Service selection: per AND-group for side 1 and side 2
   // selectedServices1[i] = chosen service IDs (multi) for group i on side 1
@@ -379,7 +380,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
   const calculateClickPriceWith = useCallback(async (sw: number, sh: number, bleedVal: number, rotateVal: string) => {
     const product = products.find(p => p.id === selectedProductId);
     if (!product || product.calculator_type !== 'click_sheet_print') return;
-    console.log('[CALC] sheet:', sw, 'x', sh, 'stack:', new Error().stack?.split('\n')[2]);
+    const mySeq = ++calcSeqRef.current; // grab sequence before async
     setCalcLoading(true);
     try {
       const svcId1 = (selectedPrintSvcId1 != null && selectedPrintSvcId1 > 0) ? selectedPrintSvcId1 : null;
@@ -405,10 +406,11 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
         forced_size_id:       autoSizeMode ? null : (forcedSizeId ?? null),
         auto_material_size:   autoSizeMode,
       });
+      if (mySeq !== calcSeqRef.current) return; // stale response — newer call in flight
       setClickPricing(res.data);
       onPriceChange?.(res.data);
     } catch {
-      setClickPricing(null);
+      if (mySeq === calcSeqRef.current) setClickPricing(null);
     } finally {
       setCalcLoading(false);
     }
