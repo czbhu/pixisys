@@ -2290,6 +2290,29 @@ const RFQs: React.FC = () => {
     if (createOpen) saveDraft();
   }, [newItems, createOpen]); // eslint-disable-line
 
+  // PrintShop lap postMessage: ha az új árajánlat modal nyitva van és a PrintShop mentett egy tételt,
+  // adjuk hozzá automatikusan a newItems listához
+  useEffect(() => {
+    const handleMsg = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
+      if (event.data?.type !== 'PRINTSHOP_ITEM_SAVED') return;
+      const d = event.data;
+      setNewItems(prev => [...prev, {
+        item_type: 'manufacturing',
+        ref_id: d.manufacturing_product_id,
+        manufacturing_product: { id: d.manufacturing_product_id, name: d.name },
+        name: d.name || `Egyedi termék #${d.manufacturing_product_id}`,
+        quantity: Number(d.quantity) || 1,
+        unit: 'db',
+        net_unit_price: Number(d.net_unit_price) || 0,
+        vat_rate: 27,
+        description: d.description || '',
+      }]);
+    };
+    window.addEventListener('message', handleMsg);
+    return () => window.removeEventListener('message', handleMsg);
+  }, []); // eslint-disable-line
+
   useEffect(() => {
     if (searchParams.get('create') === 'true' && !loading && !createOpen) {
        openCreate();

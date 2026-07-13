@@ -840,7 +840,7 @@ const PrintShopPage: React.FC = () => {
         } catch (attErr) { console.warn('[handleRfqSave] PDF upload failed:', attErr); }
       }
 
-      // Ajánlat tétel: első mentésnél hozza létre, további mentésebnél frissíti az árat
+      // Ajánlat tétel: első mentésnél hozza létre, további mentéseknél frissíti az árat
       if (rfqId) {
         if (!savedRfqQriId) {
           const { salesService: ss } = await import('../../services/salesService');
@@ -858,6 +858,16 @@ const PrintShopPage: React.FC = () => {
             quantity: params.quantity,
           });
         }
+      } else if (window.opener && !window.opener.closed) {
+        // Nincs rfq_id (új árajánlat modal) → postMessage az openernek, hogy adja hozzá a tételt
+        window.opener.postMessage({
+          type: 'PRINTSHOP_ITEM_SAVED',
+          manufacturing_product_id: productId,
+          name: autoName,
+          quantity: params.quantity,
+          net_unit_price: Math.round(unitPrice * 100) / 100,
+          description,
+        }, window.location.origin);
       }
 
       // Mentés megjelölése
