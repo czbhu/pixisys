@@ -380,9 +380,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
       setCalcLoading(true);
       try {
         const svcId1 = (selectedPrintSvcId1 != null && selectedPrintSvcId1 > 0) ? selectedPrintSvcId1 : null;
-        const svcId2 = selectedPrintSvcId2 === null
-          ? svcId1
-          : (selectedPrintSvcId2 > 0 ? selectedPrintSvcId2 : null);
+        const svcId2 = (selectedPrintSvcId2 != null && selectedPrintSvcId2 > 0) ? selectedPrintSvcId2 : null;
         const res = await api.post('/printshop/orders/calculate-price-click/', {
           width_mm:             params.width_mm,
           height_mm:            params.height_mm,
