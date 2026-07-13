@@ -379,6 +379,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
   const calculateClickPriceWith = useCallback(async (sw: number, sh: number, bleedVal: number, rotateVal: string) => {
     const product = products.find(p => p.id === selectedProductId);
     if (!product || product.calculator_type !== 'click_sheet_print') return;
+    console.log('[CALC] sheet:', sw, 'x', sh, 'stack:', new Error().stack?.split('\n')[2]);
     setCalcLoading(true);
     try {
       const svcId1 = (selectedPrintSvcId1 != null && selectedPrintSvcId1 > 0) ? selectedPrintSvcId1 : null;
