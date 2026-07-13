@@ -550,13 +550,17 @@ const PrintShopPage: React.FC = () => {
       const costItems: any[] = [];
       const r4 = (v: any) => Math.round((Number(v) || 0) * 10000) / 10000;
       const supId = (v: any) => (v && Number(v) > 0 ? Number(v) : null);
+      const calcCpRFQ = (sp: number, markupPct: number, cpRaw: any): number => {
+        const cp = r4(cpRaw); if (cp > 0) return cp;
+        return markupPct > 0 ? r4(sp / (1 + markupPct / 100)) : sp;
+      };
       if (bd) {
         if (bd.material_items) {
           for (const mi of bd.material_items) {
             const qty = r4(mi.units) || 1;
             const sellingPerUnit = r4(mi.price_per);
             const total = r4(mi.total);
-            const costPerUnit = r4(mi.cost_price_per ?? sellingPerUnit);
+            const costPerUnit = calcCpRFQ(sellingPerUnit, r4(mi.markup_percentage ?? 0), mi.cost_price_per);
             costItems.push({
               type: 'material', name: mi.name,
               quantity: qty, unit: 'ív',
@@ -572,9 +576,9 @@ const PrintShopPage: React.FC = () => {
           if (bd[key]) {
             for (const pi of bd[key]) {
               const qty = r4(pi.units) || 1;
+              const sellingPerUnit = r4(pi.price_per);
               const total = r4(pi.total);
-              const sellingPerUnit = qty > 0 ? r4(total / qty) : total;
-              const costPerUnit = r4(pi.cost_price_per ?? sellingPerUnit);
+              const costPerUnit = calcCpRFQ(sellingPerUnit, r4(pi.markup_percentage ?? 0), pi.cost_price_per);
               costItems.push({
                 type: 'service', name: pi.name,
                 quantity: qty, unit: pi.type === 'fixed' ? 'db' : 'ív',
@@ -593,9 +597,9 @@ const PrintShopPage: React.FC = () => {
             if (sb.items) {
               for (const si of sb.items) {
                 const qty = r4(si.units) || 1;
+                const sellingPerUnit = r4(si.price_per ?? (si.total && qty > 0 ? si.total / qty : si.total));
                 const total = r4(si.total);
-                const sellingPerUnit = qty > 0 ? r4(total / qty) : total;
-                const costPerUnit = r4(si.cost_price_per ?? sellingPerUnit);
+                const costPerUnit = calcCpRFQ(sellingPerUnit, r4(si.markup_percentage ?? 0), si.cost_price_per);
                 costItems.push({
                   type: 'service', name: `${sb.name}: ${si.name}`,
                   quantity: qty, unit: si.type === 'fixed' ? 'db' : 'db',
@@ -778,22 +782,38 @@ const PrintShopPage: React.FC = () => {
 
       const r4 = (v: any) => Math.round((Number(v) || 0) * 10000) / 10000;
       const supId = (v: any) => (v && Number(v) > 0 ? Number(v) : null);
+      // Bekerülési ár: ha 0 vagy nincs, kiszámítjuk a haszonkulcsból
+      const calcCp = (sellingPrice: number, markupPct: number, costPricePer: any): number => {
+        const cp = r4(costPricePer);
+        if (cp > 0) return cp;
+        if (markupPct > 0) return r4(sellingPrice / (1 + markupPct / 100));
+        return sellingPrice;
+      };
       const costItems: any[] = [];
       if (bd) {
         for (const mi of (bd.material_items ?? [])) {
-          const qty = r4(mi.units) || 1; const sp = r4(mi.price_per); const tot = r4(mi.total); const cp = r4(mi.cost_price_per ?? sp);
+          const qty = r4(mi.units) || 1;
+          const sp = r4(mi.price_per);  // price_per = selling per unit
+          const tot = r4(mi.total);
+          const cp = calcCp(sp, r4(mi.markup_percentage ?? 0), mi.cost_price_per);
           costItems.push({ type: 'material', name: mi.name, quantity: qty, unit: 'ív', cost_price: cp, unit_price: sp, selling_unit_price: sp, selling_price: tot, markup_percent: r4(mi.markup_percentage ?? 0), is_internal: mi.is_internal ?? false, supplier: supId(mi.supplier_id) });
         }
         for (const key of ['print_service_items_1', 'print_service_items_2'] as const) {
           for (const pi of (bd[key] ?? [])) {
-            const qty = r4(pi.units) || 1; const tot = r4(pi.total); const sp = qty > 0 ? r4(tot / qty) : tot; const cp = r4(pi.cost_price_per ?? sp);
+            const qty = r4(pi.units) || 1;
+            const sp = r4(pi.price_per);  // price_per = selling per unit (direct from API)
+            const tot = r4(pi.total);
+            const cp = calcCp(sp, r4(pi.markup_percentage ?? 0), pi.cost_price_per);
             costItems.push({ type: 'service', name: pi.name, quantity: qty, unit: pi.type === 'fixed' ? 'db' : 'ív', cost_price: cp, unit_price: sp, selling_unit_price: sp, selling_price: tot, markup_percent: r4(pi.markup_percentage ?? 0), is_internal: pi.is_internal ?? false, department: pi.department_id ?? null, supplier: supId(pi.supplier_id) });
           }
         }
         for (const sb of (bd.service_breakdown ?? [])) {
           if (sb.items) {
             for (const si of sb.items) {
-              const qty = r4(si.units) || 1; const tot = r4(si.total); const sp = qty > 0 ? r4(tot / qty) : tot; const cp = r4(si.cost_price_per ?? sp);
+              const qty = r4(si.units) || 1;
+              const sp = r4(si.price_per ?? (si.total && qty > 0 ? si.total / qty : si.total));
+              const tot = r4(si.total);
+              const cp = calcCp(sp, r4(si.markup_percentage ?? 0), si.cost_price_per);
               costItems.push({ type: 'service', name: `${sb.name}: ${si.name}`, quantity: qty, unit: 'db', cost_price: cp, unit_price: sp, selling_unit_price: sp, selling_price: tot, markup_percent: r4(si.markup_percentage ?? 0), is_internal: si.is_internal ?? false, department: si.department_id ?? null, supplier: supId(si.supplier_id) });
             }
           } else if (sb.total > 0) {

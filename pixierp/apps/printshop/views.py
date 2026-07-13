@@ -511,7 +511,9 @@ class PrintOrderViewSet(viewsets.ModelViewSet):
                             'is_internal': ci.is_internal,
                             'cost_price_per': float(cost_unit),
                             'markup_percentage': float(ci.markup_percentage or 0),
-                            'department_id': svc.internal_production_department_id if ci.is_internal else None,
+                            # Belső részleg: a cost item saját department-jéből, fallback: service department
+                            'department_id': (ci.department_id if ci.is_internal else None) or
+                                             (svc.internal_production_department_id if ci.is_internal else None),
                         }
                         if ctype == 'fixed':
                             amt = price
@@ -653,6 +655,15 @@ class PrintOrderViewSet(viewsets.ModelViewSet):
                         price_per_sheet = Decimal(str(config.paper_cost_per_m2)) * Decimal(str(sheet_area_m2))
                     material_cost = (price_per_sheet * Decimal(str(sheets_needed))).quantize(Decimal('0.01'))
                     mat_sup_id = mat.default_supplier_id if hasattr(mat, 'default_supplier_id') else None
+                    if not mat_sup_id:
+                        # Fallback: első beszállítói árrekord az alapanyaghoz
+                        try:
+                            from apps.warehouse.models import MaterialSupplierPrice
+                            first_sp = MaterialSupplierPrice.objects.filter(material=mat).order_by('id').first()
+                            if first_sp:
+                                mat_sup_id = first_sp.supplier_id
+                        except Exception:
+                            pass
                     mat_sup_name = mat.default_supplier.name if mat_sup_id and mat.default_supplier else None
                     mat_cost_per = Decimal(str(mat.unit_cost_price or 0))
                     mat_markup = float(mat.markup_percentage or 0)
