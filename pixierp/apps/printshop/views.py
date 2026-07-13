@@ -413,11 +413,14 @@ class PrintOrderViewSet(viewsets.ModelViewSet):
             # ── Impozíció ────────────────────────────────────────────────────
             prod_w = width_mm + 2 * bleed_mm
             prod_h = height_mm + 2 * bleed_mm
-            fit_w_normal  = max(1, int(sheet_w_mm / prod_w))
-            fit_h_normal  = max(1, int(sheet_h_mm / prod_h))
-            fit_w_rotated = max(1, int(sheet_w_mm / prod_h))
-            fit_h_rotated = max(1, int(sheet_h_mm / prod_w))
-            auto_rotated = fit_w_rotated * fit_h_rotated > fit_w_normal * fit_h_normal
+            # Nem clampelünk max(1,...)-re: ha 0-t ad, az azt jelenti, hogy nem fér el abban az irányban
+            fit_w_normal  = int(sheet_w_mm / prod_w)
+            fit_h_normal  = int(sheet_h_mm / prod_h)
+            fit_w_rotated = int(sheet_w_mm / prod_h)
+            fit_h_rotated = int(sheet_h_mm / prod_w)
+            items_normal  = fit_w_normal * fit_h_normal
+            items_rotated = fit_w_rotated * fit_h_rotated
+            auto_rotated  = items_rotated > items_normal
             if force_rotate is None:
                 rotated = auto_rotated
             else:
@@ -427,6 +430,8 @@ class PrintOrderViewSet(viewsets.ModelViewSet):
             else:
                 fit_w, fit_h = fit_w_normal, fit_h_normal
             items_per_sheet = fit_w * fit_h
+            if items_per_sheet < 1:
+                items_per_sheet = 1  # legalább 1 elem kell (több darabból nyomtatás)
             # Ha több lapból áll a termék, az összes lapot ki kell nyomtatni:
             # pl. 100 db × 2 lap = 200 nyomtatandó elem
             total_pieces    = quantity * sheet_count
@@ -694,11 +699,14 @@ class PrintOrderViewSet(viewsets.ModelViewSet):
                             _sh = sz_h_mm
 
                         # Imposition on this sheet
-                        _fw_n = max(1, int(_sw / prod_w))
-                        _fh_n = max(1, int(_sh / prod_h))
-                        _fw_r = max(1, int(_sw / prod_h))
-                        _fh_r = max(1, int(_sh / prod_w))
-                        _ips = max(_fw_n * _fh_n, _fw_r * _fh_r)
+                        # Impozíció az ívméreten (nem clampelünk)
+                        _fw_n = int(_sw / prod_w)
+                        _fh_n = int(_sh / prod_h)
+                        _fw_r = int(_sw / prod_h)
+                        _fh_r = int(_sh / prod_w)
+                        _ips_n = _fw_n * _fh_n
+                        _ips_r = _fw_r * _fh_r
+                        _ips = max(_ips_n, _ips_r)
                         if _ips == 0:
                             return None
                         _total_pieces = quantity * sheet_count  # lapok száma × darabszám
