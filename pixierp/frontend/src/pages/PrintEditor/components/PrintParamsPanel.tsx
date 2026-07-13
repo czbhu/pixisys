@@ -426,6 +426,15 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
     }
   }, [calculateClickPrice]); // eslint-disable-line
 
+  // Modal valós idejű frissítés: ha a modal nyitva van és az ívméret változik, azonnal újraszámol
+  useEffect(() => {
+    if (!impositionModalOpen) return;
+    const product = products.find(p => p.id === selectedProductId);
+    if (product?.calculator_type !== 'click_sheet_print') return;
+    if (clickTimerRef.current) clearTimeout(clickTimerRef.current);
+    clickTimerRef.current = setTimeout(() => { calculateClickPrice(); }, 100);
+  }, [modalSheetW, modalSheetH, modalBleed, modalForceRotate, impositionModalOpen]); // eslint-disable-line
+
   // Load service details whenever the selected product changes
   useEffect(() => {
     const product = products.find(p => p.id === selectedProductId);
