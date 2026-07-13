@@ -186,6 +186,8 @@ const PrintShopPage: React.FC = () => {
   const fromRfqCompanyName = fromRfqParams.get('company_name') || '';
   // edit_mfg_id: opened from PS button on an existing RFQ item → update instead of create
   const editMfgId = fromRfqParams.get('edit_mfg_id') ? Number(fromRfqParams.get('edit_mfg_id')) : null;
+  // rfq_id: meglévő ajánlat ID → közvetlen mentés az ajánlathoz (ItemSelectorModal PS-gombjából)
+  const rfqId = fromRfqParams.get('rfq_id') ? Number(fromRfqParams.get('rfq_id')) : null;
   // return_url: the opener page URL to navigate back to after save
   const returnUrl = fromRfqParams.get('return_url') || null;
 
@@ -492,14 +494,50 @@ const PrintShopPage: React.FC = () => {
     try {
       const sheetCount = params.sheet_count ?? 1;
       const sidesText = params.sides === '2' ? 'kétoldalas' : 'egyoldalas';
-      const description = `Íves nyomtatás: ${params.product_name || 'Termék'}\n` +
-        `Méret: ${params.width_mm} × ${params.height_mm} mm, ${sidesText}\n` +
-        `Mennyiség: ${params.quantity} db` +
-        (sheetCount > 1 ? `, ${sheetCount} lap` : '') + '\n' +
-        (params.binding && params.binding !== 'none' ? `Kötés: ${params.binding}\n` : '');
+      const bd = priceBreakdown as any;
+
+      // Név: terméknév, méret, mennyiség
+      const autoName = params.product_name && params.product_name.trim()
+        ? `${params.product_name.trim()}, ${params.quantity} db`
+        : `${params.width_mm}×${params.height_mm}mm, ${params.quantity} db, íves nyomtatás`;
+
+      // Nyomtatási forma szöveges leírása
+      const printSvcLine = bd?.print_service_name_1
+        ? `Nyomtatás 1.o: ${bd.print_service_name_1}` +
+          (bd?.print_service_name_2 ? `\nNyomtatás 2.o: ${bd.print_service_name_2}` : '')
+        : null;
+      // Impozíció
+      const impLine = bd?.items_per_sheet != null
+        ? `Impozíció: ${bd.items_per_sheet} db/ív (${bd.fit_w ?? '?'}×${bd.fit_h ?? '?'})` +
+          `${bd.rotated ? ', forgatva' : ''}, ${bd.sheets_needed} ív, ${bd.clicks_total} klikk`
+        : null;
+      // Ívméret
+      const sheetLine = bd?.sheet_w_mm != null
+        ? `Ívméret: ${bd.sheet_w_mm}×${bd.sheet_h_mm} mm` +
+          (bd.cutting_info?.needs_cutting
+            ? ` (vágva: ${bd.cutting_info.cut_sheet_size_mm?.[0]}×${bd.cutting_info.cut_sheet_size_mm?.[1]} mm, ${bd.cutting_info.raw_material_sheets_needed} alap)`
+            : '')
+        : null;
+      // Alapér
+      const matLine = bd?.material_name ? `Alapanyag: ${bd.material_name}` : null;
+      // Ár
+      const priceLines = bd?.total != null
+        ? `Nyomtatás: ${Math.round(bd.print_cost ?? 0).toLocaleString('hu-HU')} Ft` +
+          (bd.material_cost > 0 ? `\nAlapanyag: ${Math.round(bd.material_cost).toLocaleString('hu-HU')} Ft` : '') +
+          (bd.service_cost > 0 ? `\nSzolgáltatás: ${Math.round(bd.service_cost).toLocaleString('hu-HU')} Ft` : '') +
+          `\nNettó összesen: ${Math.round(bd.total).toLocaleString('hu-HU')} Ft` +
+          `\nEgységár: ${Number(bd.unit_price ?? 0).toLocaleString('hu-HU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Ft/db`
+        : null;
+
+      const description = [
+        `Termék: ${params.product_name || 'Egyedi nyomtatás'}`,
+        `Méret: ${params.width_mm} × ${params.height_mm} mm, ${sidesText}`,
+        `Mennyiség: ${params.quantity} db${sheetCount > 1 ? ` × ${sheetCount} lap` : ''}`,
+        params.binding && params.binding !== 'none' ? `Kötés: ${params.binding}` : null,
+        matLine, printSvcLine, impLine, sheetLine, priceLines,
+      ].filter(Boolean).join('\n');
 
       const costItems: any[] = [];
-      const bd = priceBreakdown as any;
       const r4 = (v: any) => Math.round((Number(v) || 0) * 10000) / 10000;
       const supId = (v: any) => (v && Number(v) > 0 ? Number(v) : null);
       if (bd) {
@@ -576,7 +614,7 @@ const PrintShopPage: React.FC = () => {
       const unitPrice = params.quantity > 0 ? costItemsSellingTotal / params.quantity : 0;
 
       const payload: any = {
-        name: params.product_name || `Íves nyomtatás ${params.width_mm}×${params.height_mm}mm`,
+        name: autoName,
         description,
         quantity: params.quantity,
         quantity_unit: 'db',
@@ -625,6 +663,27 @@ const PrintShopPage: React.FC = () => {
         } catch (attErr) {
           console.warn('[handleRFQ] PDF attachment upload failed:', attErr);
         }
+      }
+
+      // Közvetlen mentés meglévő ajánlathoz (rfq_id URL param)
+      if (rfqId && !editMfgId) {
+        await import('../../services/salesService').then(({ salesService }) =>
+          salesService.addRfqManufacturingItem(
+            rfqId, productId, autoName, params.quantity,
+            description, 'db', Math.round(unitPrice * 100) / 100, 27, 0, 0, {},
+          )
+        );
+        message.success('Mentve az ajánlathoz.');
+        const navigateBack = (targetUrl: string) => {
+          if (window.opener && !window.opener.closed) {
+            window.opener.location.href = targetUrl;
+            window.close();
+          } else {
+            window.location.href = targetUrl;
+          }
+        };
+        navigateBack(returnUrl || `/sales/rfqs`);
+        return;
       }
 
       message.success('Mentve.');

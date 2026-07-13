@@ -1290,6 +1290,8 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         discount_percent = request.data.get('discount_percent') or 0
         discount_amount = request.data.get('discount_amount') or 0
         formulas_manu = request.data.get('formulas') or {}
+        item_name_raw = request.data.get('item_name')
+        imposition_data_raw = request.data.get('imposition_data') or {}
         if not mp_id:
             return Response({'error': 'manufacturing_product_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
         mp = get_object_or_404(ManufacturingProduct, id=mp_id)
@@ -1310,6 +1312,7 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             quote_request=qr,
             item_type='manufacturing',
             manufacturing_product=mp,
+            item_name=item_name_raw or mp.name,
             quantity=quantity_val,
             unit=unit,
             net_unit_price=net_unit_price,
@@ -1318,6 +1321,7 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             discount_amount=discount_amount,
             description=description,
             formulas=formulas_manu if isinstance(formulas_manu, dict) else {},
+            imposition_data=imposition_data_raw if isinstance(imposition_data_raw, dict) else {},
         )
         _bump_search_stat('manufacturing', mp.id, user=request.user if request.user.is_authenticated else None)
         try:

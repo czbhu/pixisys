@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { Modal, Tabs, Input, Table, Button, Form, InputNumber, Select, Space, message, Divider, Alert, Upload, Tooltip, Collapse, Drawer, Tag, Checkbox, Row, Col, Switch, AutoComplete, Typography, Popconfirm, Grid } from 'antd';
 import NumInput from '../NumInput';
-import { UploadOutlined, SyncOutlined, EditOutlined, SearchOutlined, PlusOutlined, DeleteOutlined, CopyOutlined, ExclamationCircleOutlined, UpOutlined, DownOutlined, LeftOutlined, RightOutlined, AppstoreOutlined, FolderOpenOutlined, ToolOutlined } from '@ant-design/icons';
+import { UploadOutlined, SyncOutlined, EditOutlined, SearchOutlined, PlusOutlined, DeleteOutlined, CopyOutlined, ExclamationCircleOutlined, UpOutlined, DownOutlined, LeftOutlined, RightOutlined, AppstoreOutlined, FolderOpenOutlined, ToolOutlined, PrinterOutlined } from '@ant-design/icons';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CostDragHandle, CostDraggableRow, applyCostDnd, buildCostTreeMeta, CostTreeGuide } from '../Manufacturing/CostDnd';
@@ -3389,6 +3389,18 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
               {lastSavedAt ? `Utoljára mentve: ${lastSavedAt.format('YYYY. MM. DD. HH:mm:ss')}` : ''}
             </span>
             <Space>
+              {rfqId && (
+                <Button
+                  icon={<PrinterOutlined />}
+                  onClick={() => {
+                    const ps = new URLSearchParams({ from_rfq: '1', mode: 'pdf', return_url: window.location.href });
+                    if (rfqId) ps.set('rfq_id', String(rfqId));
+                    if (customer) ps.set('company', String(customer));
+                    if (manuCreatedId) ps.set('edit_mfg_id', String(manuCreatedId));
+                    window.open(`/print-shop?${ps.toString()}`, '_blank');
+                  }}
+                >PrintShop</Button>
+              )}
               <Button onClick={handleModalCancel}>Mégse</Button>
               <Button
                 loading={savingKeepOpen || (manuSubmitting && manuKeepOpenRef.current)}
@@ -3443,6 +3455,18 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
               {lastSavedAt ? `Utoljára mentve: ${lastSavedAt.format('YYYY. MM. DD. HH:mm:ss')}` : ''}
             </span>
             <Space>
+              {rfqId && (
+                <Button
+                  icon={<PrinterOutlined />}
+                  onClick={() => {
+                    const ps = new URLSearchParams({ from_rfq: '1', mode: 'pdf', return_url: window.location.href });
+                    if (rfqId) ps.set('rfq_id', String(rfqId));
+                    if (customer) ps.set('company', String(customer));
+                    if (manuCreatedId) ps.set('edit_mfg_id', String(manuCreatedId));
+                    window.open(`/print-shop?${ps.toString()}`, '_blank');
+                  }}
+                >PrintShop</Button>
+              )}
               <Button onClick={handleModalCancel}>Mégse</Button>
               <Button
                 loading={savingKeepOpen || (manuSubmitting && manuKeepOpenRef.current)}
