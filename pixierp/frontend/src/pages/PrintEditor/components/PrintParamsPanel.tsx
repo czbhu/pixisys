@@ -381,7 +381,6 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
     const product = products.find(p => p.id === selectedProductId);
     if (!product || product.calculator_type !== 'click_sheet_print') return;
     const mySeq = ++calcSeqRef.current;
-    console.log('[API CALL] sw=', sw, 'seq=', mySeq);
     setCalcLoading(true);
     try {
       const svcId1 = (selectedPrintSvcId1 != null && selectedPrintSvcId1 > 0) ? selectedPrintSvcId1 : null;
@@ -422,9 +421,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
     const product = products.find(p => p.id === selectedProductId);
     if (!product || product.calculator_type !== 'click_sheet_print') return;
     if (clickTimerRef.current) clearTimeout(clickTimerRef.current);
-    console.log('[calcClickPrice] setting 400ms timer with clickSheetW=', clickSheetW);
     clickTimerRef.current = setTimeout(async () => {
-      console.log('[FIRE] calcClickPrice clickSheetW=', clickSheetW);
       await calculateClickPriceWith(clickSheetW, clickSheetH, clickBleed, clickForceRotate);
     }, 400);
   }, [products, selectedProductId, clickSheetW, clickSheetH, clickBleed, clickForceRotate, calculateClickPriceWith]); // eslint-disable-line
@@ -447,8 +444,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
     if (product?.calculator_type !== 'click_sheet_print') return;
     if (clickTimerRef.current) clearTimeout(clickTimerRef.current);
     const sw = modalSheetW; const sh = modalSheetH; const bl = modalBleed; const fr = modalForceRotate;
-    console.log('[MODAL EFFECT] sw=', sw);
-    clickTimerRef.current = setTimeout(() => { console.log('[FIRE] modal effect sw=', sw); calculateClickPriceWith(sw, sh, bl, fr); }, 100);
+    clickTimerRef.current = setTimeout(() => { calculateClickPriceWith(sw, sh, bl, fr); }, 100);
   }, [modalSheetW, modalSheetH, modalBleed, modalForceRotate, impositionModalOpen]); // eslint-disable-line
 
   // Load service details whenever the selected product changes
@@ -1555,7 +1551,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                     <Col span={12}>
                       <NumInput
                         style={{ width: '100%' }} placeholder="Szélesség" min={1}
-                        value={modalSheetW} onChange={v => { const w = v ?? 330; setModalSheetW(w); if (clickTimerRef.current) clearTimeout(clickTimerRef.current); console.log('[TIMER] onChange w=', w); clickTimerRef.current = setTimeout(() => { console.log('[FIRE] onChange w=', w); calculateClickPriceWith(w, modalSheetH, modalBleed, modalForceRotate); }, 100); }} addonAfter="mm"
+                        value={modalSheetW} onChange={v => { const w = v ?? 330; setModalSheetW(w); if (clickTimerRef.current) clearTimeout(clickTimerRef.current); clickTimerRef.current = setTimeout(() => { calculateClickPriceWith(w, modalSheetH, modalBleed, modalForceRotate); }, 100); }} addonAfter="mm"
                         status={selectedProduct?.custom_size_width_max && (modalSheetW > Number(selectedProduct.custom_size_width_max)) ? 'error' : undefined}
                       />
                     </Col>

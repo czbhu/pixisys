@@ -382,21 +382,20 @@ class PrintOrderViewSet(viewsets.ModelViewSet):
             needs_cutting = False
             effective_cutting_mode = cutting_mode  # actual mode used (for auto)
 
-            if mat_w_mm and mat_h_mm and svc_max_w and svc_max_h:
-                material_exceeds = mat_w_mm > svc_max_w or mat_h_mm > svc_max_h
+            # Ívméret clampelése a gépi maximumhoz (de nem növeljük, ha a user kisebbet adott meg)
+            if svc_max_w:
+                sheet_w_mm = min(sheet_w_mm, svc_max_w)
+            if svc_max_h:
+                sheet_h_mm = min(sheet_h_mm, svc_max_h)
+
+            if mat_w_mm and mat_h_mm:
+                material_exceeds = mat_w_mm > sheet_w_mm or mat_h_mm > sheet_h_mm
 
                 if material_exceeds:
                     needs_cutting = True
-                    # Print sheet is always capped at printer maximum
-                    sheet_w_mm = min(mat_w_mm, svc_max_w)
-                    sheet_h_mm = min(mat_h_mm, svc_max_h)
-
-                    if cutting_mode == 'material':
-                        effective_cutting_mode = 'material'
-                    elif cutting_mode == 'print':
-                        effective_cutting_mode = 'print'
+                    if cutting_mode in ('material', 'print'):
+                        effective_cutting_mode = cutting_mode
                     else:
-                        # AUTO: heuristic — 'print' mode wastes less when cuts divide evenly
                         effective_cutting_mode = 'print'
 
             # How many print sheets fit from one raw material sheet
