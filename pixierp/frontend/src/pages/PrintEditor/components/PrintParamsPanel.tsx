@@ -1411,7 +1411,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
 
       {/* ── Impozíció modal ───────────────────────────────────────────────── */}
       <Modal
-        title={<span><AppstoreOutlined style={{ marginRight: 8 }} />Impozíció – Produkciózás</span>}
+        title={<span><AppstoreOutlined style={{ marginRight: 8 }} />Impozíció – Produkciózás <span style={{fontSize:10,color:'#aaa'}}>v96</span></span>}
         open={impositionModalOpen}
         onCancel={() => setImpositionModalOpen(false)}
         onOk={() => {
