@@ -1457,7 +1457,32 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                       <input
                         type="checkbox"
                         checked={modalAutoSheetSize}
-                        onChange={e => setModalAutoSheetSize(e.target.checked)}
+                        onChange={e => {
+                          const checked = e.target.checked;
+                          setModalAutoSheetSize(checked);
+                          if (checked && activeClickPricing?.size_comparison?.length) {
+                            // Immediately apply best size to modalSheetW/H so the imposition preview updates
+                            const sc = activeClickPricing.size_comparison;
+                            const wMin = selectedProduct?.custom_size_width_min ?? 0;
+                            const wMax = selectedProduct?.custom_size_width_max ?? Infinity;
+                            const hMin = selectedProduct?.custom_size_height_min ?? 0;
+                            const hMax = selectedProduct?.custom_size_height_max ?? Infinity;
+                            const hasInterval = wMax !== Infinity || hMax !== Infinity;
+                            const inRange = hasInterval
+                              ? sc.filter((s: SizeComparison) => {
+                                  const ew = s.cut_sheet_mm ? s.cut_sheet_mm[0] : s.size_mm[0];
+                                  const eh = s.cut_sheet_mm ? s.cut_sheet_mm[1] : s.size_mm[1];
+                                  return ew >= wMin && ew <= wMax && eh >= hMin && eh <= hMax;
+                                })
+                              : sc;
+                            const best = (inRange.length > 0 ? inRange : sc).find((s: SizeComparison) => s.is_best) ??
+                                         (inRange.length > 0 ? inRange : sc)[0];
+                            if (best) {
+                              setModalSheetW(best.size_mm[0]);
+                              setModalSheetH(best.size_mm[1]);
+                            }
+                          }
+                        }}
                         style={{ marginRight: 4 }}
                       />
                       Auto (legjobb anyagköltség)
