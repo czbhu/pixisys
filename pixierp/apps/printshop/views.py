@@ -688,11 +688,12 @@ class PrintOrderViewSet(viewsets.ModelViewSet):
                         if sz_w_mm > _sw or sz_h_mm > _sh:
                             # Raw material larger than print sheet → needs cutting
                             _needs_cut = True
-                            sx_n = max(1, int(sz_w_mm / _sw))
-                            sy_n = max(1, int(sz_h_mm / _sh))
-                            sx_r = max(1, int(sz_w_mm / _sh))
-                            sy_r = max(1, int(sz_h_mm / _sw))
-                            _mat_per_raw = max(sx_n * sy_n, sx_r * sy_r)
+                            # Nem clampelünk max(1,...)-re a vágásnál sem
+                            sx_n = int(sz_w_mm / _sw)
+                            sy_n = int(sz_h_mm / _sh)
+                            sx_r = int(sz_w_mm / _sh)
+                            sy_r = int(sz_h_mm / _sw)
+                            _mat_per_raw = max(sx_n * sy_n, sx_r * sy_r, 1)
                         elif sz_w_mm < _sw or sz_h_mm < _sh:
                             # Raw material smaller than print sheet → use material size as sheet
                             _sw = sz_w_mm

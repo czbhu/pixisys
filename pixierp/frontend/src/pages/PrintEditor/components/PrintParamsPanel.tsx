@@ -379,6 +379,8 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
     const product = products.find(p => p.id === selectedProductId);
     if (!product || product.calculator_type !== 'click_sheet_print') return;
     if (clickTimerRef.current) clearTimeout(clickTimerRef.current);
+    // Modal nyitva: rövidebb delay (150ms) a valós idejű preview-hoz
+    const delay = impositionModalOpen ? 150 : 400;
     clickTimerRef.current = setTimeout(async () => {
       setCalcLoading(true);
       try {
@@ -1448,7 +1450,10 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
           const rows = bestFit > 0 ? itemsH : 0;
           const totalPieces = params.quantity * (params.sheet_count ?? 1);
           const sheetsNeeded = bestFit > 0 ? Math.ceil(totalPieces / bestFit) : 0;
-          const clicks = sheetsNeeded * clickSides;
+          // Klikk: csak a ténylegesen nyomott oldalak számítanak (nyomatlan oldal nem klikk)
+          const effectiveSidesModal = (selectedPrintSvcId1 && selectedPrintSvcId1 > 0 ? 1 : 0) +
+                                      (clickSides === 2 && selectedPrintSvcId2 && selectedPrintSvcId2 > 0 ? 1 : 0);
+          const clicks = sheetsNeeded * Math.max(1, effectiveSidesModal);
           return (
             <div>
               <Row gutter={16} style={{ marginBottom: 16 }}>
