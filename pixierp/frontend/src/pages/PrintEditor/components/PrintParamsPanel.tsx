@@ -117,6 +117,8 @@ interface ClickPriceBreakdown {
   waste_items: number;
   sheet_w_mm: number;
   sheet_h_mm: number;
+  printer_max_w: number | null;
+  printer_max_h: number | null;
   // cutting
   cutting_info: {
     needs_cutting: boolean;
@@ -650,14 +652,17 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
   const activeClickPricing = isClickSheet ? clickPricing : null;
 
   // Auto ívméret: ha a modalAutoSheetSize be van kapcsolva és új összehasonlítás érkezett,
-  // frissítsük a modal ívméretét a legjobb anyag effektív méretére
+  // frissítsük a modal ívméretét a legjobb anyag gépi max-ra clampelt natív méretére
   useEffect(() => {
     if (!impositionModalOpen || !modalAutoSheetSize) return;
     if (!activeClickPricing?.size_comparison?.length) return;
     const best = activeClickPricing.size_comparison.find((s: SizeComparison) => s.is_best) ?? activeClickPricing.size_comparison[0];
     if (!best) return;
-    const newW = best.cut_sheet_mm ? best.cut_sheet_mm[0] : best.size_mm[0];
-    const newH = best.cut_sheet_mm ? best.cut_sheet_mm[1] : best.size_mm[1];
+    // Az anyag natív méretét a gépi max-ra clampeljük (svc_max_w/h a backendtől)
+    const pMaxW = activeClickPricing.printer_max_w ?? Infinity;
+    const pMaxH = activeClickPricing.printer_max_h ?? Infinity;
+    const newW = Math.min(best.size_mm[0], pMaxW);
+    const newH = Math.min(best.size_mm[1], pMaxH);
     if (newW !== modalSheetW || newH !== modalSheetH) {
       setModalSheetW(newW);
       setModalSheetH(newH);

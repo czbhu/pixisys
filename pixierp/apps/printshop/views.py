@@ -674,17 +674,12 @@ class PrintOrderViewSet(viewsets.ModelViewSet):
                     # ── Size comparison ────────────────────────────────────
                     def _calc_size_cost(sz_w_mm, sz_h_mm, sz_price, sz_label):
                         """Calculate material cost for a given size variant.
-                        AUTO mode: evaluate each material at its native size (capped at machine max).
-                        MANUAL mode: use user-entered sheet_w_mm / sheet_h_mm.
+                        Always uses user-entered sheet_w_mm / sheet_h_mm as the print sheet.
+                        If raw material > print sheet → cut to produce print sheets.
+                        If raw material < print sheet → use material dimensions directly.
                         """
-                        # AUTO: ívméret = anyagméret, gépi max-ra clampelve
-                        # MANUAL: ívméret = felhasználó által beírt érték
-                        if auto_material_size:
-                            _sw = min(sz_w_mm, svc_max_w) if svc_max_w else sz_w_mm
-                            _sh = min(sz_h_mm, svc_max_h) if svc_max_h else sz_h_mm
-                        else:
-                            _sw = sheet_w_mm
-                            _sh = sheet_h_mm
+                        _sw = sheet_w_mm
+                        _sh = sheet_h_mm
                         _needs_cut = False
                         _mat_per_raw = 1
 
@@ -696,8 +691,8 @@ class PrintOrderViewSet(viewsets.ModelViewSet):
                             sx_r = int(sz_w_mm / _sh)
                             sy_r = int(sz_h_mm / _sw)
                             _mat_per_raw = max(sx_n * sy_n, sx_r * sy_r, 1)
-                        elif not auto_material_size and (sz_w_mm < _sw or sz_h_mm < _sh):
-                            # Manual only: anyag kisebb mint beírt ívméret → anyagméretet használjuk
+                        elif sz_w_mm < _sw or sz_h_mm < _sh:
+                            # Raw material smaller than print sheet → use material size as sheet
                             _sw = sz_w_mm
                             _sh = sz_h_mm
 
@@ -727,12 +722,9 @@ class PrintOrderViewSet(viewsets.ModelViewSet):
                             'cuts_per_raw': _mat_per_raw if _needs_cut else 1,
                             'price_per_sheet': float(_price),
                             'sheets_needed': _raw_needed,
-                            'print_sheets': _sheets,        # nyomtatási ívek száma (a vágás előtti)
-                            'eff_sheet_mm': [round(_sw, 1), round(_sh, 1)],  # tényleges ívméret
                             'items_per_sheet': _ips,
                             'material_cost': float(_mat_cost),
                             'needs_cutting': _needs_cut,
-                            'rotated': bool(_ips_r > _ips_n),
                         }
 
                     # Default size entry
@@ -800,69 +792,6 @@ class PrintOrderViewSet(viewsets.ModelViewSet):
                         # Mark chosen in comparison
                         for sc in size_comparison:
                             sc['is_selected'] = (sc is chosen)
-
-                        # AUTO mód: a fő kalkuláció is a kiválasztott anyag ívméretét használja
-                        if auto_material_size:
-                            _eff = chosen.get('eff_sheet_mm') or chosen.get('cut_sheet_mm') or chosen['size_mm']
-                            sheet_w_mm = _eff[0]
-                            sheet_h_mm = _eff[1]
-                            items_per_sheet = chosen['items_per_sheet']
-                            rotated = chosen.get('rotated', rotated)
-                            if rotated:
-                                fit_w = int(sheet_w_mm / prod_h)
-                                fit_h = int(sheet_h_mm / prod_w)
-                            else:
-                                fit_w = int(sheet_w_mm / prod_w)
-                                fit_h = int(sheet_h_mm / prod_h)
-                            sheets_needed = chosen['print_sheets']
-                            clicks_total = sheets_needed * max(1, effective_sides)
-                            # Részletes ívkihasználás újraszámítása
-                            _tp = quantity * sheet_count
-                            _total_slots = sheets_needed * items_per_sheet
-                            _rem = _tp % items_per_sheet
-                            if _rem == 0:
-                                full_sheets = sheets_needed
-                                partial_sheet_items = 0
-                            else:
-                                full_sheets = sheets_needed - 1
-                                partial_sheet_items = _rem
-                            partial_coverage_pct = round(partial_sheet_items / items_per_sheet * 100, 1) if partial_sheet_items > 0 else 0
-                            waste_items = _total_slots - _tp
-                            # Vágási infó frissítése
-                            if needs_cutting and mat_w_mm and mat_h_mm:
-                                cutting_info['cut_sheet_size_mm'] = [round(sheet_w_mm, 1), round(sheet_h_mm, 1)]
-                                cutting_info['raw_material_sheets_needed'] = _math.ceil(sheets_needed / mat_sheets_per_raw)
-                                cutting_info['total_cut_sheets'] = sheets_needed
-                            # Nyomtatási díj újraszámítása az új ívszámmal
-                            if print_service_id_1 and print_sides > 0:
-                                try:
-                                    _svc1 = Service.objects.prefetch_related('cost_items').get(id=print_service_id_1)
-                                    print_cost_side1, print_service_items_1 = _build_service_cost(_svc1, quantity, sheets_needed)
-                                except Service.DoesNotExist:
-                                    pass
-                            if print_sides == 2:
-                                if print_service_id_2 and str(print_service_id_2) != str(print_service_id_1):
-                                    try:
-                                        _svc2 = Service.objects.prefetch_related('cost_items').get(id=print_service_id_2)
-                                        _c2, _i2 = _build_service_cost(_svc2, quantity, sheets_needed)
-                                        if fix_cost_first_side_only and print_service_id_1:
-                                            _i2 = [i for i in _i2 if i['type'] != 'fixed']
-                                            _c2 = sum(Decimal(str(i['total'])) for i in _i2)
-                                        print_cost_side2, print_service_items_2 = _c2, _i2
-                                    except Service.DoesNotExist:
-                                        pass
-                                elif print_service_id_2 and str(print_service_id_2) == str(print_service_id_1):
-                                    print_cost_side2 = Decimal('0')
-                                    print_service_items_2 = []
-                                    for _ci in print_service_items_1:
-                                        if _ci['type'] == 'click':
-                                            _a = Decimal(str(_ci['price_per'])) * Decimal(str(sheets_needed))
-                                            print_cost_side2 += _a
-                                            print_service_items_2.append({**_ci, 'total': float(_a.quantize(Decimal('0.01')))})
-                                        elif _ci['type'] == 'fixed' and not fix_cost_first_side_only:
-                                            print_cost_side2 += Decimal(str(_ci['total']))
-                                            print_service_items_2.append({**_ci})
-                            print_cost = print_cost_side1 + print_cost_side2
 
                 except Exception:
                     pass
@@ -967,6 +896,8 @@ class PrintOrderViewSet(viewsets.ModelViewSet):
                 'waste_items':            waste_items,
                 'sheet_w_mm':             round(sheet_w_mm, 1),
                 'sheet_h_mm':             round(sheet_h_mm, 1),
+                'printer_max_w':          round(svc_max_w, 1) if svc_max_w else None,
+                'printer_max_h':          round(svc_max_h, 1) if svc_max_h else None,
                 # cutting
                 'cutting_info':           cutting_info,
                 # nyomtatási kt.
