@@ -68,6 +68,8 @@ interface ProductTemplate {
   custom_size_width_max?: number | null;
   custom_size_height_min?: number | null;
   custom_size_height_max?: number | null;
+  grip_width_mm?: number | null;
+  grip_height_mm?: number | null;
   service_groups_1?: number[][];
   service_groups_2?: number[][];
   finishing_service_groups?: number[][];
@@ -486,8 +488,10 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
     if (product.print_service_options_details && product.print_service_options_details.length >= 1) {
       const svc = product.print_service_options_details[0];
       setSelectedPrintSvcId1(svc.id);
-      if (svc.max_width_mm) setClickSheetW(svc.max_width_mm);
-      if (svc.max_height_mm) setClickSheetH(svc.max_height_mm);
+      const gripW = Number(product.grip_width_mm ?? 0);
+      const gripH = Number(product.grip_height_mm ?? 0);
+      if (svc.max_width_mm) setClickSheetW(Math.max(1, svc.max_width_mm - gripW));
+      if (svc.max_height_mm) setClickSheetH(Math.max(1, svc.max_height_mm - gripH));
     }
     if (product.sizes.length > 0) {
       const first = product.sizes[0];
@@ -515,13 +519,6 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
       width_mm: Number(sz.width_mm) || params.width_mm,
       height_mm: Number(sz.height_mm) || params.height_mm,
     });
-    // Ívfogás: csökkentjük a click sheet méretet ha van fogás megadva
-    const gripW = Number(sz.grip_width_mm ?? 0);
-    const gripH = Number(sz.grip_height_mm ?? 0);
-    if (gripW > 0 || gripH > 0) {
-      setClickSheetW(prev => Math.max(1, prev - gripW));
-      setClickSheetH(prev => Math.max(1, prev - gripH));
-    }
   };
 
   const selectedProduct = products.find(p => p.id === selectedProductId) ?? null;

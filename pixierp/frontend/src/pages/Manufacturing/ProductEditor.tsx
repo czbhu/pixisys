@@ -30,8 +30,6 @@ interface SizeRow {
   height: number | null;  // display unit
   unit: 'mm' | 'cm' | 'm';
   sort_order: number;
-  grip_width_mm?: number | null;
-  grip_height_mm?: number | null;
 }
 
 interface ResourceItem {
@@ -184,7 +182,6 @@ const fromMm = (v: number | null, unit: string): number | null => {
 
 const emptySizeRow = (order = 0): SizeRow => ({
   label: '', width: null, height: null, unit: 'mm', sort_order: order,
-  grip_width_mm: 0, grip_height_mm: 0,
 });
 
 // ── Main component ───────────────────────────────────────────────────────────
@@ -479,8 +476,6 @@ const ProductEditor: React.FC = () => {
             width:  fromMm(s.width_mm  != null ? Number(s.width_mm)  : null, unit),
             height: fromMm(s.height_mm != null ? Number(s.height_mm) : null, unit),
             sort_order: s.sort_order,
-            grip_width_mm:  Number(s.grip_width_mm ?? 0),
-            grip_height_mm: Number(s.grip_height_mm ?? 0),
           };
         })
       : [emptySizeRow(0)]);
@@ -592,8 +587,6 @@ const ProductEditor: React.FC = () => {
         height_mm: toMm(s.height, s.unit),
         width_max_mm: null,
         height_max_mm: null,
-        grip_width_mm:  s.grip_width_mm ?? 0,
-        grip_height_mm: s.grip_height_mm ?? 0,
         sort_order: i,
       })),
     };
@@ -658,7 +651,7 @@ const ProductEditor: React.FC = () => {
   const removeSize = (idx: number) =>
     setSizes(prev => prev.filter((_, i) => i !== idx));
 
-  const updateSize = (idx: number, field: 'label' | 'width' | 'height' | 'grip_width_mm' | 'grip_height_mm', value: any) =>
+  const updateSize = (idx: number, field: 'label' | 'width' | 'height', value: any) =>
     setSizes(prev => prev.map((s, i) => {
       if (i !== idx) return s;
       const updated = { ...s, [field]: value };
@@ -1143,94 +1136,81 @@ const ProductEditor: React.FC = () => {
                     <Text type="secondary" style={{ fontSize: 12 }}>Preset méretek</Text>
                     <div style={{ marginTop: 6, marginBottom: 4 }}>
                       {sizes.map((s, idx) => (
-                        <div key={idx} style={{ marginBottom: 8, padding: '6px 8px', background: '#fafafa', border: '1px solid #f0f0f0', borderRadius: 6 }}>
-                          <Row gutter={6} align="middle" style={{ marginBottom: 4 }}>
-                            <Col flex="auto">
-                              <Input
-                                placeholder="pl. A4, egyéni"
-                                value={s.label}
-                                onChange={e => updateSize(idx, 'label', e.target.value)}
-                                size="small"
-                              />
-                            </Col>
-                            <Col style={{ width: 62 }}>
-                              <NumInput
-                                placeholder="Sz."
-                                min={0}
-                                style={{ width: '100%' }}
-                                value={s.width ?? undefined}
-                                onChange={v => updateSize(idx, 'width', v ?? null)}
-                                size="small"
-                              />
-                            </Col>
-                            <Col flex="none" style={{ textAlign: 'center', padding: '0 2px' }}>
-                              <Text style={{ color: '#bbb', fontSize: 14 }}>×</Text>
-                            </Col>
-                            <Col style={{ width: 62 }}>
-                              <NumInput
-                                placeholder="M."
-                                min={0}
-                                style={{ width: '100%' }}
-                                value={s.height ?? undefined}
-                                onChange={v => updateSize(idx, 'height', v ?? null)}
-                                size="small"
-                              />
-                            </Col>
-                            <Col style={{ width: 74 }}>
-                              <Select
-                                size="small"
-                                style={{ width: '100%' }}
-                                value={s.unit}
-                                onChange={v => updateSizeUnit(idx, v)}
-                                options={UNITS}
-                              />
-                            </Col>
-                            <Col flex="none">
-                              <Button
-                                size="small"
-                                danger
-                                icon={<MinusCircleOutlined />}
-                                onClick={() => removeSize(idx)}
-                                disabled={sizes.length === 1}
-                              />
-                            </Col>
-                          </Row>
-                          <Row gutter={6} align="middle">
-                            <Col flex="none"><Text style={{ fontSize: 11, color: '#888' }}>Ívfogás:</Text></Col>
-                            <Col style={{ width: 70 }}>
-                              <NumInput
-                                placeholder="Sz. fogás"
-                                min={0}
-                                style={{ width: '100%' }}
-                                value={s.grip_width_mm ?? 0}
-                                onChange={v => updateSize(idx, 'grip_width_mm', v ?? 0)}
-                                size="small"
-                              />
-                            </Col>
-                            <Col flex="none"><Text style={{ fontSize: 11, color: '#bbb' }}>×</Text></Col>
-                            <Col style={{ width: 70 }}>
-                              <NumInput
-                                placeholder="H. fogás"
-                                min={0}
-                                style={{ width: '100%' }}
-                                value={s.grip_height_mm ?? 0}
-                                onChange={v => updateSize(idx, 'grip_height_mm', v ?? 0)}
-                                size="small"
-                              />
-                            </Col>
-                            <Col flex="none">
-                              <Text style={{ fontSize: 10, color: '#aaa' }}>mm (szélességi × hosszúsági)</Text>
-                            </Col>
-                            {(s.grip_width_mm || s.grip_height_mm) && s.width && s.height && (
-                              <Col flex="none">
-                                <Text style={{ fontSize: 10, color: '#52c41a' }}>
-                                  → nyomtatható: {Math.max(0, (s.width || 0) - (s.grip_width_mm || 0))}×{Math.max(0, (s.height || 0) - (s.grip_height_mm || 0))} {s.unit}
-                                </Text>
-                              </Col>
-                            )}
-                          </Row>
-                        </div>
+                        <Row key={idx} gutter={6} align="middle" style={{ marginBottom: 6 }}>
+                          <Col flex="auto">
+                            <Input
+                              placeholder="pl. A4, egyéni"
+                              value={s.label}
+                              onChange={e => updateSize(idx, 'label', e.target.value)}
+                              size="small"
+                            />
+                          </Col>
+                          <Col style={{ width: 62 }}>
+                            <NumInput
+                              placeholder="Sz."
+                              min={0}
+                              style={{ width: '100%' }}
+                              value={s.width ?? undefined}
+                              onChange={v => updateSize(idx, 'width', v ?? null)}
+                              size="small"
+                            />
+                          </Col>
+                          <Col flex="none" style={{ textAlign: 'center', padding: '0 2px' }}>
+                            <Text style={{ color: '#bbb', fontSize: 14 }}>×</Text>
+                          </Col>
+                          <Col style={{ width: 62 }}>
+                            <NumInput
+                              placeholder="M."
+                              min={0}
+                              style={{ width: '100%' }}
+                              value={s.height ?? undefined}
+                              onChange={v => updateSize(idx, 'height', v ?? null)}
+                              size="small"
+                            />
+                          </Col>
+                          <Col style={{ width: 74 }}>
+                            <Select
+                              size="small"
+                              style={{ width: '100%' }}
+                              value={s.unit}
+                              onChange={v => updateSizeUnit(idx, v)}
+                              options={UNITS}
+                            />
+                          </Col>
+                          <Col flex="none">
+                            <Button
+                              size="small"
+                              danger
+                              icon={<MinusCircleOutlined />}
+                              onClick={() => removeSize(idx)}
+                              disabled={sizes.length === 1}
+                            />
+                          </Col>
+                        </Row>
                       ))}
+                    </div>
+
+                    {/* Ívfogás — termékszintű, minden méretre és egyedi méretre vonatkozik */}
+                    <div style={{ marginTop: 8, padding: '8px 10px', background: '#fffbe6', border: '1px solid #ffe58f', borderRadius: 6 }}>
+                      <Text style={{ fontSize: 12, fontWeight: 500 }}>Ívfogás (minden méretre érvényes)</Text>
+                      <Row gutter={8} align="middle" style={{ marginTop: 6 }}>
+                        <Col flex="none"><Text style={{ fontSize: 12 }}>Szélességi:</Text></Col>
+                        <Col style={{ width: 80 }}>
+                          <Form.Item name="grip_width_mm" noStyle>
+                            <NumInput min={0} size="small" style={{ width: '100%' }} placeholder="0" />
+                          </Form.Item>
+                        </Col>
+                        <Col flex="none"><Text style={{ fontSize: 12 }}>mm &nbsp; Hosszúsági:</Text></Col>
+                        <Col style={{ width: 80 }}>
+                          <Form.Item name="grip_height_mm" noStyle>
+                            <NumInput min={0} size="small" style={{ width: '100%' }} placeholder="0" />
+                          </Form.Item>
+                        </Col>
+                        <Col flex="none"><Text style={{ fontSize: 11, color: '#888' }}>mm</Text></Col>
+                      </Row>
+                      <Text style={{ fontSize: 11, color: '#888', display: 'block', marginTop: 4 }}>
+                        A nyomtatható terület = ívméret − ívfogás. Pl. 330×487 mm, fogás 10×5 mm → 320×482 mm.
+                      </Text>
                     </div>
 
                     <Button size="small" icon={<PlusOutlined />} onClick={addSize} style={{ marginBottom: 8 }}>
