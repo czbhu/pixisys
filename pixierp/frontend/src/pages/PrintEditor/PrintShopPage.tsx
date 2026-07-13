@@ -674,15 +674,17 @@ const PrintShopPage: React.FC = () => {
           )
         );
         message.success('Mentve az ajánlathoz.');
-        const navigateBack = (targetUrl: string) => {
-          if (window.opener && !window.opener.closed) {
-            window.opener.location.href = targetUrl;
-            window.close();
-          } else {
-            window.location.href = targetUrl;
-          }
-        };
-        navigateBack(returnUrl || `/sales/rfqs`);
+        // Visszatérés az ajánlat oldalra: reload kell, mert a returnUrl ugyanaz az URL
+        // amit az opener már mutat → location.href = same URL nem triggerel reloadot
+        if (window.opener && !window.opener.closed) {
+          window.opener.location.reload();
+          window.close();
+        } else if (returnUrl) {
+          // Ha nem volt opener: navigálj a returnUrl-re (esetleg ugyanaz, de legalább megpróbál)
+          window.location.href = returnUrl + (returnUrl.includes('?') ? '&' : '?') + '_r=' + Date.now();
+        } else {
+          window.location.href = '/sales/rfqs';
+        }
         return;
       }
 
