@@ -13,6 +13,8 @@ interface ProductTemplateSize {
   id?: number; label: string;
   width_mm: number | null; width_max_mm?: number | null;
   height_mm: number | null; height_max_mm?: number | null;
+  grip_width_mm?: number | null;
+  grip_height_mm?: number | null;
 }
 interface ServiceDetail {
   id: number;
@@ -54,9 +56,10 @@ interface SizeComparison {
   items_per_sheet: number;
   material_cost: number;
   needs_cutting: boolean;
-  is_default?: boolean;
   is_best?: boolean;
-  size_id?: number;
+  is_default?: boolean;
+  is_selected?: boolean;
+  size_id?: number | null;
 }
 interface ProductTemplate {
   id: number; name: string; code: string | null; sizes: ProductTemplateSize[];
@@ -249,6 +252,9 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
   const [modalCuttingMode, setModalCuttingMode] = useState<'auto' | 'material' | 'print'>('auto');
   const [clickForceRotate, setClickForceRotate] = useState<'auto' | 'normal' | 'rotated'>((_cs.forceRotate as any) ?? 'auto');
   const [cuttingMode, setCuttingMode] = useState<'auto' | 'material' | 'print'>((_cs.cuttingMode as any) ?? 'auto');
+  // Forced material size from size_comparison selection
+  const [forcedSizeId, setForcedSizeId] = useState<number | null>(null);
+  const [autoSizeMode, setAutoSizeMode] = useState<boolean>(true); // true = auto pick cheapest
 
   // Service selection: per AND-group for side 1 and side 2
   // selectedServices1[i] = chosen service IDs (multi) for group i on side 1
@@ -393,6 +399,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
           force_rotate:         clickForceRotate === 'auto' ? null : clickForceRotate === 'rotated',
           fix_cost_first_side_only: product?.fix_cost_first_side_only ?? false,
           cutting_mode:         cuttingMode,
+          forced_size_id:       autoSizeMode ? null : (forcedSizeId ?? null),
         });
         setClickPricing(res.data);
         onPriceChange?.(res.data);
@@ -403,7 +410,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
       }
     }, 400);
   }, [products, selectedProductId, params.width_mm, params.height_mm, params.quantity, params.sheet_count, params.material_id,
-      clickSides, selectedPrintSvcId1, selectedPrintSvcId2, clickSheetW, clickSheetH, clickBleed, clickForceRotate, cuttingMode, flatSelectedIds, flatFinishingIds]); // eslint-disable-line
+      clickSides, selectedPrintSvcId1, selectedPrintSvcId2, clickSheetW, clickSheetH, clickBleed, clickForceRotate, cuttingMode, flatSelectedIds, flatFinishingIds, forcedSizeId, autoSizeMode]); // eslint-disable-line
 
   useEffect(() => {
     const product = products.find(p => p.id === selectedProductId);
@@ -508,6 +515,13 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
       width_mm: Number(sz.width_mm) || params.width_mm,
       height_mm: Number(sz.height_mm) || params.height_mm,
     });
+    // Ívfogás: csökkentjük a click sheet méretet ha van fogás megadva
+    const gripW = Number(sz.grip_width_mm ?? 0);
+    const gripH = Number(sz.grip_height_mm ?? 0);
+    if (gripW > 0 || gripH > 0) {
+      setClickSheetW(prev => Math.max(1, prev - gripW));
+      setClickSheetH(prev => Math.max(1, prev - gripH));
+    }
   };
 
   const selectedProduct = products.find(p => p.id === selectedProductId) ?? null;
@@ -1646,10 +1660,21 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                   {/* ── Méret összehasonlítás ───────────────────────── */}
                   {activeClickPricing?.size_comparison && activeClickPricing.size_comparison.length > 1 && (
                     <div style={{ marginTop: 12, padding: '12px', background: '#f0f5ff', borderRadius: 8, border: '1px solid #d6e4ff' }}>
-                      <Text strong style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>Rendelhető méretek összehasonlítása</Text>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                        <Text strong style={{ fontSize: 12 }}>Rendelhető méretek összehasonlítása</Text>
+                        <label style={{ fontSize: 11, display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
+                          <input
+                            type="checkbox"
+                            checked={autoSizeMode}
+                            onChange={e => { setAutoSizeMode(e.target.checked); if (e.target.checked) setForcedSizeId(null); }}
+                          />
+                          Automatikus (legolcsóbb)
+                        </label>
+                      </div>
                       <table style={{ width: '100%', fontSize: 11, borderCollapse: 'collapse' }}>
                         <thead>
                           <tr style={{ borderBottom: '1px solid #d6e4ff', color: '#666' }}>
+                            <th style={{ width: 28, padding: '4px 2px' }} />
                             <th style={{ textAlign: 'left', padding: '4px 6px' }}>Méret</th>
                             <th style={{ textAlign: 'right', padding: '4px 6px' }}>Ív méret</th>
                             <th style={{ textAlign: 'right', padding: '4px 6px' }}>db/ív</th>
@@ -1659,26 +1684,45 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                           </tr>
                         </thead>
                         <tbody>
-                          {activeClickPricing.size_comparison.map((sc, i) => (
-                            <tr key={i} style={{
-                              background: sc.is_best ? '#f6ffed' : 'transparent',
-                              fontWeight: sc.is_best ? 600 : 400,
-                              borderBottom: '1px solid #f0f0f0',
-                            }}>
-                              <td style={{ padding: '4px 6px' }}>
-                                {sc.label}
-                                {sc.is_default && <Tag color="blue" style={{ marginLeft: 4, fontSize: 9, lineHeight: '14px', padding: '0 4px' }}>alap</Tag>}
-                                {sc.is_best && <Tag color="green" style={{ marginLeft: 4, fontSize: 9, lineHeight: '14px', padding: '0 4px' }}>legjobb</Tag>}
-                              </td>
-                              <td style={{ textAlign: 'right', padding: '4px 6px' }}>{sc.size_mm[0]}×{sc.size_mm[1]}</td>
-                              <td style={{ textAlign: 'right', padding: '4px 6px' }}>{sc.items_per_sheet}</td>
-                              <td style={{ textAlign: 'right', padding: '4px 6px' }}>{sc.sheets_needed}{sc.needs_cutting && ' ✂'}</td>
-                              <td style={{ textAlign: 'right', padding: '4px 6px' }}>{sc.price_per_sheet.toLocaleString('hu-HU')} Ft</td>
-                              <td style={{ textAlign: 'right', padding: '4px 6px', color: sc.is_best ? '#52c41a' : undefined }}>
-                                {sc.material_cost.toLocaleString('hu-HU')} Ft
-                              </td>
-                            </tr>
-                          ))}
+                          {activeClickPricing.size_comparison.map((sc, i) => {
+                            const isEffectivelySelected = autoSizeMode ? sc.is_best : (sc.size_id != null ? sc.size_id === forcedSizeId : !forcedSizeId && sc.is_default);
+                            return (
+                              <tr key={i} style={{
+                                background: isEffectivelySelected ? '#e6f7ff' : (sc.is_best ? '#f6ffed' : 'transparent'),
+                                fontWeight: isEffectivelySelected ? 600 : 400,
+                                borderBottom: '1px solid #f0f0f0',
+                                cursor: autoSizeMode ? 'default' : 'pointer',
+                              }}
+                              onClick={() => {
+                                if (autoSizeMode) return;
+                                setForcedSizeId(sc.size_id ?? null);
+                              }}
+                              >
+                                <td style={{ textAlign: 'center', padding: '4px 2px' }}>
+                                  <input
+                                    type="radio"
+                                    checked={isEffectivelySelected}
+                                    disabled={autoSizeMode}
+                                    onChange={() => { setAutoSizeMode(false); setForcedSizeId(sc.size_id ?? null); }}
+                                    onClick={e => e.stopPropagation()}
+                                  />
+                                </td>
+                                <td style={{ padding: '4px 6px' }}>
+                                  {sc.label}
+                                  {sc.is_default && <Tag color="blue" style={{ marginLeft: 4, fontSize: 9, lineHeight: '14px', padding: '0 4px' }}>alap</Tag>}
+                                  {sc.is_best && <Tag color="green" style={{ marginLeft: 4, fontSize: 9, lineHeight: '14px', padding: '0 4px' }}>legjobb</Tag>}
+                                  {isEffectivelySelected && !sc.is_best && <Tag color="blue" style={{ marginLeft: 4, fontSize: 9, lineHeight: '14px', padding: '0 4px' }}>kiválasztott</Tag>}
+                                </td>
+                                <td style={{ textAlign: 'right', padding: '4px 6px' }}>{sc.size_mm[0]}×{sc.size_mm[1]}</td>
+                                <td style={{ textAlign: 'right', padding: '4px 6px' }}>{sc.items_per_sheet}</td>
+                                <td style={{ textAlign: 'right', padding: '4px 6px' }}>{sc.sheets_needed}{sc.needs_cutting && ' ✂'}</td>
+                                <td style={{ textAlign: 'right', padding: '4px 6px' }}>{sc.price_per_sheet.toLocaleString('hu-HU')} Ft</td>
+                                <td style={{ textAlign: 'right', padding: '4px 6px', color: sc.is_best ? '#52c41a' : undefined }}>
+                                  {sc.material_cost.toLocaleString('hu-HU')} Ft
+                                </td>
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>

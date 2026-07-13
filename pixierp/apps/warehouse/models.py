@@ -797,6 +797,16 @@ class MaterialSize(models.Model):
     )
     is_active = models.BooleanField(default=True, verbose_name="Aktív")
     sort_order = models.IntegerField(default=0, verbose_name="Sorrend")
+    grip_width_mm = models.DecimalField(
+        max_digits=8, decimal_places=2, default=0,
+        verbose_name="Szélességi ívfogás (mm)",
+        help_text="Az ívfogás miatti redukció szélességben mm-ben (pl. 10 → nyomtatható szélesség = szélesség − 10)",
+    )
+    grip_height_mm = models.DecimalField(
+        max_digits=8, decimal_places=2, default=0,
+        verbose_name="Hosszúsági ívfogás (mm)",
+        help_text="Az ívfogás miatti redukció hosszúságban mm-ben",
+    )
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="Létrehozva")
     updated_at = models.DateTimeField(auto_now=True, verbose_name="Módosítva")
 

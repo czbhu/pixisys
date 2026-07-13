@@ -342,6 +342,7 @@ class PrintOrderViewSet(viewsets.ModelViewSet):
             force_rotate   = d.get('force_rotate')   # None=auto, True=force rotated, False=force normal
             fix_cost_first_side_only = bool(d.get('fix_cost_first_side_only', False))
             cutting_mode   = d.get('cutting_mode', 'auto')  # auto | material | print
+            forced_size_id = d.get('forced_size_id')   # MaterialSize.id to use for material cost, or None=auto
 
             # ── Material dimensions (for cutting) ────────────────────────────
             mat_w_mm = None
@@ -723,18 +724,62 @@ class PrintOrderViewSet(viewsets.ModelViewSet):
                         _m = _dim_mult.get(ms.dimension_unit, 1)
                         _w = float(ms.width) * _m
                         _l = float(ms.length) * _m
+                        # Apply grip reductions to get effective printable area
+                        _grip_w = float(ms.grip_width_mm or 0)
+                        _grip_h = float(ms.grip_height_mm or 0)
+                        _effective_w = max(0, _w - _grip_w)
+                        _effective_l = max(0, _l - _grip_h)
                         _p = float(ms.effective_price or 0)
                         _lbl = ms.name or f'{round(_w)}×{round(_l)} mm'
-                        entry = _calc_size_cost(_w, _l, _p, _lbl)
+                        if _grip_w or _grip_h:
+                            _lbl += f' (nyomtatható: {round(_effective_w)}×{round(_effective_l)})'
+                        entry = _calc_size_cost(_effective_w, _effective_l, _p, _lbl)
                         if entry:
                             entry['is_default'] = False
                             entry['size_id'] = ms.id
+                            entry['grip_w'] = _grip_w
+                            entry['grip_h'] = _grip_h
                             size_comparison.append(entry)
 
                     # Sort by material cost, mark the best
                     if size_comparison:
                         size_comparison.sort(key=lambda x: x['material_cost'])
                         size_comparison[0]['is_best'] = True
+
+                    # Apply forced or auto-best size to main material cost
+                    chosen = None
+                    if forced_size_id is not None:
+                        chosen = next((sc for sc in size_comparison if sc.get('size_id') == int(forced_size_id)), None)
+                    if chosen is None and size_comparison:
+                        # Auto: use best (cheapest) if orderable sizes exist, otherwise keep default
+                        best = size_comparison[0]
+                        # Only auto-apply if a non-default size is best
+                        if not best.get('is_default', False) or forced_size_id is not None:
+                            chosen = best
+                        elif forced_size_id is None and any(not sc.get('is_default', False) for sc in size_comparison):
+                            # There are orderable sizes - use cheapest overall (already sorted)
+                            chosen = size_comparison[0]
+                    if chosen:
+                        _p = Decimal(str(chosen['price_per_sheet']))
+                        _sn = chosen['sheets_needed']
+                        material_cost = (_p * Decimal(str(_sn))).quantize(Decimal('0.01'))
+                        material_items = [{
+                            'name': f"{mat.name} ({chosen['label']})",
+                            'type': 'click',
+                            'price_per': float(_p),
+                            'units': _sn,
+                            'total': float(material_cost),
+                            'supplier_id': mat_sup_id,
+                            'supplier_name': mat_sup_name,
+                            'cost_price_per': float(mat_cost_per.quantize(Decimal('0.01'))),
+                            'markup_percentage': mat_markup,
+                            'is_internal': False,
+                            'material_id': mat.id,
+                            'unit': mat.unit or 'ív',
+                        }]
+                        # Mark chosen in comparison
+                        for sc in size_comparison:
+                            sc['is_selected'] = (sc is chosen)
 
                 except Exception:
                     pass

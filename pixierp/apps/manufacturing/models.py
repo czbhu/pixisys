@@ -1565,6 +1565,16 @@ class ProductTemplateSize(models.Model):
     width_max_mm = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True, verbose_name="Szélesség max (mm)")
     height_mm = models.DecimalField(max_digits=8, decimal_places=2, verbose_name="Magasság min (mm)")
     height_max_mm = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True, verbose_name="Magasság max (mm)")
+    grip_width_mm = models.DecimalField(
+        max_digits=8, decimal_places=2, default=0,
+        verbose_name="Szélességi ívfogás (mm)",
+        help_text="Ívfogás miatti redukció szélességben mm-ben — csökkenti a nyomtatható területet",
+    )
+    grip_height_mm = models.DecimalField(
+        max_digits=8, decimal_places=2, default=0,
+        verbose_name="Hosszúsági ívfogás (mm)",
+        help_text="Ívfogás miatti redukció hosszúságban mm-ben — csökkenti a nyomtatható területet",
+    )
     sort_order = models.IntegerField(default=0, verbose_name="Sorrend")
     unit = models.CharField(max_length=5, choices=[('mm', 'mm'), ('cm', 'cm'), ('m', 'm')], default='mm', verbose_name="Mértékegység")
 
