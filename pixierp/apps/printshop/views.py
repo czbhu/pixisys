@@ -664,26 +664,29 @@ class PrintOrderViewSet(viewsets.ModelViewSet):
 
                     # ── Size comparison ────────────────────────────────────
                     def _calc_size_cost(sz_w_mm, sz_h_mm, sz_price, sz_label):
-                        """Calculate material cost for a given size variant."""
-                        _sw, _sh = sheet_w_mm, sheet_h_mm
+                        """Calculate material cost for a given size variant.
+                        The print sheet = sheet_w_mm × sheet_h_mm (user-entered, already constrained by machine).
+                        If raw material > print sheet → cut to produce print sheets.
+                        If raw material < print sheet → use material dimensions directly.
+                        """
+                        # Effective print sheet = user-entered sheet (already reflects machine constraints)
+                        _sw = sheet_w_mm
+                        _sh = sheet_h_mm
                         _needs_cut = False
                         _mat_per_raw = 1
 
-                        if svc_max_w and svc_max_h:
-                            if sz_w_mm > svc_max_w or sz_h_mm > svc_max_h:
-                                _needs_cut = True
-                                _sw = min(sz_w_mm, svc_max_w)
-                                _sh = min(sz_h_mm, svc_max_h)
-                            else:
-                                _sw = min(sz_w_mm, svc_max_w)
-                                _sh = min(sz_h_mm, svc_max_h)
-
-                        if _needs_cut:
+                        if sz_w_mm > _sw or sz_h_mm > _sh:
+                            # Raw material larger than print sheet → needs cutting
+                            _needs_cut = True
                             sx_n = max(1, int(sz_w_mm / _sw))
                             sy_n = max(1, int(sz_h_mm / _sh))
                             sx_r = max(1, int(sz_w_mm / _sh))
                             sy_r = max(1, int(sz_h_mm / _sw))
                             _mat_per_raw = max(sx_n * sy_n, sx_r * sy_r)
+                        elif sz_w_mm < _sw or sz_h_mm < _sh:
+                            # Raw material smaller than print sheet → use material size as sheet
+                            _sw = sz_w_mm
+                            _sh = sz_h_mm
 
                         # Imposition on this sheet
                         _fw_n = max(1, int(_sw / prod_w))

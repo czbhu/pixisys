@@ -1412,9 +1412,10 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
               : sc;
             const pool = inRange.length > 0 ? inRange : sc;
             const best = pool.find((s: SizeComparison) => s.is_best) ?? pool[0];
-            // Apply the effective (cut) sheet size, not the raw material size
-            applyW = best.cut_sheet_mm ? best.cut_sheet_mm[0] : best.size_mm[0];
-            applyH = best.cut_sheet_mm ? best.cut_sheet_mm[1] : best.size_mm[1];
+            // Apply the material's raw size as the new click sheet
+            // (the imposition/comparison will be recomputed from that)
+            applyW = best.size_mm[0];
+            applyH = best.size_mm[1];
           }
           setClickSheetW(applyW);
           setClickSheetH(applyH);
