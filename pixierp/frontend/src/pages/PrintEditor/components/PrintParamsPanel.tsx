@@ -1493,20 +1493,38 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                       </div>
                     );
                   })() : (
+                  <>
                   <Row gutter={8}>
                     <Col span={12}>
                       <NumInput
                         style={{ width: '100%' }} placeholder="Szélesség" min={1}
                         value={modalSheetW} onChange={v => setModalSheetW(v ?? 330)} addonAfter="mm"
+                        status={selectedProduct?.custom_size_width_max && (modalSheetW > Number(selectedProduct.custom_size_width_max)) ? 'error' : undefined}
                       />
                     </Col>
                     <Col span={12}>
                       <NumInput
                         style={{ width: '100%' }} placeholder="Magasság" min={1}
                         value={modalSheetH} onChange={v => setModalSheetH(v ?? 487)} addonAfter="mm"
+                        status={selectedProduct?.custom_size_height_max && (modalSheetH > Number(selectedProduct.custom_size_height_max)) ? 'error' : undefined}
                       />
                     </Col>
                   </Row>
+                  {(() => {
+                    const wMax = selectedProduct?.custom_size_width_max ? Number(selectedProduct.custom_size_width_max) : null;
+                    const hMax = selectedProduct?.custom_size_height_max ? Number(selectedProduct.custom_size_height_max) : null;
+                    const wOver = wMax != null && modalSheetW > wMax;
+                    const hOver = hMax != null && modalSheetH > hMax;
+                    if (!wOver && !hOver) return null;
+                    return (
+                      <div style={{ marginTop: 6, padding: '5px 8px', background: '#fff1f0', border: '1px solid #ffccc7', borderRadius: 4, fontSize: 11, color: '#cf1322' }}>
+                        A technológia maximális ívmérete: {wMax ?? '–'} × {hMax ?? '–'} mm.
+                        {wOver && ` Szélesség: ${modalSheetW} > ${wMax} mm.`}
+                        {hOver && ` Magasság: ${modalSheetH} > ${hMax} mm.`}
+                      </div>
+                    );
+                  })()}
+                  </>
                   )}
                 </Col>
                 <Col span={12}>
