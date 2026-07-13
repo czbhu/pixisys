@@ -1548,14 +1548,14 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                     <Col span={12}>
                       <NumInput
                         style={{ width: '100%' }} placeholder="Szélesség" min={1}
-                        value={modalSheetW} onChange={v => setModalSheetW(v ?? 330)} addonAfter="mm"
+                        value={modalSheetW} onChange={v => { const w = v ?? 330; setModalSheetW(w); if (clickTimerRef.current) clearTimeout(clickTimerRef.current); clickTimerRef.current = setTimeout(() => calculateClickPriceWith(w, modalSheetH, modalBleed, modalForceRotate), 100); }} addonAfter="mm"
                         status={selectedProduct?.custom_size_width_max && (modalSheetW > Number(selectedProduct.custom_size_width_max)) ? 'error' : undefined}
                       />
                     </Col>
                     <Col span={12}>
                       <NumInput
                         style={{ width: '100%' }} placeholder="Magasság" min={1}
-                        value={modalSheetH} onChange={v => setModalSheetH(v ?? 487)} addonAfter="mm"
+                        value={modalSheetH} onChange={v => { const h = v ?? 487; setModalSheetH(h); if (clickTimerRef.current) clearTimeout(clickTimerRef.current); clickTimerRef.current = setTimeout(() => calculateClickPriceWith(modalSheetW, h, modalBleed, modalForceRotate), 100); }} addonAfter="mm"
                         status={selectedProduct?.custom_size_height_max && (modalSheetH > Number(selectedProduct.custom_size_height_max)) ? 'error' : undefined}
                       />
                     </Col>
