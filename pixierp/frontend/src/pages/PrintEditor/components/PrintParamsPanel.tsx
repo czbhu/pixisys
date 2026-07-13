@@ -51,6 +51,8 @@ interface MaterialDetail {
 interface SizeComparison {
   label: string;
   size_mm: [number, number];
+  cut_sheet_mm?: [number, number] | null;
+  cuts_per_raw?: number;
   price_per_sheet: number;
   sheets_needed: number;
   items_per_sheet: number;
@@ -1399,15 +1401,20 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
             const wMax = selectedProduct?.custom_size_width_max ?? Infinity;
             const hMin = selectedProduct?.custom_size_height_min ?? 0;
             const hMax = selectedProduct?.custom_size_height_max ?? Infinity;
-            // Filter to sizes within the technology interval, then pick cheapest
-            const inRange = sc.filter((s: SizeComparison) =>
-              s.size_mm[0] >= wMin && s.size_mm[0] <= wMax &&
-              s.size_mm[1] >= hMin && s.size_mm[1] <= hMax
-            );
-            const best = (inRange.length > 0 ? inRange : sc).find((s: SizeComparison) => s.is_best) ??
-                         (inRange.length > 0 ? inRange : sc)[0];
-            applyW = best.size_mm[0];
-            applyH = best.size_mm[1];
+            const hasInterval = wMax !== Infinity || hMax !== Infinity;
+            // Accept sizes whose EFFECTIVE (cut) sheet falls within the interval
+            const effectiveW = (s: SizeComparison) => s.cut_sheet_mm ? s.cut_sheet_mm[0] : s.size_mm[0];
+            const effectiveH = (s: SizeComparison) => s.cut_sheet_mm ? s.cut_sheet_mm[1] : s.size_mm[1];
+            const inRange = hasInterval
+              ? sc.filter((s: SizeComparison) =>
+                  effectiveW(s) >= wMin && effectiveW(s) <= wMax &&
+                  effectiveH(s) >= hMin && effectiveH(s) <= hMax)
+              : sc;
+            const pool = inRange.length > 0 ? inRange : sc;
+            const best = pool.find((s: SizeComparison) => s.is_best) ?? pool[0];
+            // Apply the effective (cut) sheet size, not the raw material size
+            applyW = best.cut_sheet_mm ? best.cut_sheet_mm[0] : best.size_mm[0];
+            applyH = best.cut_sheet_mm ? best.cut_sheet_mm[1] : best.size_mm[1];
           }
           setClickSheetW(applyW);
           setClickSheetH(applyH);
@@ -1462,22 +1469,25 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                     const hMin = selectedProduct?.custom_size_height_min ?? 0;
                     const hMax = selectedProduct?.custom_size_height_max ?? Infinity;
                     const hasInterval = wMax !== Infinity || hMax !== Infinity;
-                    const inRange = sc.filter((s: SizeComparison) =>
-                      s.size_mm[0] >= wMin && s.size_mm[0] <= wMax &&
-                      s.size_mm[1] >= hMin && s.size_mm[1] <= hMax
-                    );
-                    const best = (inRange.length > 0 ? inRange : sc).find((s: SizeComparison) => s.is_best) ??
-                                 (inRange.length > 0 ? inRange : sc)[0];
+                    const effectiveW = (s: SizeComparison) => s.cut_sheet_mm ? s.cut_sheet_mm[0] : s.size_mm[0];
+                    const effectiveH = (s: SizeComparison) => s.cut_sheet_mm ? s.cut_sheet_mm[1] : s.size_mm[1];
+                    const inRange = hasInterval
+                      ? sc.filter((s: SizeComparison) =>
+                          effectiveW(s) >= wMin && effectiveW(s) <= wMax &&
+                          effectiveH(s) >= hMin && effectiveH(s) <= hMax)
+                      : sc;
+                    const pool = inRange.length > 0 ? inRange : sc;
+                    const best = pool.find((s: SizeComparison) => s.is_best) ?? pool[0];
                     return (
                       <div style={{ padding: '6px 10px', background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 6, fontSize: 12 }}>
-                        <strong>{best.label}</strong>: {best.size_mm[0]}×{best.size_mm[1]} mm
+                        <strong>{best.label}</strong>
+                        {best.needs_cutting && best.cut_sheet_mm && (
+                          <span style={{ color: '#fa8c16' }}> → vágva: {best.cut_sheet_mm[0]}×{best.cut_sheet_mm[1]} mm ({best.cuts_per_raw} ív/alap)</span>
+                        )}
                         &nbsp;·&nbsp;{best.items_per_sheet} db/ív&nbsp;·&nbsp;{best.sheets_needed} ív
                         &nbsp;·&nbsp;{best.material_cost.toLocaleString('hu-HU')} Ft
                         {hasInterval && inRange.length === 0 && (
-                          <span style={{ color: '#fa8c16', marginLeft: 8 }}>⚠ Nincs méret a technológiai intervallumon belül</span>
-                        )}
-                        {hasInterval && inRange.length > 0 && (
-                          <span style={{ color: '#52c41a', marginLeft: 8 }}>✓ Intervallumban</span>
+                          <span style={{ color: '#fa8c16', marginLeft: 8 }}>⚠ Nincs megfelelő méret</span>
                         )}
                       </div>
                     );
@@ -1764,6 +1774,11 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                                   {sc.is_default && <Tag color="blue" style={{ marginLeft: 4, fontSize: 9, lineHeight: '14px', padding: '0 4px' }}>alap</Tag>}
                                   {sc.is_best && <Tag color="green" style={{ marginLeft: 4, fontSize: 9, lineHeight: '14px', padding: '0 4px' }}>legjobb</Tag>}
                                   {isEffectivelySelected && !sc.is_best && <Tag color="blue" style={{ marginLeft: 4, fontSize: 9, lineHeight: '14px', padding: '0 4px' }}>kiválasztott</Tag>}
+                                  {sc.needs_cutting && sc.cut_sheet_mm && (
+                                    <div style={{ fontSize: 10, color: '#fa8c16', marginTop: 1 }}>
+                                      ✂ vágva: {sc.cut_sheet_mm[0]}×{sc.cut_sheet_mm[1]} mm ({sc.cuts_per_raw} ív/alap)
+                                    </div>
+                                  )}
                                 </td>
                                 <td style={{ textAlign: 'right', padding: '4px 6px' }}>{sc.size_mm[0]}×{sc.size_mm[1]}</td>
                                 <td style={{ textAlign: 'right', padding: '4px 6px' }}>{sc.items_per_sheet}</td>

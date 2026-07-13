@@ -703,6 +703,8 @@ class PrintOrderViewSet(viewsets.ModelViewSet):
                         return {
                             'label': sz_label,
                             'size_mm': [round(sz_w_mm, 1), round(sz_h_mm, 1)],
+                            'cut_sheet_mm': [round(_sw, 1), round(_sh, 1)] if _needs_cut else None,
+                            'cuts_per_raw': _mat_per_raw if _needs_cut else 1,
                             'price_per_sheet': float(_price),
                             'sheets_needed': _raw_needed,
                             'items_per_sheet': _ips,
