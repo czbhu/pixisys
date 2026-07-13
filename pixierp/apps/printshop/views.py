@@ -430,9 +430,13 @@ class PrintOrderViewSet(viewsets.ModelViewSet):
             # pl. 100 db × 2 lap = 200 nyomtatandó elem
             total_pieces    = quantity * sheet_count
             sheets_needed   = _math.ceil(total_pieces / items_per_sheet)
-            if print_sides == 2 and sheets_needed % 2 != 0:
+            # Páros ívszám csak akkor szükséges, ha mindkét oldal ténylegesen nyomott
+            both_sides_printed = print_sides == 2 and bool(print_service_id_1) and bool(print_service_id_2)
+            if both_sides_printed and sheets_needed % 2 != 0:
                 sheets_needed += 1
-            clicks_total = sheets_needed * print_sides
+            # Klikk = ívszám × ténylegesen nyomott oldalak száma (Nyomatlan oldal nem számít klikknek)
+            effective_sides = (1 if print_service_id_1 else 0) + (1 if (print_sides == 2 and print_service_id_2) else 0)
+            clicks_total = sheets_needed * max(1, effective_sides)
 
             # ── Production layout: full sheets vs partial sheet ───────────────
             total_slots = sheets_needed * items_per_sheet
@@ -696,8 +700,9 @@ class PrintOrderViewSet(viewsets.ModelViewSet):
                         _ips = max(_fw_n * _fh_n, _fw_r * _fh_r)
                         if _ips == 0:
                             return None
-                        _sheets = _math.ceil(quantity / _ips)
-                        if print_sides == 2 and _sheets % 2 != 0:
+                        _total_pieces = quantity * sheet_count  # lapok száma × darabszám
+                        _sheets = _math.ceil(_total_pieces / _ips)
+                        if both_sides_printed and _sheets % 2 != 0:
                             _sheets += 1
                         _raw_needed = _math.ceil(_sheets / _mat_per_raw) if _needs_cut else _sheets
 
