@@ -166,6 +166,16 @@ const PrintShopPage: React.FC = () => {
   const [priceBreakdown, setPriceBreakdown] = useState<PriceBreakdown | null>(null);
   const [saving, setSaving] = useState(false);
   const [rfqSaving, setRfqSaving] = useState(false);
+  // fromRfq mód: folyamatos mentés támogatása (Mentés / Bezárás gombok)
+  const [savedRfqMfgId, setSavedRfqMfgId] = useState<number | null>(() => {
+    const eid = new URLSearchParams(window.location.search).get('edit_mfg_id');
+    return eid ? Number(eid) : null;
+  });
+  const [savedRfqQriId, setSavedRfqQriId] = useState<number | null>(null);
+  const lastSavedParamsRef = useRef<string>(JSON.stringify(
+    (() => { try { const s = localStorage.getItem('pixierp_printshop'); if (s) return JSON.parse(s).params ?? {}; } catch {} return {}; })()
+  ));
+  const lastSavedPdfRef = useRef<string | null>(null);
   const [orderModalOpen, setOrderModalOpen] = useState(false);
   const [pdfCacheCleared, setPdfCacheCleared] = useState(false);
 
@@ -728,6 +738,158 @@ const PrintShopPage: React.FC = () => {
     }
   };
 
+  // ── fromRfq mód: Mentés gomb (ablak nyitva marad) ──────────────────────────
+  const handleRfqSave = async () => {
+    setRfqSaving(true);
+    try {
+      const sheetCount = params.sheet_count ?? 1;
+      const sidesText = params.sides === '2' ? 'kétoldalas' : 'egyoldalas';
+      const bd = priceBreakdown as any;
+
+      const autoName = params.product_name && params.product_name.trim()
+        ? `${params.product_name.trim()}, ${params.quantity} db`
+        : `${params.width_mm}×${params.height_mm}mm, ${params.quantity} db, íves nyomtatás`;
+
+      const printSvcLine = bd?.print_service_name_1
+        ? `Nyomtatás 1.o: ${bd.print_service_name_1}` +
+          (bd?.print_service_name_2 ? `\nNyomtatás 2.o: ${bd.print_service_name_2}` : '') : null;
+      const impLine = bd?.items_per_sheet != null
+        ? `Impozíció: ${bd.items_per_sheet} db/ív (${bd.fit_w ?? '?'}×${bd.fit_h ?? '?'})` +
+          `${bd.rotated ? ', forgatva' : ''}, ${bd.sheets_needed} ív, ${bd.clicks_total} klikk` : null;
+      const sheetLine = bd?.sheet_w_mm != null
+        ? `Ívméret: ${bd.sheet_w_mm}×${bd.sheet_h_mm} mm` +
+          (bd.cutting_info?.needs_cutting
+            ? ` (vágva: ${bd.cutting_info.cut_sheet_size_mm?.[0]}×${bd.cutting_info.cut_sheet_size_mm?.[1]} mm)` : '') : null;
+      const matLine = bd?.material_name ? `Alapanyag: ${bd.material_name}` : null;
+      const priceLines = bd?.total != null
+        ? `Nyomtatás: ${Math.round(bd.print_cost ?? 0).toLocaleString('hu-HU')} Ft` +
+          (bd.material_cost > 0 ? `\nAlapanyag: ${Math.round(bd.material_cost).toLocaleString('hu-HU')} Ft` : '') +
+          (bd.service_cost > 0 ? `\nSzolgáltatás: ${Math.round(bd.service_cost).toLocaleString('hu-HU')} Ft` : '') +
+          `\nNettó összesen: ${Math.round(bd.total).toLocaleString('hu-HU')} Ft` +
+          `\nEgységár: ${Number(bd.unit_price ?? 0).toLocaleString('hu-HU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Ft/db`
+        : null;
+      const description = [
+        `Termék: ${params.product_name || 'Egyedi nyomtatás'}`,
+        `Méret: ${params.width_mm} × ${params.height_mm} mm, ${sidesText}`,
+        `Mennyiség: ${params.quantity} db${sheetCount > 1 ? ` × ${sheetCount} lap` : ''}`,
+        params.binding && params.binding !== 'none' ? `Kötés: ${params.binding}` : null,
+        matLine, printSvcLine, impLine, sheetLine, priceLines,
+      ].filter(Boolean).join('\n');
+
+      const r4 = (v: any) => Math.round((Number(v) || 0) * 10000) / 10000;
+      const supId = (v: any) => (v && Number(v) > 0 ? Number(v) : null);
+      const costItems: any[] = [];
+      if (bd) {
+        for (const mi of (bd.material_items ?? [])) {
+          const qty = r4(mi.units) || 1; const sp = r4(mi.price_per); const tot = r4(mi.total); const cp = r4(mi.cost_price_per ?? sp);
+          costItems.push({ type: 'material', name: mi.name, quantity: qty, unit: 'ív', cost_price: cp, unit_price: sp, selling_unit_price: sp, selling_price: tot, markup_percent: r4(mi.markup_percentage ?? 0), is_internal: mi.is_internal ?? false, supplier: supId(mi.supplier_id) });
+        }
+        for (const key of ['print_service_items_1', 'print_service_items_2'] as const) {
+          for (const pi of (bd[key] ?? [])) {
+            const qty = r4(pi.units) || 1; const tot = r4(pi.total); const sp = qty > 0 ? r4(tot / qty) : tot; const cp = r4(pi.cost_price_per ?? sp);
+            costItems.push({ type: 'service', name: pi.name, quantity: qty, unit: pi.type === 'fixed' ? 'db' : 'ív', cost_price: cp, unit_price: sp, selling_unit_price: sp, selling_price: tot, markup_percent: r4(pi.markup_percentage ?? 0), is_internal: pi.is_internal ?? false, department: pi.department_id ?? null, supplier: supId(pi.supplier_id) });
+          }
+        }
+        for (const sb of (bd.service_breakdown ?? [])) {
+          if (sb.items) {
+            for (const si of sb.items) {
+              const qty = r4(si.units) || 1; const tot = r4(si.total); const sp = qty > 0 ? r4(tot / qty) : tot; const cp = r4(si.cost_price_per ?? sp);
+              costItems.push({ type: 'service', name: `${sb.name}: ${si.name}`, quantity: qty, unit: 'db', cost_price: cp, unit_price: sp, selling_unit_price: sp, selling_price: tot, markup_percent: r4(si.markup_percentage ?? 0), is_internal: si.is_internal ?? false, department: si.department_id ?? null, supplier: supId(si.supplier_id) });
+            }
+          } else if (sb.total > 0) {
+            costItems.push({ type: 'service', name: sb.name, quantity: 1, unit: 'db', cost_price: r4(sb.total), unit_price: r4(sb.total), selling_unit_price: r4(sb.total), selling_price: r4(sb.total), markup_percent: 0, is_internal: false, supplier: null });
+          }
+        }
+      }
+      const sellingTotal = costItems.reduce((s: number, ci: any) => s + (Number(ci.selling_price) || 0), 0);
+      const unitPrice = params.quantity > 0 ? sellingTotal / params.quantity : 0;
+
+      const payload: any = {
+        name: autoName, description, quantity: params.quantity, quantity_unit: 'db',
+        net_unit_price: Math.round(unitPrice * 100) / 100,
+        status: 'quote_request_open',
+        date: new Date().toISOString().split('T')[0],
+        deadline: new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0],
+        contact: selectedContact && typeof selectedContact === 'number' ? selectedContact : undefined,
+        cost_items: costItems, width_mm: params.width_mm, height_mm: params.height_mm,
+        sides: params.sides, side1_mode: params.side1_mode, side2_mode: params.side2_mode,
+        binding: params.binding, folding_count: params.folding_count, folding_specs: params.folding_specs,
+        sheet_count: params.sheet_count ?? 1, material: params.material_id ?? undefined,
+        price_breakdown: priceBreakdown ?? undefined,
+        printshop_params: { ...params, price_breakdown: priceBreakdown ?? null },
+      };
+
+      // ManufacturingProduct létrehozás / frissítés
+      let productId: number;
+      if (savedRfqMfgId) {
+        await manufacturingService.updateProduct(savedRfqMfgId, payload);
+        productId = savedRfqMfgId;
+      } else {
+        const created = await manufacturingService.createProduct(payload);
+        productId = created.id;
+        setSavedRfqMfgId(productId);
+      }
+
+      // PDF csatolás
+      if (currentPdfFileRef.current) {
+        try {
+          const pdfToUpload = printViewExportRef.current
+            ? (await printViewExportRef.current()) ?? currentPdfFileRef.current
+            : currentPdfFileRef.current;
+          await manufacturingService.uploadProductAttachment(productId, pdfToUpload, 'PrintShop PDF');
+        } catch (attErr) { console.warn('[handleRfqSave] PDF upload failed:', attErr); }
+      }
+
+      // Ajánlat tétel: első mentésnél hozza létre, további mentésebnél frissíti az árat
+      if (rfqId) {
+        if (!savedRfqQriId) {
+          const { salesService: ss } = await import('../../services/salesService');
+          const qri = await ss.addRfqManufacturingItem(
+            rfqId, productId, autoName, params.quantity,
+            description, 'db', Math.round(unitPrice * 100) / 100, 27, 0, 0, {},
+          );
+          setSavedRfqQriId(qri.id);
+        } else {
+          const { salesService: ss } = await import('../../services/salesService');
+          await ss.updateQuoteItem(rfqId, savedRfqQriId, {
+            item_name: autoName,
+            description,
+            net_unit_price: Math.round(unitPrice * 100) / 100,
+            quantity: params.quantity,
+          });
+        }
+      }
+
+      // Mentés megjelölése
+      lastSavedParamsRef.current = JSON.stringify(params);
+      lastSavedPdfRef.current = currentPdfFileRef.current?.name ?? null;
+      message.success('Mentve.');
+    } catch (e: any) {
+      console.error('[handleRfqSave]', e?.response?.data);
+      message.error(e?.response?.data?.error || 'Mentési hiba');
+    } finally {
+      setRfqSaving(false);
+    }
+  };
+
+  // ── fromRfq mód: Bezárás gomb ────────────────────────────────────────────────
+  const handleRfqClose = () => {
+    const dirty = JSON.stringify(params) !== lastSavedParamsRef.current ||
+                  (currentPdfFileRef.current?.name ?? null) !== lastSavedPdfRef.current;
+    if (!dirty) {
+      window.close();
+      return;
+    }
+    Modal.confirm({
+      title: 'Nem mentett változtatások',
+      content: 'Mentsen bezárás előtt?',
+      okText: 'Igen, mentés & bezárás',
+      cancelText: 'Nem, bezárás mentés nélkül',
+      onOk: async () => { await handleRfqSave(); window.close(); },
+      onCancel: () => { window.close(); },
+    });
+  };
+
   const handleOrder = async () => {
     setSaving(true);
     try {
@@ -1030,14 +1192,27 @@ const PrintShopPage: React.FC = () => {
               </div>
               <div style={{ padding: '0 12px 16px', flexShrink: 0 }}>
                 {fromRfq ? (
-                  <Button
-                    type="primary" block size="large"
-                    icon={<FileTextOutlined />}
-                    loading={rfqSaving} onClick={handleRFQ}
-                    style={{ backgroundColor: '#52c41a', borderColor: '#52c41a' }}
-                  >
-                    Mentés az ajánlathoz
-                  </Button>
+                  <Row gutter={8}>
+                    <Col span={14}>
+                      <Button
+                        type="primary" block size="large"
+                        icon={<FileTextOutlined />}
+                        loading={rfqSaving} onClick={handleRfqSave}
+                        style={{ backgroundColor: '#52c41a', borderColor: '#52c41a' }}
+                      >
+                        Mentés
+                      </Button>
+                    </Col>
+                    <Col span={10}>
+                      <Button
+                        block size="large"
+                        onClick={handleRfqClose}
+                        disabled={rfqSaving}
+                      >
+                        Bezárás
+                      </Button>
+                    </Col>
+                  </Row>
                 ) : (
                 <Row gutter={8}>
                   <Col span={12}>
