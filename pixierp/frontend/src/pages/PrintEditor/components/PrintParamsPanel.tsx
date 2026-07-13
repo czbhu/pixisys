@@ -419,6 +419,10 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
       clickSides, selectedPrintSvcId1, selectedPrintSvcId2, clickSheetW, clickSheetH, clickBleed, clickForceRotate, cuttingMode, flatSelectedIds, flatFinishingIds, forcedSizeId, autoSizeMode,
       impositionModalOpen, modalSheetW, modalSheetH, modalBleed, modalForceRotate]); // eslint-disable-line
 
+  // Ref to always point to the LATEST calculateClickPrice (avoids stale closure)
+  const calcClickRef = React.useRef(calculateClickPrice);
+  useEffect(() => { calcClickRef.current = calculateClickPrice; });
+
   useEffect(() => {
     const product = products.find(p => p.id === selectedProductId);
     if (product?.calculator_type === 'click_sheet_print') {
@@ -426,13 +430,13 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
     }
   }, [calculateClickPrice]); // eslint-disable-line
 
-  // Modal valós idejű frissítés: ha a modal nyitva van és az ívméret változik, azonnal újraszámol
+  // Modal valós idejű frissítés — ref-en keresztül hívjuk a legfrissebb verziót
   useEffect(() => {
     if (!impositionModalOpen) return;
     const product = products.find(p => p.id === selectedProductId);
     if (product?.calculator_type !== 'click_sheet_print') return;
     if (clickTimerRef.current) clearTimeout(clickTimerRef.current);
-    clickTimerRef.current = setTimeout(() => { calculateClickPrice(); }, 100);
+    clickTimerRef.current = setTimeout(() => { calcClickRef.current(); }, 100);
   }, [modalSheetW, modalSheetH, modalBleed, modalForceRotate, impositionModalOpen]); // eslint-disable-line
 
   // Load service details whenever the selected product changes
