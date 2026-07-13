@@ -252,6 +252,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
   const [modalBleed, setModalBleed] = useState(3);
   const [modalForceRotate, setModalForceRotate] = useState<'auto' | 'normal' | 'rotated'>('auto');
   const [modalCuttingMode, setModalCuttingMode] = useState<'auto' | 'material' | 'print'>('auto');
+  const [modalAutoSheetSize, setModalAutoSheetSize] = useState(false); // auto = legjobb ívméret az összehasonlításból
   const [clickForceRotate, setClickForceRotate] = useState<'auto' | 'normal' | 'rotated'>((_cs.forceRotate as any) ?? 'auto');
   const [cuttingMode, setCuttingMode] = useState<'auto' | 'material' | 'print'>((_cs.cuttingMode as any) ?? 'auto');
   // Forced material size from size_comparison selection
@@ -1390,8 +1391,15 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
         open={impositionModalOpen}
         onCancel={() => setImpositionModalOpen(false)}
         onOk={() => {
-          setClickSheetW(modalSheetW);
-          setClickSheetH(modalSheetH);
+          let applyW = modalSheetW;
+          let applyH = modalSheetH;
+          if (modalAutoSheetSize && activeClickPricing?.size_comparison?.length) {
+            const best = activeClickPricing.size_comparison.find((sc: SizeComparison) => sc.is_best) ?? activeClickPricing.size_comparison[0];
+            applyW = best.size_mm[0];
+            applyH = best.size_mm[1];
+          }
+          setClickSheetW(applyW);
+          setClickSheetH(applyH);
           setClickBleed(modalBleed);
           setClickForceRotate(modalForceRotate);
           setCuttingMode(modalCuttingMode);
@@ -1425,7 +1433,27 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
             <div>
               <Row gutter={16} style={{ marginBottom: 16 }}>
                 <Col span={12}>
-                  <Text strong style={{ display: 'block', marginBottom: 6 }}>Ívméret (mm)</Text>
+                  <Text strong style={{ display: 'block', marginBottom: 6 }}>Ívméret (mm)
+                    <label style={{ fontWeight: 400, fontSize: 11, marginLeft: 12, cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={modalAutoSheetSize}
+                        onChange={e => setModalAutoSheetSize(e.target.checked)}
+                        style={{ marginRight: 4 }}
+                      />
+                      Auto (legjobb anyagköltség)
+                    </label>
+                  </Text>
+                  {modalAutoSheetSize && activeClickPricing?.size_comparison?.length ? (() => {
+                    const best = activeClickPricing.size_comparison.find((sc: SizeComparison) => sc.is_best) ?? activeClickPricing.size_comparison[0];
+                    return (
+                      <div style={{ padding: '6px 10px', background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 6, fontSize: 12 }}>
+                        <strong>{best.label}</strong>: {best.size_mm[0]}×{best.size_mm[1]} mm
+                        &nbsp;·&nbsp;{best.items_per_sheet} db/ív&nbsp;·&nbsp;{best.sheets_needed} ív
+                        &nbsp;·&nbsp;{best.material_cost.toLocaleString('hu-HU')} Ft
+                      </div>
+                    );
+                  })() : (
                   <Row gutter={8}>
                     <Col span={12}>
                       <NumInput
@@ -1440,6 +1468,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                       />
                     </Col>
                   </Row>
+                  )}
                 </Col>
                 <Col span={12}>
                   <Text strong style={{ display: 'block', marginBottom: 6 }}>Termékméret (mm)</Text>
