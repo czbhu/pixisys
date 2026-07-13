@@ -256,7 +256,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
   const [modalBleed, setModalBleed] = useState(3);
   const [modalForceRotate, setModalForceRotate] = useState<'auto' | 'normal' | 'rotated'>('auto');
   const [modalCuttingMode, setModalCuttingMode] = useState<'auto' | 'material' | 'print'>('auto');
-  const [modalAutoSheetSize, setModalAutoSheetSize] = useState(false); // auto = legjobb ívméret az összehasonlításból
+  const [modalAutoSheetSize, setModalAutoSheetSize] = useState(true); // auto = legjobb ívméret az összehasonlításból
   const [clickForceRotate, setClickForceRotate] = useState<'auto' | 'normal' | 'rotated'>((_cs.forceRotate as any) ?? 'auto');
   const [cuttingMode, setCuttingMode] = useState<'auto' | 'material' | 'print'>((_cs.cuttingMode as any) ?? 'auto');
   // Forced material size from size_comparison selection
