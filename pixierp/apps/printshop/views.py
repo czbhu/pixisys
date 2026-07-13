@@ -342,7 +342,8 @@ class PrintOrderViewSet(viewsets.ModelViewSet):
             force_rotate   = d.get('force_rotate')   # None=auto, True=force rotated, False=force normal
             fix_cost_first_side_only = bool(d.get('fix_cost_first_side_only', False))
             cutting_mode   = d.get('cutting_mode', 'auto')  # auto | material | print
-            forced_size_id = d.get('forced_size_id')   # MaterialSize.id to use for material cost, or None=auto
+            forced_size_id = d.get('forced_size_id')   # MaterialSize.id to use for material cost, or None
+            auto_material_size = bool(d.get('auto_material_size', False))  # True = auto-pick cheapest orderable size
 
             # ── Material dimensions (for cutting) ────────────────────────────
             mat_w_mm = None
@@ -757,18 +758,13 @@ class PrintOrderViewSet(viewsets.ModelViewSet):
                         size_comparison[0]['is_best'] = True
 
                     # Apply forced or auto-best size to main material cost
+                    # Only override if explicitly requested (forced_size_id or auto_material_size=True)
                     chosen = None
                     if forced_size_id is not None:
                         chosen = next((sc for sc in size_comparison if sc.get('size_id') == int(forced_size_id)), None)
-                    if chosen is None and size_comparison:
-                        # Auto: use best (cheapest) if orderable sizes exist, otherwise keep default
-                        best = size_comparison[0]
-                        # Only auto-apply if a non-default size is best
-                        if not best.get('is_default', False) or forced_size_id is not None:
-                            chosen = best
-                        elif forced_size_id is None and any(not sc.get('is_default', False) for sc in size_comparison):
-                            # There are orderable sizes - use cheapest overall (already sorted)
-                            chosen = size_comparison[0]
+                    elif auto_material_size and size_comparison:
+                        # Auto: pick cheapest orderable size
+                        chosen = size_comparison[0]
                     if chosen:
                         _p = Decimal(str(chosen['price_per_sheet']))
                         _sn = chosen['sheets_needed']

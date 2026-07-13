@@ -403,6 +403,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
           fix_cost_first_side_only: product?.fix_cost_first_side_only ?? false,
           cutting_mode:         cuttingMode,
           forced_size_id:       autoSizeMode ? null : (forcedSizeId ?? null),
+          auto_material_size:   autoSizeMode,
         });
         setClickPricing(res.data);
         onPriceChange?.(res.data);
