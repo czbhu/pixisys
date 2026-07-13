@@ -968,6 +968,48 @@ const ProductEditor: React.FC = () => {
                       <Input placeholder="pl. Molinó, Szórólap A5, Névjegykártya" />
                     </Form.Item>
 
+                    {/* Technológiai méretkorlátok — az impozícióban intervallumként használt határok */}
+                    <div style={{ marginBottom: 12, padding: '10px 12px', background: '#e6f4ff', borderRadius: 6, border: '1px solid #91caff' }}>
+                      <Text strong style={{ fontSize: 12, display: 'block', marginBottom: 6 }}>Technológiai méretkorlátok (ívméret intervallum)</Text>
+                      <Text style={{ fontSize: 11, color: '#666', display: 'block', marginBottom: 8 }}>
+                        Az impozícióban ívméretként alkalmazható tartomány. Ha a termékméret meghaladja a maximumot, több darabban kerül nyomtatásra.
+                      </Text>
+                      <Form.Item name="custom_size_enabled" valuePropName="checked" style={{ marginBottom: 6 }}>
+                        <Checkbox>Egyedi méret engedélyezett (ügyfél saját méretet adhat meg)</Checkbox>
+                      </Form.Item>
+                      <Row gutter={[6, 0]} align="middle">
+                        <Col flex="none"><Text style={{ fontSize: 12 }}>Szél.:</Text></Col>
+                        <Col style={{ width: 80 }}>
+                          <Form.Item name="custom_size_width_min" noStyle>
+                            <NumInput placeholder="min" min={0} size="small" style={{ width: '100%' }} />
+                          </Form.Item>
+                        </Col>
+                        <Col flex="none"><Text style={{ color: '#bbb', padding: '0 2px' }}>–</Text></Col>
+                        <Col style={{ width: 80 }}>
+                          <Form.Item name="custom_size_width_max" noStyle>
+                            <NumInput placeholder="max" min={0} size="small" style={{ width: '100%' }} />
+                          </Form.Item>
+                        </Col>
+                        <Col flex="none" style={{ paddingLeft: 12 }}><Text style={{ fontSize: 12 }}>Mag.:</Text></Col>
+                        <Col style={{ width: 80 }}>
+                          <Form.Item name="custom_size_height_min" noStyle>
+                            <NumInput placeholder="min" min={0} size="small" style={{ width: '100%' }} />
+                          </Form.Item>
+                        </Col>
+                        <Col flex="none"><Text style={{ color: '#bbb', padding: '0 2px' }}>–</Text></Col>
+                        <Col style={{ width: 80 }}>
+                          <Form.Item name="custom_size_height_max" noStyle>
+                            <NumInput placeholder="max" min={0} size="small" style={{ width: '100%' }} />
+                          </Form.Item>
+                        </Col>
+                        <Col flex="none" style={{ paddingLeft: 8 }}>
+                          <Form.Item name="custom_size_unit" noStyle>
+                            <Select size="small" style={{ width: 72 }} options={UNITS} />
+                          </Form.Item>
+                        </Col>
+                      </Row>
+                    </div>
+
                     <Form.Item name="code" label="Cikkszám">
                       <Input
                         placeholder="pl. MOLINÓ-001"
@@ -1090,48 +1132,6 @@ const ProductEditor: React.FC = () => {
                 label: <Text strong style={{ fontSize: 13 }}>Méretek</Text>,
                 children: (
                   <>
-                    {/* Egyedi méret */}
-                    <div style={{ marginBottom: 12, padding: '10px 12px', background: '#f6ffed', borderRadius: 6, border: '1px solid #b7eb8f' }}>
-                      <Form.Item name="custom_size_enabled" valuePropName="checked" style={{ marginBottom: 0 }}>
-                        <Checkbox><Text strong style={{ fontSize: 13 }}>Egyedi méret engedélyezett</Text></Checkbox>
-                      </Form.Item>
-                      <Form.Item shouldUpdate={(p, c) => p.custom_size_enabled !== c.custom_size_enabled} noStyle>
-                        {({ getFieldValue }) => getFieldValue('custom_size_enabled') && (
-                          <Row gutter={[6, 0]} align="middle" style={{ marginTop: 10 }}>
-                            <Col flex="none"><Text style={{ fontSize: 12 }}>Szél.:</Text></Col>
-                            <Col style={{ width: 80 }}>
-                              <Form.Item name="custom_size_width_min" noStyle>
-                                <NumInput placeholder="min" min={0} size="small" style={{ width: '100%' }} />
-                              </Form.Item>
-                            </Col>
-                            <Col flex="none"><Text style={{ color: '#bbb', padding: '0 2px' }}>–</Text></Col>
-                            <Col style={{ width: 80 }}>
-                              <Form.Item name="custom_size_width_max" noStyle>
-                                <NumInput placeholder="max" min={0} size="small" style={{ width: '100%' }} />
-                              </Form.Item>
-                            </Col>
-                            <Col flex="none" style={{ paddingLeft: 12 }}><Text style={{ fontSize: 12 }}>Mag.:</Text></Col>
-                            <Col style={{ width: 80 }}>
-                              <Form.Item name="custom_size_height_min" noStyle>
-                                <NumInput placeholder="min" min={0} size="small" style={{ width: '100%' }} />
-                              </Form.Item>
-                            </Col>
-                            <Col flex="none"><Text style={{ color: '#bbb', padding: '0 2px' }}>–</Text></Col>
-                            <Col style={{ width: 80 }}>
-                              <Form.Item name="custom_size_height_max" noStyle>
-                                <NumInput placeholder="max" min={0} size="small" style={{ width: '100%' }} />
-                              </Form.Item>
-                            </Col>
-                            <Col flex="none" style={{ paddingLeft: 8 }}>
-                              <Form.Item name="custom_size_unit" noStyle>
-                                <Select size="small" style={{ width: 72 }} options={UNITS} />
-                              </Form.Item>
-                            </Col>
-                          </Row>
-                        )}
-                      </Form.Item>
-                    </div>
-
                     {/* Preset méretek */}
                     <Text type="secondary" style={{ fontSize: 12 }}>Preset méretek</Text>
                     <div style={{ marginTop: 6, marginBottom: 4 }}>

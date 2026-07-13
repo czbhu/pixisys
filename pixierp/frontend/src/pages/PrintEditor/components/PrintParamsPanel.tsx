@@ -1394,7 +1394,18 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
           let applyW = modalSheetW;
           let applyH = modalSheetH;
           if (modalAutoSheetSize && activeClickPricing?.size_comparison?.length) {
-            const best = activeClickPricing.size_comparison.find((sc: SizeComparison) => sc.is_best) ?? activeClickPricing.size_comparison[0];
+            const sc = activeClickPricing.size_comparison;
+            const wMin = selectedProduct?.custom_size_width_min ?? 0;
+            const wMax = selectedProduct?.custom_size_width_max ?? Infinity;
+            const hMin = selectedProduct?.custom_size_height_min ?? 0;
+            const hMax = selectedProduct?.custom_size_height_max ?? Infinity;
+            // Filter to sizes within the technology interval, then pick cheapest
+            const inRange = sc.filter((s: SizeComparison) =>
+              s.size_mm[0] >= wMin && s.size_mm[0] <= wMax &&
+              s.size_mm[1] >= hMin && s.size_mm[1] <= hMax
+            );
+            const best = (inRange.length > 0 ? inRange : sc).find((s: SizeComparison) => s.is_best) ??
+                         (inRange.length > 0 ? inRange : sc)[0];
             applyW = best.size_mm[0];
             applyH = best.size_mm[1];
           }
@@ -1445,12 +1456,29 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                     </label>
                   </Text>
                   {modalAutoSheetSize && activeClickPricing?.size_comparison?.length ? (() => {
-                    const best = activeClickPricing.size_comparison.find((sc: SizeComparison) => sc.is_best) ?? activeClickPricing.size_comparison[0];
+                    const sc = activeClickPricing.size_comparison;
+                    const wMin = selectedProduct?.custom_size_width_min ?? 0;
+                    const wMax = selectedProduct?.custom_size_width_max ?? Infinity;
+                    const hMin = selectedProduct?.custom_size_height_min ?? 0;
+                    const hMax = selectedProduct?.custom_size_height_max ?? Infinity;
+                    const hasInterval = wMax !== Infinity || hMax !== Infinity;
+                    const inRange = sc.filter((s: SizeComparison) =>
+                      s.size_mm[0] >= wMin && s.size_mm[0] <= wMax &&
+                      s.size_mm[1] >= hMin && s.size_mm[1] <= hMax
+                    );
+                    const best = (inRange.length > 0 ? inRange : sc).find((s: SizeComparison) => s.is_best) ??
+                                 (inRange.length > 0 ? inRange : sc)[0];
                     return (
                       <div style={{ padding: '6px 10px', background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 6, fontSize: 12 }}>
                         <strong>{best.label}</strong>: {best.size_mm[0]}×{best.size_mm[1]} mm
                         &nbsp;·&nbsp;{best.items_per_sheet} db/ív&nbsp;·&nbsp;{best.sheets_needed} ív
                         &nbsp;·&nbsp;{best.material_cost.toLocaleString('hu-HU')} Ft
+                        {hasInterval && inRange.length === 0 && (
+                          <span style={{ color: '#fa8c16', marginLeft: 8 }}>⚠ Nincs méret a technológiai intervallumon belül</span>
+                        )}
+                        {hasInterval && inRange.length > 0 && (
+                          <span style={{ color: '#52c41a', marginLeft: 8 }}>✓ Intervallumban</span>
+                        )}
                       </div>
                     );
                   })() : (
