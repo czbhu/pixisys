@@ -392,14 +392,14 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
           print_sides:          clickSides,
           print_service_id_1:   svcId1,
           print_service_id_2:   clickSides === 2 ? svcId2 : null,
-          sheet_w_mm:           clickSheetW,
-          sheet_h_mm:           clickSheetH,
-          bleed_mm:             clickBleed,
+          sheet_w_mm:           impositionModalOpen ? modalSheetW : clickSheetW,
+          sheet_h_mm:           impositionModalOpen ? modalSheetH : clickSheetH,
+          bleed_mm:             impositionModalOpen ? modalBleed : clickBleed,
           material_id:          params.material_id ?? null,
           selected_service_ids: flatSelectedIds,
           required_service_ids: product?.required_services ?? [],
           finishing_service_ids: flatFinishingIds,
-          force_rotate:         clickForceRotate === 'auto' ? null : clickForceRotate === 'rotated',
+          force_rotate:         (impositionModalOpen ? modalForceRotate : clickForceRotate) === 'auto' ? null : (impositionModalOpen ? modalForceRotate : clickForceRotate) === 'rotated',
           fix_cost_first_side_only: product?.fix_cost_first_side_only ?? false,
           cutting_mode:         cuttingMode,
           forced_size_id:       autoSizeMode ? null : (forcedSizeId ?? null),
@@ -414,7 +414,8 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
       }
     }, 400);
   }, [products, selectedProductId, params.width_mm, params.height_mm, params.quantity, params.sheet_count, params.material_id,
-      clickSides, selectedPrintSvcId1, selectedPrintSvcId2, clickSheetW, clickSheetH, clickBleed, clickForceRotate, cuttingMode, flatSelectedIds, flatFinishingIds, forcedSizeId, autoSizeMode]); // eslint-disable-line
+      clickSides, selectedPrintSvcId1, selectedPrintSvcId2, clickSheetW, clickSheetH, clickBleed, clickForceRotate, cuttingMode, flatSelectedIds, flatFinishingIds, forcedSizeId, autoSizeMode,
+      impositionModalOpen, modalSheetW, modalSheetH, modalBleed, modalForceRotate]); // eslint-disable-line
 
   useEffect(() => {
     const product = products.find(p => p.id === selectedProductId);
