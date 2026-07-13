@@ -375,49 +375,53 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
   useEffect(() => { calculatePrice(params); }, [params, flatSelectedIds, flatFinishingIds]); // eslint-disable-line
 
   // ── Click-sheet-print calculation ────────────────────────────────────────
+  // Paraméteres kalkuláció: az ívméret értékek paraméterként jönnek be, nem a closure-ból
+  const calculateClickPriceWith = useCallback(async (sw: number, sh: number, bleedVal: number, rotateVal: string) => {
+    const product = products.find(p => p.id === selectedProductId);
+    if (!product || product.calculator_type !== 'click_sheet_print') return;
+    setCalcLoading(true);
+    try {
+      const svcId1 = (selectedPrintSvcId1 != null && selectedPrintSvcId1 > 0) ? selectedPrintSvcId1 : null;
+      const svcId2 = (selectedPrintSvcId2 != null && selectedPrintSvcId2 > 0) ? selectedPrintSvcId2 : null;
+      const res = await api.post('/printshop/orders/calculate-price-click/', {
+        width_mm:             params.width_mm,
+        height_mm:            params.height_mm,
+        quantity:             params.quantity,
+        sheet_count:          params.sheet_count ?? 1,
+        print_sides:          clickSides,
+        print_service_id_1:   svcId1,
+        print_service_id_2:   clickSides === 2 ? svcId2 : null,
+        sheet_w_mm:           sw,
+        sheet_h_mm:           sh,
+        bleed_mm:             bleedVal,
+        material_id:          params.material_id ?? null,
+        selected_service_ids: flatSelectedIds,
+        required_service_ids: product?.required_services ?? [],
+        finishing_service_ids: flatFinishingIds,
+        force_rotate:         rotateVal === 'auto' ? null : rotateVal === 'rotated',
+        fix_cost_first_side_only: product?.fix_cost_first_side_only ?? false,
+        cutting_mode:         cuttingMode,
+        forced_size_id:       autoSizeMode ? null : (forcedSizeId ?? null),
+        auto_material_size:   autoSizeMode,
+      });
+      setClickPricing(res.data);
+      onPriceChange?.(res.data);
+    } catch {
+      setClickPricing(null);
+    } finally {
+      setCalcLoading(false);
+    }
+  }, [products, selectedProductId, params.width_mm, params.height_mm, params.quantity, params.sheet_count, params.material_id,
+      clickSides, selectedPrintSvcId1, selectedPrintSvcId2, cuttingMode, flatSelectedIds, flatFinishingIds, forcedSizeId, autoSizeMode]); // eslint-disable-line
+
   const calculateClickPrice = useCallback(async () => {
     const product = products.find(p => p.id === selectedProductId);
     if (!product || product.calculator_type !== 'click_sheet_print') return;
     if (clickTimerRef.current) clearTimeout(clickTimerRef.current);
-    // Modal nyitva: rövidebb delay (150ms) a valós idejű preview-hoz
-    const delay = impositionModalOpen ? 150 : 400;
     clickTimerRef.current = setTimeout(async () => {
-      setCalcLoading(true);
-      try {
-        const svcId1 = (selectedPrintSvcId1 != null && selectedPrintSvcId1 > 0) ? selectedPrintSvcId1 : null;
-        const svcId2 = (selectedPrintSvcId2 != null && selectedPrintSvcId2 > 0) ? selectedPrintSvcId2 : null;
-        const res = await api.post('/printshop/orders/calculate-price-click/', {
-          width_mm:             params.width_mm,
-          height_mm:            params.height_mm,
-          quantity:             params.quantity,
-          sheet_count:          params.sheet_count ?? 1,
-          print_sides:          clickSides,
-          print_service_id_1:   svcId1,
-          print_service_id_2:   clickSides === 2 ? svcId2 : null,
-          sheet_w_mm:           impositionModalOpen ? modalSheetW : clickSheetW,
-          sheet_h_mm:           impositionModalOpen ? modalSheetH : clickSheetH,
-          bleed_mm:             impositionModalOpen ? modalBleed : clickBleed,
-          material_id:          params.material_id ?? null,
-          selected_service_ids: flatSelectedIds,
-          required_service_ids: product?.required_services ?? [],
-          finishing_service_ids: flatFinishingIds,
-          force_rotate:         (impositionModalOpen ? modalForceRotate : clickForceRotate) === 'auto' ? null : (impositionModalOpen ? modalForceRotate : clickForceRotate) === 'rotated',
-          fix_cost_first_side_only: product?.fix_cost_first_side_only ?? false,
-          cutting_mode:         cuttingMode,
-          forced_size_id:       autoSizeMode ? null : (forcedSizeId ?? null),
-          auto_material_size:   autoSizeMode,
-        });
-        setClickPricing(res.data);
-        onPriceChange?.(res.data);
-      } catch {
-        setClickPricing(null);
-      } finally {
-        setCalcLoading(false);
-      }
+      await calculateClickPriceWith(clickSheetW, clickSheetH, clickBleed, clickForceRotate);
     }, 400);
-  }, [products, selectedProductId, params.width_mm, params.height_mm, params.quantity, params.sheet_count, params.material_id,
-      clickSides, selectedPrintSvcId1, selectedPrintSvcId2, clickSheetW, clickSheetH, clickBleed, clickForceRotate, cuttingMode, flatSelectedIds, flatFinishingIds, forcedSizeId, autoSizeMode,
-      impositionModalOpen, modalSheetW, modalSheetH, modalBleed, modalForceRotate]); // eslint-disable-line
+  }, [products, selectedProductId, clickSheetW, clickSheetH, clickBleed, clickForceRotate, calculateClickPriceWith]); // eslint-disable-line
 
   // Ref to always point to the LATEST calculateClickPrice (avoids stale closure)
   const calcClickRef = React.useRef(calculateClickPrice);
@@ -430,13 +434,14 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
     }
   }, [calculateClickPrice]); // eslint-disable-line
 
-  // Modal valós idejű frissítés — ref-en keresztül hívjuk a legfrissebb verziót
+  // Modal valós idejű frissítés — paraméteres hívás, nincs stale closure
   useEffect(() => {
     if (!impositionModalOpen) return;
     const product = products.find(p => p.id === selectedProductId);
     if (product?.calculator_type !== 'click_sheet_print') return;
     if (clickTimerRef.current) clearTimeout(clickTimerRef.current);
-    clickTimerRef.current = setTimeout(() => { calcClickRef.current(); }, 100);
+    const sw = modalSheetW; const sh = modalSheetH; const bl = modalBleed; const fr = modalForceRotate;
+    clickTimerRef.current = setTimeout(() => { calculateClickPriceWith(sw, sh, bl, fr); }, 100);
   }, [modalSheetW, modalSheetH, modalBleed, modalForceRotate, impositionModalOpen]); // eslint-disable-line
 
   // Load service details whenever the selected product changes
