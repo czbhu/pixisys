@@ -649,6 +649,21 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
   const activePricing = isClickSheet ? null : pricing;
   const activeClickPricing = isClickSheet ? clickPricing : null;
 
+  // Auto ívméret: ha a modalAutoSheetSize be van kapcsolva és új összehasonlítás érkezett,
+  // frissítsük a modal ívméretét a legjobb anyag effektív méretére
+  useEffect(() => {
+    if (!impositionModalOpen || !modalAutoSheetSize) return;
+    if (!activeClickPricing?.size_comparison?.length) return;
+    const best = activeClickPricing.size_comparison.find((s: SizeComparison) => s.is_best) ?? activeClickPricing.size_comparison[0];
+    if (!best) return;
+    const newW = best.cut_sheet_mm ? best.cut_sheet_mm[0] : best.size_mm[0];
+    const newH = best.cut_sheet_mm ? best.cut_sheet_mm[1] : best.size_mm[1];
+    if (newW !== modalSheetW || newH !== modalSheetH) {
+      setModalSheetW(newW);
+      setModalSheetH(newH);
+    }
+  }, [activeClickPricing, impositionModalOpen, modalAutoSheetSize]); // eslint-disable-line
+
   return (
     <>
     <div style={{ padding: '8px 12px', flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
@@ -1487,29 +1502,15 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                         onChange={e => {
                           const checked = e.target.checked;
                           setModalAutoSheetSize(checked);
-                          if (checked && activeClickPricing?.size_comparison?.length) {
-                            // Immediately apply best size to modalSheetW/H so the imposition preview updates
-                            const sc = activeClickPricing.size_comparison;
-                            const wMin = selectedProduct?.custom_size_width_min ?? 0;
-                            const wMax = selectedProduct?.custom_size_width_max ?? Infinity;
-                            const hMin = selectedProduct?.custom_size_height_min ?? 0;
-                            const hMax = selectedProduct?.custom_size_height_max ?? Infinity;
-                            const hasInterval = wMax !== Infinity || hMax !== Infinity;
-                            const inRange = hasInterval
-                              ? sc.filter((s: SizeComparison) => {
-                                  const ew = s.cut_sheet_mm ? s.cut_sheet_mm[0] : s.size_mm[0];
-                                  const eh = s.cut_sheet_mm ? s.cut_sheet_mm[1] : s.size_mm[1];
-                                  return ew >= wMin && ew <= wMax && eh >= hMin && eh <= hMax;
-                                })
-                              : sc;
-                            const best = (inRange.length > 0 ? inRange : sc).find((s: SizeComparison) => s.is_best) ??
-                                         (inRange.length > 0 ? inRange : sc)[0];
-                            if (best) {
-                              // Impozícióhoz a VÁGOTT méretet kell használni
-                              setModalSheetW(best.cut_sheet_mm ? best.cut_sheet_mm[0] : best.size_mm[0]);
-                              setModalSheetH(best.cut_sheet_mm ? best.cut_sheet_mm[1] : best.size_mm[1]);
-                            }
+                          // Auto módba lépés: auto_material_size=true-val kell API-t hívni,
+                          // hogy a backendből natív méreteken alapuló összehasonlítás jöjjön vissza.
+                          // Az autoSizeMode szinkronizálása ezt triggeri (calculateClickPriceWith újraépül).
+                          if (checked) {
+                            setAutoSizeMode(true);
+                            setForcedSizeId(null);
                           }
+                          // Ha le is vesszük: hagyjuk az autoSizeMode-ot ahogy van
+                          // (a felhasználó manuálisan is ki tudja kapcsolni a comparison táblában)
                         }}
                         style={{ marginRight: 4 }}
                       />
