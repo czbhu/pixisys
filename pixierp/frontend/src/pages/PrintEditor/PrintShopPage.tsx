@@ -223,15 +223,17 @@ const PrintShopPage: React.FC = () => {
     manufacturingService.getProduct(editMfgId).then(product => {
       const saved = (product as any).printshop_params;
       if (saved && typeof saved === 'object') {
-        const { price_breakdown: _pb, _click_state: clickState, ...printParams } = saved;
+        const { price_breakdown: _pb, _editor_state: editorState, _click_state: _legacyCs, ...printParams } = saved;
         setParams(prev => ({ ...prev, ...printParams }));
-        // Készítések/utunkák visszaállítása: írjuk vissza a localStorage-ba, majd remountolunk
-        if (clickState && typeof clickState === 'object' && Object.keys(clickState).length > 0) {
+        // Kész termékek/utómunkák visszaállítása: pixierp_editor_state (selected_product_id + clickState) visszaírása
+        const stateToRestore = editorState || (_legacyCs ? { clickState: _legacyCs } : null);
+        if (stateToRestore && typeof stateToRestore === 'object' && Object.keys(stateToRestore).length > 0) {
           try {
+            // Meglévő state-tel merge: csak a mentett mezőket írjuk felül
             const existing = JSON.parse(localStorage.getItem('pixierp_editor_state') || '{}');
-            localStorage.setItem('pixierp_editor_state', JSON.stringify({ ...existing, clickState }));
+            localStorage.setItem('pixierp_editor_state', JSON.stringify({ ...existing, ...stateToRestore }));
           } catch {}
-          setPanelKey(prev => prev + 1); // PrintParamsPanel újrabetoltés
+          setPanelKey(prev => prev + 1); // PrintParamsPanel újrabetöltés
         }
       }
     }).catch(() => {});
@@ -666,7 +668,7 @@ const PrintShopPage: React.FC = () => {
         sheet_count: params.sheet_count ?? 1,
         material: params.material_id ?? undefined,
         price_breakdown: priceBreakdown ?? undefined,
-        printshop_params: { ...params, _click_state: (() => { try { return JSON.parse(localStorage.getItem('pixierp_editor_state') || '{}').clickState ?? null; } catch { return null; } })(), price_breakdown: priceBreakdown ?? null },
+        printshop_params: { ...params, _editor_state: (() => { try { return JSON.parse(localStorage.getItem('pixierp_editor_state') || '{}'); } catch { return null; } })(), price_breakdown: priceBreakdown ?? null },
       };
 
       let productId: number;
@@ -855,7 +857,7 @@ const PrintShopPage: React.FC = () => {
         binding: params.binding, folding_count: params.folding_count, folding_specs: params.folding_specs,
         sheet_count: params.sheet_count ?? 1, material: params.material_id ?? undefined,
         price_breakdown: priceBreakdown ?? undefined,
-        printshop_params: { ...params, _click_state: (() => { try { return JSON.parse(localStorage.getItem('pixierp_editor_state') || '{}').clickState ?? null; } catch { return null; } })(), price_breakdown: priceBreakdown ?? null },
+        printshop_params: { ...params, _editor_state: (() => { try { return JSON.parse(localStorage.getItem('pixierp_editor_state') || '{}'); } catch { return null; } })(), price_breakdown: priceBreakdown ?? null },
       };
 
       // ManufacturingProduct létrehozás / frissítés
