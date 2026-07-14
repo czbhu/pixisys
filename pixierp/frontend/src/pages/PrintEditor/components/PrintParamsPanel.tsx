@@ -227,7 +227,9 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
   const [priceOpen, setPriceOpen] = useState(true);
   const [presets, setPresets] = useState<SizePreset[]>([]);
   const [products, setProducts] = useState<ProductTemplate[]>([]);
-  const [allMaterials, setAllMaterials] = useState<MaterialDetail[]>([]);  const [selectedProductId, setSelectedProductId] = useState<number | null>(null);
+  const [allMaterials, setAllMaterials] = useState<MaterialDetail[]>([]);  const [selectedProductId, setSelectedProductId] = useState<number | null>(() => {
+    try { const s = localStorage.getItem('pixierp_editor_state'); if (s) return JSON.parse(s).selected_product_id ?? null; } catch {} return null;
+  });
   const [selectedPreset, setSelectedPreset] = useState<number | null>(null);
   const [productSizeKey, setProductSizeKey] = useState<string | null>(() => readClickState().productSizeKey ?? null);
   const [pricing, setPricing] = useState<PriceBreakdown | null>(null);

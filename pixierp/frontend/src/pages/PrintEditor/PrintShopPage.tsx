@@ -539,6 +539,9 @@ const PrintShopPage: React.FC = () => {
         : null;
       // Alapér
       const matLine = bd?.material_name ? `Alapanyag: ${bd.material_name}` : null;
+      const extrasLine = bd?.service_breakdown?.length > 0
+        ? `Utómunka/extrák: ${(bd.service_breakdown as any[]).map((sb: any) => sb.name).join(', ')}`
+        : null;
       // Ár
       const priceLines = bd?.total != null
         ? `Nyomtatás: ${Math.round(bd.print_cost ?? 0).toLocaleString('hu-HU')} Ft` +
@@ -553,7 +556,7 @@ const PrintShopPage: React.FC = () => {
         `Méret: ${params.width_mm} × ${params.height_mm} mm, ${sidesText}`,
         `Mennyiség: ${params.quantity} db${sheetCount > 1 ? ` × ${sheetCount} lap` : ''}`,
         params.binding && params.binding !== 'none' ? `Kötés: ${params.binding}` : null,
-        matLine, printSvcLine, impLine, sheetLine,
+        matLine, printSvcLine, impLine, sheetLine, extrasLine,
       ].filter(Boolean).map(l => `<p>${String(l).replace(/\n/g, '</p><p>')}</p>`).join('');
 
       const costItems: any[] = [];
@@ -778,6 +781,9 @@ const PrintShopPage: React.FC = () => {
           (bd.cutting_info?.needs_cutting
             ? ` (vágva: ${bd.cutting_info.cut_sheet_size_mm?.[0]}×${bd.cutting_info.cut_sheet_size_mm?.[1]} mm)` : '') : null;
       const matLine = bd?.material_name ? `Alapanyag: ${bd.material_name}` : null;
+      const extrasLine = bd?.service_breakdown?.length > 0
+        ? `Utómunka/extrák: ${(bd.service_breakdown as any[]).map((sb: any) => sb.name).join(', ')}`
+        : null;
       const priceLines = bd?.total != null
         ? `Nyomtatás: ${Math.round(bd.print_cost ?? 0).toLocaleString('hu-HU')} Ft` +
           (bd.material_cost > 0 ? `\nAlapanyag: ${Math.round(bd.material_cost).toLocaleString('hu-HU')} Ft` : '') +
@@ -790,7 +796,7 @@ const PrintShopPage: React.FC = () => {
         `Méret: ${params.width_mm} × ${params.height_mm} mm, ${sidesText}`,
         `Mennyiség: ${params.quantity} db${sheetCount > 1 ? ` × ${sheetCount} lap` : ''}`,
         params.binding && params.binding !== 'none' ? `Kötés: ${params.binding}` : null,
-        matLine, printSvcLine, impLine, sheetLine,
+        matLine, printSvcLine, impLine, sheetLine, extrasLine,
       ].filter(Boolean).map(l => `<p>${String(l).replace(/\n/g, '</p><p>')}</p>`).join('');
 
       const r4 = (v: any) => Math.round((Number(v) || 0) * 10000) / 10000;
