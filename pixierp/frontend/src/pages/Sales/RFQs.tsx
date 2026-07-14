@@ -1602,6 +1602,7 @@ const RFQs: React.FC = () => {
                 discount_percent: (it as any).discount_percent || 0,
                 discount_amount: (it as any).discount_amount || 0,
                 cost_items: _cs && _cs.length > 0 ? _cs : [],
+                ...((it as any)._ps_mfg_id ? { imposition_data: { _ps_mfg_id: (it as any)._ps_mfg_id } } : {}),
               });
               if (createdItem?.id && it.files?.length) {
                 for (const f of it.files) {
@@ -1654,7 +1655,8 @@ const RFQs: React.FC = () => {
               }
             }
             // Pass formulas so that _price_from_cost_calc is preserved on the copied item
-            const createdItem = await salesService.addRfqManufacturingItem(rfqId, manuRefId, it.name || '', it.quantity, it.description || '', it.unit, it.net_unit_price, it.vat_rate, (it as any).discount_percent, (it as any).discount_amount, (it as any).formulas || {});
+            const createdItem = await salesService.addRfqManufacturingItem(rfqId, manuRefId, it.name || '', it.quantity, it.description || '', it.unit, it.net_unit_price, it.vat_rate, (it as any).discount_percent, (it as any).discount_amount, (it as any).formulas || {},
+              (it as any)._ps_mfg_id ? { _ps_mfg_id: (it as any)._ps_mfg_id } : undefined);
             if (createdItem?.id && it.files?.length) {
               for (const f of it.files) {
                 const key = (f as any)?.uid || (f as any)?.name;
@@ -2307,6 +2309,7 @@ const RFQs: React.FC = () => {
         net_unit_price: Number(d.net_unit_price) || 0,
         vat_rate: 27,
         description: d.description || '',
+        _ps_mfg_id: d._ps_mfg_id || d.manufacturing_product_id,  // PrintShop gomb előhíváshoz
       }]);
     };
     window.addEventListener('message', handleMsg);

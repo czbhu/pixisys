@@ -544,19 +544,21 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
           {onEditItem ? (
             <Button size="small" onClick={() => onEditItem && onEditItem(record)}>Szerk.</Button>
           ) : null}
-          {record.item_type === 'manufacturing' && record.manufacturing_product_printshop_params ? (
+          {record.item_type === 'manufacturing' && (record.manufacturing_product_printshop_params || record.imposition_data?._ps_mfg_id) ? (
             <Tooltip title="Megnyitás PrintShopban">
               <Button
                 size="small"
                 type="primary"
                 ghost
                 onClick={() => {
+                  const mfgId = record.manufacturing_product || record.imposition_data?._ps_mfg_id;
+                  if (!mfgId) return;
                   const psParams = record.manufacturing_product_printshop_params;
                   try {
                     const existing = JSON.parse(localStorage.getItem('pixierp_printshop_state') || '{}');
                     localStorage.setItem('pixierp_printshop_state', JSON.stringify({ ...existing, params: psParams }));
                   } catch {}
-                  const urlParams = new URLSearchParams({ from_rfq: '1', edit_mfg_id: String(record.manufacturing_product), return_url: window.location.href, mode: 'pdf' });
+                  const urlParams = new URLSearchParams({ from_rfq: '1', edit_mfg_id: String(mfgId), return_url: window.location.href, mode: 'pdf' });
                   window.open(`/print-shop?${urlParams.toString()}`, '_blank');
                 }}
               >PS</Button>

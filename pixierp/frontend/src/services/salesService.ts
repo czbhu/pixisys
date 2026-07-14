@@ -362,6 +362,7 @@ export const salesService = {
         discount_percent?: number,
         discount_amount?: number,
         formulas?: Record<string, string | null>,
+        imposition_data?: Record<string, any>,
     ) {
         const response = await api.post(`/sales/quote-requests/${id}/add_manufacturing_item/`, {
             manufacturing_product_id: manufacturingProductId,
@@ -374,6 +375,7 @@ export const salesService = {
             discount_percent,
             discount_amount,
             formulas: formulas || {},
+            ...(imposition_data ? { imposition_data } : {}),
         });
         return response.data;
     },

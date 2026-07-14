@@ -454,7 +454,14 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
   // Load service details whenever the selected product changes
   useEffect(() => {
     const product = products.find(p => p.id === selectedProductId);
-    if (!product) { setAllServices([]); setSelectedServices1([]); setSelectedServices2([]); setSelectedFinishingServices([]); return; }
+    if (!product) {
+      // Ha a products lista még nem töltődött be (products=[]) és van selectedProductId,
+      // akkor ne reseteljük a selections-t — várjuk meg a betoltést
+      if (products.length > 0 || !selectedProductId) {
+        setAllServices([]); setSelectedServices1([]); setSelectedServices2([]); setSelectedFinishingServices([]);
+      }
+      return;
+    }
     const sg1 = product.service_groups_1 ?? [];
     const sg2 = product.service_groups_2 ?? [];
     const sgf = product.finishing_service_groups ?? [];

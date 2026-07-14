@@ -541,9 +541,17 @@ const PrintShopPage: React.FC = () => {
         : null;
       // Alapér
       const matLine = bd?.material_name ? `Alapanyag: ${bd.material_name}` : null;
-      const extrasLine = bd?.service_breakdown?.length > 0
-        ? `Utómunka/extrák: ${(bd.service_breakdown as any[]).map((sb: any) => sb.name).join(', ')}`
-        : null;
+      const extrasLine = (() => {
+        const cs = (() => { try { return JSON.parse(localStorage.getItem("pixierp_editor_state") || "{}").clickState ?? {}; } catch { return {}; } })();
+        const s1Ids = new Set(((cs.services1 ?? []) as number[][]).flat());
+        const s2Ids = new Set(((cs.services2 ?? []) as number[][]).flat());
+        const lines = (bd.service_breakdown as any[]).map((sb: any) => {
+          const side = s1Ids.has(sb.id) && s2Ids.has(sb.id) ? "1-2. oldal"
+            : s1Ids.has(sb.id) ? "1. oldal" : s2Ids.has(sb.id) ? "2. oldal" : "";
+          return sb.name + (side ? " (" + side + ")" : "");
+        });
+        return "Utómunka/extrák: " + lines.join(", ");
+      })();
       // Ár
       const priceLines = bd?.total != null
         ? `Nyomtatás: ${Math.round(bd.print_cost ?? 0).toLocaleString('hu-HU')} Ft` +
@@ -783,9 +791,17 @@ const PrintShopPage: React.FC = () => {
           (bd.cutting_info?.needs_cutting
             ? ` (vágva: ${bd.cutting_info.cut_sheet_size_mm?.[0]}×${bd.cutting_info.cut_sheet_size_mm?.[1]} mm)` : '') : null;
       const matLine = bd?.material_name ? `Alapanyag: ${bd.material_name}` : null;
-      const extrasLine = bd?.service_breakdown?.length > 0
-        ? `Utómunka/extrák: ${(bd.service_breakdown as any[]).map((sb: any) => sb.name).join(', ')}`
-        : null;
+      const extrasLine = (() => {
+        const cs = (() => { try { return JSON.parse(localStorage.getItem("pixierp_editor_state") || "{}").clickState ?? {}; } catch { return {}; } })();
+        const s1Ids = new Set(((cs.services1 ?? []) as number[][]).flat());
+        const s2Ids = new Set(((cs.services2 ?? []) as number[][]).flat());
+        const lines = (bd.service_breakdown as any[]).map((sb: any) => {
+          const side = s1Ids.has(sb.id) && s2Ids.has(sb.id) ? "1-2. oldal"
+            : s1Ids.has(sb.id) ? "1. oldal" : s2Ids.has(sb.id) ? "2. oldal" : "";
+          return sb.name + (side ? " (" + side + ")" : "");
+        });
+        return "Utómunka/extrák: " + lines.join(", ");
+      })();
       const priceLines = bd?.total != null
         ? `Nyomtatás: ${Math.round(bd.print_cost ?? 0).toLocaleString('hu-HU')} Ft` +
           (bd.material_cost > 0 ? `\nAlapanyag: ${Math.round(bd.material_cost).toLocaleString('hu-HU')} Ft` : '') +
@@ -904,6 +920,7 @@ const PrintShopPage: React.FC = () => {
         window.opener.postMessage({
           type: 'PRINTSHOP_ITEM_SAVED',
           manufacturing_product_id: productId,
+          _ps_mfg_id: productId,  // PS gomb előhívásához később
           name: autoName,
           quantity: params.quantity,
           net_unit_price: Math.round(unitPrice * 100) / 100,
