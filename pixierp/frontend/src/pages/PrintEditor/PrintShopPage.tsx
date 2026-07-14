@@ -545,7 +545,7 @@ const PrintShopPage: React.FC = () => {
         `Mennyiség: ${params.quantity} db${sheetCount > 1 ? ` × ${sheetCount} lap` : ''}`,
         params.binding && params.binding !== 'none' ? `Kötés: ${params.binding}` : null,
         matLine, printSvcLine, impLine, sheetLine, priceLines,
-      ].filter(Boolean).join('\n');
+      ].filter(Boolean).map(l => `<p>${String(l).replace(/\n/g, '</p><p>')}</p>`).join('');
 
       const costItems: any[] = [];
       const r4 = (v: any) => Math.round((Number(v) || 0) * 10000) / 10000;
@@ -569,6 +569,7 @@ const PrintShopPage: React.FC = () => {
               markup_percent: r4(mi.markup_percentage ?? 0),
               is_internal: mi.is_internal ?? false,
               supplier: supId(mi.supplier_id),
+              formulas: { _syncQty: false },
             });
           }
         }
@@ -588,6 +589,7 @@ const PrintShopPage: React.FC = () => {
                 is_internal: pi.is_internal ?? false,
                 department: pi.department_id ?? null,
                 supplier: supId(pi.supplier_id),
+                formulas: { _syncQty: false },
               });
             }
           }
@@ -609,6 +611,7 @@ const PrintShopPage: React.FC = () => {
                   is_internal: si.is_internal ?? false,
                   department: si.department_id ?? null,
                   supplier: supId(si.supplier_id),
+                  formulas: { _syncQty: false },
                 });
               }
             } else if (sb.total > 0) {
@@ -618,6 +621,7 @@ const PrintShopPage: React.FC = () => {
                 cost_price: r4(sb.total), unit_price: r4(sb.total),
                 selling_unit_price: r4(sb.total), selling_price: r4(sb.total),
                 markup_percent: 0, is_internal: false, supplier: null,
+                formulas: { _syncQty: false },
               });
             }
           }
@@ -778,7 +782,7 @@ const PrintShopPage: React.FC = () => {
         `Mennyiség: ${params.quantity} db${sheetCount > 1 ? ` × ${sheetCount} lap` : ''}`,
         params.binding && params.binding !== 'none' ? `Kötés: ${params.binding}` : null,
         matLine, printSvcLine, impLine, sheetLine, priceLines,
-      ].filter(Boolean).join('\n');
+      ].filter(Boolean).map(l => `<p>${String(l).replace(/\n/g, '</p><p>')}</p>`).join('');
 
       const r4 = (v: any) => Math.round((Number(v) || 0) * 10000) / 10000;
       const supId = (v: any) => (v && Number(v) > 0 ? Number(v) : null);
@@ -796,7 +800,7 @@ const PrintShopPage: React.FC = () => {
           const sp = r4(mi.price_per);  // price_per = selling per unit
           const tot = r4(mi.total);
           const cp = calcCp(sp, r4(mi.markup_percentage ?? 0), mi.cost_price_per);
-          costItems.push({ type: 'material', name: mi.name, quantity: qty, unit: 'ív', cost_price: cp, unit_price: sp, selling_unit_price: sp, selling_price: tot, markup_percent: r4(mi.markup_percentage ?? 0), is_internal: mi.is_internal ?? false, supplier: supId(mi.supplier_id) });
+          costItems.push({ type: 'material', name: mi.name, quantity: qty, unit: 'ív', cost_price: cp, unit_price: sp, selling_unit_price: sp, selling_price: tot, markup_percent: r4(mi.markup_percentage ?? 0), is_internal: mi.is_internal ?? false, supplier: supId(mi.supplier_id), formulas: { _syncQty: false } });
         }
         for (const key of ['print_service_items_1', 'print_service_items_2'] as const) {
           for (const pi of (bd[key] ?? [])) {
@@ -804,7 +808,7 @@ const PrintShopPage: React.FC = () => {
             const sp = r4(pi.price_per);  // price_per = selling per unit (direct from API)
             const tot = r4(pi.total);
             const cp = calcCp(sp, r4(pi.markup_percentage ?? 0), pi.cost_price_per);
-            costItems.push({ type: 'service', name: pi.name, quantity: qty, unit: pi.type === 'fixed' ? 'db' : 'ív', cost_price: cp, unit_price: sp, selling_unit_price: sp, selling_price: tot, markup_percent: r4(pi.markup_percentage ?? 0), is_internal: pi.is_internal ?? false, department: pi.department_id ?? null, supplier: supId(pi.supplier_id) });
+            costItems.push({ type: 'service', name: pi.name, quantity: qty, unit: pi.type === 'fixed' ? 'db' : 'ív', cost_price: cp, unit_price: sp, selling_unit_price: sp, selling_price: tot, markup_percent: r4(pi.markup_percentage ?? 0), is_internal: pi.is_internal ?? false, department: pi.department_id ?? null, supplier: supId(pi.supplier_id), formulas: { _syncQty: false } });
           }
         }
         for (const sb of (bd.service_breakdown ?? [])) {
@@ -814,10 +818,10 @@ const PrintShopPage: React.FC = () => {
               const sp = r4(si.price_per ?? (si.total && qty > 0 ? si.total / qty : si.total));
               const tot = r4(si.total);
               const cp = calcCp(sp, r4(si.markup_percentage ?? 0), si.cost_price_per);
-              costItems.push({ type: 'service', name: `${sb.name}: ${si.name}`, quantity: qty, unit: 'db', cost_price: cp, unit_price: sp, selling_unit_price: sp, selling_price: tot, markup_percent: r4(si.markup_percentage ?? 0), is_internal: si.is_internal ?? false, department: si.department_id ?? null, supplier: supId(si.supplier_id) });
+              costItems.push({ type: 'service', name: `${sb.name}: ${si.name}`, quantity: qty, unit: 'db', cost_price: cp, unit_price: sp, selling_unit_price: sp, selling_price: tot, markup_percent: r4(si.markup_percentage ?? 0), is_internal: si.is_internal ?? false, department: si.department_id ?? null, supplier: supId(si.supplier_id), formulas: { _syncQty: false } });
             }
           } else if (sb.total > 0) {
-            costItems.push({ type: 'service', name: sb.name, quantity: 1, unit: 'db', cost_price: r4(sb.total), unit_price: r4(sb.total), selling_unit_price: r4(sb.total), selling_price: r4(sb.total), markup_percent: 0, is_internal: false, supplier: null });
+            costItems.push({ type: 'service', name: sb.name, quantity: 1, unit: 'db', cost_price: r4(sb.total), unit_price: r4(sb.total), selling_unit_price: r4(sb.total), selling_price: r4(sb.total), markup_percent: 0, is_internal: false, supplier: null, formulas: { _syncQty: false } });
           }
         }
       }
