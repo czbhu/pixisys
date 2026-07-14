@@ -136,6 +136,7 @@ const RFQDetail: React.FC = () => {
       ref_id: (editContext.item.product || editContext.item.manufacturing_product || editContext.item.service) as number,
       name: editContext.item.product_name || editContext.item.manufacturing_product_name || editContext.item.service_name || editContext.item.item_name,
       code: editContext.item.product_code || editContext.item.manufacturing_product_code || editContext.item.service_code || undefined,
+      manufacturing_product_printshop_params: editContext.item.manufacturing_product_printshop_params ?? null,
     };
   }, [editContext?.item]);
 

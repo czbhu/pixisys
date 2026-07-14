@@ -70,7 +70,7 @@ interface ItemSelectorModalProps {
   onAdd: (payload: SelectedItemPayload) => Promise<any> | any;
   allowCreate?: boolean;
   mode?: 'add' | 'edit';
-  initialSelection?: { item_type: ItemType; ref_id: number; name?: string; code?: string; _fromHistory?: boolean };
+  initialSelection?: { item_type: ItemType; ref_id: number; name?: string; code?: string; _fromHistory?: boolean; manufacturing_product_printshop_params?: any };
   initialValues?: Partial<{ quantity: number; unit: string; net_unit_price: number; cost_price: number; vat_rate: number; description: string; internal_description: string; discount_percent: number; discount_amount: number; cost_type: string; customer_order_item: number | null; is_rate_locked: boolean; locked_exchange_rate: number | null; quote_number: string | null; cost_items_data: any[] }>;
   initialFormulas?: Record<string, string | null>;
   customer?: { id: any; name: string; company_id?: any };
@@ -559,6 +559,11 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
   // so that saving creates a new independent product instead of patching the original.
   useEffect(() => {
     if (!open) return;
+    // PrintShop detektálás korai jelzése az initialSelection-ből (QRI serializer már tartalmazza)
+    if (initialSelection?.manufacturing_product_printshop_params &&
+        Object.keys(initialSelection.manufacturing_product_printshop_params).length > 0) {
+      setManuHasPrintShop(true);
+    }
     const isAddWithPreload = mode === 'add' && initialSelection?.item_type === 'manufacturing';
     if (mode !== 'edit' && !isAddWithPreload) return;
     if (!initialSelection || initialSelection.item_type !== 'manufacturing') return;
@@ -694,7 +699,11 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         }
         const p: any = await manufacturingService.getProduct(initialSelection.ref_id);
         if (cancelled || !p) return;
-        setManuHasPrintShop(!!(p.printshop_params && Object.keys(p.printshop_params).length > 0));
+        // PrintShop detektálás: termékből VAGY initialSelection-ból (RFQ tétel serializer már tartalmazza)
+        const hasPs = !!(p.printshop_params && Object.keys(p.printshop_params).length > 0) ||
+                      !!(initialSelection.manufacturing_product_printshop_params &&
+                         Object.keys(initialSelection.manufacturing_product_printshop_params).length > 0);
+        setManuHasPrintShop(hasPs);
         const qty = Number(p.quantity) || 1;
         const unitPrice = Number(p.net_unit_price) || 0;
         // In edit mode, preserve the saved RFQ item unit price to avoid
