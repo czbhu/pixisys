@@ -656,12 +656,11 @@ class PrintOrderViewSet(viewsets.ModelViewSet):
                     material_cost = (price_per_sheet * Decimal(str(sheets_needed))).quantize(Decimal('0.01'))
                     mat_sup_id = mat.default_supplier_id if hasattr(mat, 'default_supplier_id') else None
                     if not mat_sup_id:
-                        # Fallback: első beszállítói árrekord az alapanyaghoz
+                        # Fallback: materialsupplier_set (MaterialSupplier model)
                         try:
-                            from apps.warehouse.models import MaterialSupplierPrice
-                            first_sp = MaterialSupplierPrice.objects.filter(material=mat).order_by('id').first()
-                            if first_sp:
-                                mat_sup_id = first_sp.supplier_id
+                            first_ms = mat.materialsupplier_set.order_by('id').first()
+                            if first_ms:
+                                mat_sup_id = first_ms.supplier_id
                         except Exception:
                             pass
                     mat_sup_name = mat.default_supplier.name if mat_sup_id and mat.default_supplier else None

@@ -544,7 +544,7 @@ const PrintShopPage: React.FC = () => {
         `Méret: ${params.width_mm} × ${params.height_mm} mm, ${sidesText}`,
         `Mennyiség: ${params.quantity} db${sheetCount > 1 ? ` × ${sheetCount} lap` : ''}`,
         params.binding && params.binding !== 'none' ? `Kötés: ${params.binding}` : null,
-        matLine, printSvcLine, impLine, sheetLine, priceLines,
+        matLine, printSvcLine, impLine, sheetLine,
       ].filter(Boolean).map(l => `<p>${String(l).replace(/\n/g, '</p><p>')}</p>`).join('');
 
       const costItems: any[] = [];
@@ -781,7 +781,7 @@ const PrintShopPage: React.FC = () => {
         `Méret: ${params.width_mm} × ${params.height_mm} mm, ${sidesText}`,
         `Mennyiség: ${params.quantity} db${sheetCount > 1 ? ` × ${sheetCount} lap` : ''}`,
         params.binding && params.binding !== 'none' ? `Kötés: ${params.binding}` : null,
-        matLine, printSvcLine, impLine, sheetLine, priceLines,
+        matLine, printSvcLine, impLine, sheetLine,
       ].filter(Boolean).map(l => `<p>${String(l).replace(/\n/g, '</p><p>')}</p>`).join('');
 
       const r4 = (v: any) => Math.round((Number(v) || 0) * 10000) / 10000;
