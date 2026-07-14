@@ -226,6 +226,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
   const [manuDefaultMarkupActive, setManuDefaultMarkupActive] = useState(false);
   const [manuPriceFromCalc, setManuPriceFromCalc] = useState(true);
   const [manuCreatedId, setManuCreatedId] = useState<number | null>(null);
+  const [manuHasPrintShop, setManuHasPrintShop] = useState(false); // van-e printshop_params a terméken
   const [manuPendingFiles, setManuPendingFiles] = useState<File[]>([]);
   const [manuPendingFileRemarks, setManuPendingFileRemarks] = useState<Record<string, string>>({});
   const [existingAttachments, setExistingAttachments] = useState<any[]>([]);
@@ -468,6 +469,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
     setManuDefaultMarkup(30);
     setManuDefaultMarkupActive(false);
     setManuCreatedId(null);
+    setManuHasPrintShop(false);
     setSelected(null);
     const nextKey = (mode === 'edit' && initialSelection?.item_type ? initialSelection.item_type : defaultType) as ItemType;
     if (!(mode === 'edit' && nextKey === 'manufacturing') && !(nextKey === 'manufacturing' && !!quoteItemId)) {
@@ -692,6 +694,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         }
         const p: any = await manufacturingService.getProduct(initialSelection.ref_id);
         if (cancelled || !p) return;
+        setManuHasPrintShop(!!(p.printshop_params && Object.keys(p.printshop_params).length > 0));
         const qty = Number(p.quantity) || 1;
         const unitPrice = Number(p.net_unit_price) || 0;
         // In edit mode, preserve the saved RFQ item unit price to avoid
@@ -2664,7 +2667,31 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
                     },
                     {
                       key: 'costs',
-                      label: 'Beszállítók és árkalkuláció',
+                      label: (
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          Beszállítók és árkalkuláció
+                          {manuHasPrintShop && (
+                            <Button
+                              size="small" type="link"
+                              icon={<PrinterOutlined style={{ fontSize: 13 }} />}
+                              title="Megnyitás PrintShopban"
+                              style={{ padding: '0 2px', height: 20, fontSize: 12, color: '#1890ff' }}
+                              onClick={e => {
+                                e.stopPropagation();
+                                const manuId = manuCreatedId ?? initialSelection?.ref_id;
+                                if (!manuId) return;
+                                const ps = new URLSearchParams({ from_rfq: '1', mode: 'pdf', return_url: window.location.href });
+                                ps.set('edit_mfg_id', String(manuId));
+                                if (rfqId) ps.set('rfq_id', String(rfqId));
+                                if (customer) ps.set('company', String(customer));
+                                window.open(`/print-shop?${ps.toString()}`, '_blank');
+                              }}
+                            >
+                              PrintShop
+                            </Button>
+                          )}
+                        </span>
+                      ),
                       children: (<>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
                         <span style={{ fontSize: 13 }}>Alap haszonkulcs:</span>
