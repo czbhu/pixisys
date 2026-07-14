@@ -217,13 +217,22 @@ const PrintShopPage: React.FC = () => {
   }, [fromRfq, editMfgId]);
 
   // Load printshop_params from the manufacturing product when editing
+  const [panelKey, setPanelKey] = useState(0); // force-remount PrintParamsPanel when restoring click-state
   useEffect(() => {
     if (!editMfgId) return;
     manufacturingService.getProduct(editMfgId).then(product => {
       const saved = (product as any).printshop_params;
       if (saved && typeof saved === 'object') {
-        const { price_breakdown: _pb, ...printParams } = saved;
+        const { price_breakdown: _pb, _click_state: clickState, ...printParams } = saved;
         setParams(prev => ({ ...prev, ...printParams }));
+        // Készítések/utunkák visszaállítása: írjuk vissza a localStorage-ba, majd remountolunk
+        if (clickState && typeof clickState === 'object' && Object.keys(clickState).length > 0) {
+          try {
+            const existing = JSON.parse(localStorage.getItem('pixierp_editor_state') || '{}');
+            localStorage.setItem('pixierp_editor_state', JSON.stringify({ ...existing, clickState }));
+          } catch {}
+          setPanelKey(prev => prev + 1); // PrintParamsPanel újrabetoltés
+        }
       }
     }).catch(() => {});
   }, [editMfgId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -654,7 +663,7 @@ const PrintShopPage: React.FC = () => {
         sheet_count: params.sheet_count ?? 1,
         material: params.material_id ?? undefined,
         price_breakdown: priceBreakdown ?? undefined,
-        printshop_params: { ...params, price_breakdown: priceBreakdown ?? null },
+        printshop_params: { ...params, _click_state: (() => { try { return JSON.parse(localStorage.getItem('pixierp_editor_state') || '{}').clickState ?? null; } catch { return null; } })(), price_breakdown: priceBreakdown ?? null },
       };
 
       let productId: number;
@@ -840,7 +849,7 @@ const PrintShopPage: React.FC = () => {
         binding: params.binding, folding_count: params.folding_count, folding_specs: params.folding_specs,
         sheet_count: params.sheet_count ?? 1, material: params.material_id ?? undefined,
         price_breakdown: priceBreakdown ?? undefined,
-        printshop_params: { ...params, price_breakdown: priceBreakdown ?? null },
+        printshop_params: { ...params, _click_state: (() => { try { return JSON.parse(localStorage.getItem('pixierp_editor_state') || '{}').clickState ?? null; } catch { return null; } })(), price_breakdown: priceBreakdown ?? null },
       };
 
       // ManufacturingProduct létrehozás / frissítés
@@ -1216,6 +1225,7 @@ const PrintShopPage: React.FC = () => {
             <>
               <div style={{ flex: 1, overflowY: 'auto' }}>
                 <PrintParamsPanel
+                  key={panelKey}
                   params={params}
                   onChange={setParams}
                   onPriceChange={setPriceBreakdown}
