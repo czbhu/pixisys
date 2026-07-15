@@ -2693,6 +2693,11 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
                                 e.stopPropagation();
                                 const manuId = manuCreatedId ?? initialSelection?.ref_id
                                   ?? (initialSelection as any)?.imposition_data?._ps_mfg_id;
+                                const editorState = (initialSelection as any)?.imposition_data?._editor_state;
+                                // Direkt tételeknél: item-specifikus állapot localStorage-ba töltés
+                                if (editorState && !manuId) {
+                                  try { localStorage.setItem('pixierp_editor_state', JSON.stringify(editorState)); } catch {}
+                                }
                                 const ps = new URLSearchParams({ from_rfq: '1', mode: 'pdf', return_url: window.location.href });
                                 if (manuId) ps.set('edit_mfg_id', String(manuId));
                                 if (rfqId) ps.set('rfq_id', String(rfqId));

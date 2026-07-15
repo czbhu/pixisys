@@ -917,10 +917,12 @@ const PrintShopPage: React.FC = () => {
         }
       } else if (window.opener && !window.opener.closed) {
         // Nincs rfq_id (új árajánlat modal) → postMessage az openernek, hogy adja hozzá a tételt
+        const _editor_state = (() => { try { return JSON.parse(localStorage.getItem('pixierp_editor_state') || '{}'); } catch { return null; } })();
         window.opener.postMessage({
           type: 'PRINTSHOP_ITEM_SAVED',
           manufacturing_product_id: productId,
-          _ps_mfg_id: productId,  // PS gomb előhívásához később
+          _ps_mfg_id: productId,
+          _editor_state,  // tétel-specifikus állapot visszatöltéshez
           name: autoName,
           quantity: params.quantity,
           net_unit_price: Math.round(unitPrice * 100) / 100,

@@ -1602,7 +1602,7 @@ const RFQs: React.FC = () => {
                 discount_percent: (it as any).discount_percent || 0,
                 discount_amount: (it as any).discount_amount || 0,
                 cost_items: _cs && _cs.length > 0 ? _cs : [],
-                ...((it as any)._ps_mfg_id ? { imposition_data: { _ps_mfg_id: (it as any)._ps_mfg_id } } : {}),
+                ...((it as any)._ps_mfg_id ? { imposition_data: { _ps_mfg_id: (it as any)._ps_mfg_id, _editor_state: (it as any)._editor_state || null } } : {}),
               });
               if (createdItem?.id && it.files?.length) {
                 for (const f of it.files) {
@@ -2310,6 +2310,7 @@ const RFQs: React.FC = () => {
         vat_rate: 27,
         description: d.description || '',
         _ps_mfg_id: d._ps_mfg_id || d.manufacturing_product_id,  // PrintShop gomb előhíváshoz
+        _editor_state: d._editor_state || null,  // item-specifikus állapot visszatöltéshez
       }]);
     };
     window.addEventListener('message', handleMsg);

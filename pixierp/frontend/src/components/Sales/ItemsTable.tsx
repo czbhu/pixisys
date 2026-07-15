@@ -552,13 +552,15 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
                 ghost
                 onClick={() => {
                   const mfgId = record.manufacturing_product || record.imposition_data?._ps_mfg_id;
-                  if (!mfgId) return;
-                  const psParams = record.manufacturing_product_printshop_params;
-                  try {
-                    const existing = JSON.parse(localStorage.getItem('pixierp_printshop_state') || '{}');
-                    localStorage.setItem('pixierp_printshop_state', JSON.stringify({ ...existing, params: psParams }));
-                  } catch {}
-                  const urlParams = new URLSearchParams({ from_rfq: '1', edit_mfg_id: String(mfgId), return_url: window.location.href, mode: 'pdf' });
+                  const editorState = record.imposition_data?._editor_state;
+                  // Ha van item-specifikus editor state, töltjük be localStorage-ba MIELŐTT megnyitjuk
+                  // (direkt tételeknél, ahol nincs edit_mfg_id — így a helyes tétel tölt vissza)
+                  if (editorState && !mfgId) {
+                    try { localStorage.setItem('pixierp_editor_state', JSON.stringify(editorState)); } catch {}
+                  }
+                  const urlParams = new URLSearchParams({ from_rfq: '1', mode: 'pdf', return_url: window.location.href });
+                  if (mfgId) urlParams.set('edit_mfg_id', String(mfgId));
+                  if (quoteRequestId) urlParams.set('rfq_id', String(quoteRequestId));
                   window.open(`/print-shop?${urlParams.toString()}`, '_blank');
                 }}
               >PS</Button>
