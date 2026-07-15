@@ -297,6 +297,9 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
     total = (subtotal * margin_mult).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
     unit_price = (total / qty).quantize(Decimal('0.0001'), rounding=ROUND_HALF_UP)
 
+    board_material_cost = Decimal('0')
+    board_material_label = None
+
     # ── Rendelhető méretek összehasonlítása (táblás/area alapú) ──────────
     size_comparison = []
     if print_service_id and material_id and bleed_mm is not None:
@@ -371,6 +374,25 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
         except Exception:
             pass
 
+    # ── Anyagköltség a táblás/area módban ────────────────────────────────
+    if size_comparison and print_service_id and material_id:
+        # Keressük a sheet_w_mm × sheet_h_mm méretű entry-t
+        _mat_entry = None
+        if sheet_w_mm and sheet_h_mm:
+            for _e in size_comparison:
+                if abs(_e['size_mm'][0] - sheet_w_mm) < 2 and abs(_e['size_mm'][1] - sheet_h_mm) < 2:
+                    _mat_entry = _e
+                    break
+        if _mat_entry is None:
+            # Ha nincs pontos egyezés, a legjobb entry-t használjuk
+            _mat_entry = next((e for e in size_comparison if e.get('is_best')), size_comparison[0])
+        if _mat_entry:
+            board_material_cost = Decimal(str(_mat_entry['material_cost']))
+            board_material_label = _mat_entry.get('label')
+            # Újra számítjuk a total-t az anyagköltséggel együtt
+            total = ((subtotal + board_material_cost) * margin_mult).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            unit_price = (total / qty).quantize(Decimal('0.0001'), rounding=ROUND_HALF_UP)
+
     return {
         'paper_cost': float(paper_cost.quantize(Decimal('0.01'))),
         'print_cost_side1': float(print_cost_s1.quantize(Decimal('0.01'))),
@@ -395,6 +417,8 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
         'sheet_w_mm': float(sheet_w_mm) if sheet_w_mm else None,
         'sheet_h_mm': float(sheet_h_mm) if sheet_h_mm else None,
         'size_comparison': size_comparison,
+        'board_material_cost': float(board_material_cost.quantize(Decimal('0.01'))),
+        'board_material_label': board_material_label,
     }
 
 

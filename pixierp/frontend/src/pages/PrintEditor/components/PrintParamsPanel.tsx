@@ -702,6 +702,22 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
     }
   }, [selectedProduct?.id, materials]); // eslint-disable-line
 
+  // Táblás auto méret: ha size_comparison megérkezik és boardSheetW/H nem egyezik egyik entry-vel sem,
+  // automatikusan alkalmazzuk a legjobb méretet (alapból auto mód)
+  useEffect(() => {
+    const isBoardOrRoll = selectedProduct?.calculator_type === 'sheet_print' || selectedProduct?.calculator_type === 'roll_print';
+    if (!isBoardOrRoll) return;
+    const sc: any[] = (activePricing as any)?.size_comparison ?? [];
+    if (sc.length === 0) return;
+    const hasMatch = sc.some((s: any) => Math.abs(s.size_mm[0] - boardSheetW) < 2 && Math.abs(s.size_mm[1] - boardSheetH) < 2);
+    if (hasMatch) return; // már megfelelő méret van beállítva
+    const best = sc.find((s: any) => s.is_best) ?? sc[0];
+    if (best) {
+      setBoardSheetW(best.size_mm[0]);
+      setBoardSheetH(best.size_mm[1]);
+    }
+  }, [(activePricing as any)?.size_comparison]); // eslint-disable-line
+
   // Auto ívméret: ha a modalAutoSheetSize be van kapcsolva és új összehasonlítás érkezett,
   // frissítsük a modal ívméretét a legjobb anyag gépi max-ra clampelt natív méretére
   useEffect(() => {
@@ -1479,6 +1495,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                       onClick={() => {
                         // Táblás mód: modal betöltése board méretekkel
                         setIsBoardImpositionMode(true);
+                        setModalAutoSheetSize(true); // mindig auto módban nyilik
                         setModalSheetW(boardSheetW);
                         setModalSheetH(boardSheetH);
                         setModalBleed(boardBleed);
@@ -1501,6 +1518,10 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                     </div>
                   )}
                   {activePricing.paper_cost > 0 && <div>Papír: <strong>{fmt(activePricing.paper_cost)}</strong></div>}
+                  {/* Anyagköltség (táblás UV) */}
+                  {(activePricing as any).board_material_cost > 0 && (
+                    <div>Anyagköltség{(activePricing as any).board_material_label ? ` (${(activePricing as any).board_material_label})` : ''}: <strong>{fmt((activePricing as any).board_material_cost)}</strong></div>
+                  )}
                   {/* UV táblás/tekercses: print_service_items megjelenítése */}
                   {(activePricing as any).print_service_name && (
                     <div>Nyomtatás – <em>{(activePricing as any).print_service_name}</em>:
