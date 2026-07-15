@@ -561,6 +561,7 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
                   const urlParams = new URLSearchParams({ from_rfq: '1', mode: 'pdf', return_url: window.location.href });
                   if (mfgId) urlParams.set('edit_mfg_id', String(mfgId));
                   if (quoteRequestId) urlParams.set('rfq_id', String(quoteRequestId));
+                  urlParams.set('quote_item_id', String(record.id));  // módosítás vs. új tétel
                   window.open(`/print-shop?${urlParams.toString()}`, '_blank');
                 }}
               >PS</Button>

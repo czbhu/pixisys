@@ -2702,6 +2702,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
                                 if (manuId) ps.set('edit_mfg_id', String(manuId));
                                 if (rfqId) ps.set('rfq_id', String(rfqId));
                                 if (customer) ps.set('company', String(customer));
+                                if (quoteItemId) ps.set('quote_item_id', String(quoteItemId));  // módosítás vs. új tétel
                                 window.open(`/print-shop?${ps.toString()}`, '_blank');
                               }}
                             >

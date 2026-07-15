@@ -171,7 +171,11 @@ const PrintShopPage: React.FC = () => {
     const eid = new URLSearchParams(window.location.search).get('edit_mfg_id');
     return eid ? Number(eid) : null;
   });
-  const [savedRfqQriId, setSavedRfqQriId] = useState<number | null>(null);
+  const [savedRfqQriId, setSavedRfqQriId] = useState<number | null>(() => {
+    const qid = new URLSearchParams(window.location.search).get('quote_item_id');
+    return qid ? Number(qid) : null;
+  });
+  const panelServicesRef = useRef<{ s1: number[][]; s2: number[][] }>({ s1: [], s2: [] }); // live service selections
   const lastSavedParamsRef = useRef<string>(JSON.stringify(
     (() => { try { const s = localStorage.getItem('pixierp_printshop'); if (s) return JSON.parse(s).params ?? {}; } catch {} return {}; })()
   ));
@@ -198,6 +202,8 @@ const PrintShopPage: React.FC = () => {
   const editMfgId = fromRfqParams.get('edit_mfg_id') ? Number(fromRfqParams.get('edit_mfg_id')) : null;
   // rfq_id: meglévő ajánlat ID → közvetlen mentés az ajánlathoz (ItemSelectorModal PS-gombjából)
   const rfqId = fromRfqParams.get('rfq_id') ? Number(fromRfqParams.get('rfq_id')) : null;
+  // quote_item_id: existing QRI linked to this MP → update instead of create new
+  // (used to initialize savedRfqQriId — see useState above)
   // return_url: the opener page URL to navigate back to after save
   const returnUrl = fromRfqParams.get('return_url') || null;
 
@@ -543,9 +549,9 @@ const PrintShopPage: React.FC = () => {
       const matLine = bd?.material_name ? `Alapanyag: ${bd.material_name}` : null;
       const extrasLine = (() => {
         if (!bd?.service_breakdown?.length) return null;
-        const cs = (() => { try { return JSON.parse(localStorage.getItem("pixierp_editor_state") || "{}").clickState ?? {}; } catch { return {}; } })();
-        const s1Ids = new Set(((cs.services1 ?? []) as number[][]).flat());
-        const s2Ids = new Set(((cs.services2 ?? []) as number[][]).flat());
+        // services1/2 közvetlenül a PrintParamsPanel state-ből (ref), megbízható forrás
+        const s1Ids = new Set(panelServicesRef.current.s1.flat());
+        const s2Ids = new Set(panelServicesRef.current.s2.flat());
         const s1Only: string[] = [], s2Only: string[] = [], both: string[] = [], other: string[] = [];
         for (const sb of bd.service_breakdown as any[]) {
           const in1 = s1Ids.has(sb.id), in2 = s2Ids.has(sb.id);
@@ -804,9 +810,9 @@ const PrintShopPage: React.FC = () => {
       const matLine = bd?.material_name ? `Alapanyag: ${bd.material_name}` : null;
       const extrasLine = (() => {
         if (!bd?.service_breakdown?.length) return null;
-        const cs = (() => { try { return JSON.parse(localStorage.getItem("pixierp_editor_state") || "{}").clickState ?? {}; } catch { return {}; } })();
-        const s1Ids = new Set(((cs.services1 ?? []) as number[][]).flat());
-        const s2Ids = new Set(((cs.services2 ?? []) as number[][]).flat());
+        // services1/2 közvetlenül a PrintParamsPanel state-ből (ref), megbízható forrás
+        const s1Ids = new Set(panelServicesRef.current.s1.flat());
+        const s2Ids = new Set(panelServicesRef.current.s2.flat());
         const s1Only: string[] = [], s2Only: string[] = [], both: string[] = [], other: string[] = [];
         for (const sb of bd.service_breakdown as any[]) {
           const in1 = s1Ids.has(sb.id), in2 = s2Ids.has(sb.id);
@@ -1279,6 +1285,7 @@ const PrintShopPage: React.FC = () => {
                   onChange={setParams}
                   onPriceChange={setPriceBreakdown}
                   onTemplateCategoriesChange={setTemplateCategoryIds}
+                  onServicesChange={(s1, s2) => { panelServicesRef.current = { s1, s2 }; }}
                   isAdmin={isAdmin}
                 />
                 <MaterialNeedsPanel priceBreakdown={priceBreakdown} />

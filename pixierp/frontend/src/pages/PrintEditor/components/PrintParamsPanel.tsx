@@ -171,6 +171,7 @@ interface Props {
   onChange: (p: PrintParams) => void;
   onPriceChange?: (b: PriceBreakdown | null) => void;
   onTemplateCategoriesChange?: (ids: number[]) => void;
+  onServicesChange?: (s1: number[][], s2: number[][], fin: number[][]) => void;
   isAdmin: boolean;
 }
 
@@ -223,7 +224,7 @@ const readClickState = (): any => {
   return {};
 };
 
-const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, onTemplateCategoriesChange, isAdmin }) => {
+const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, onTemplateCategoriesChange, onServicesChange, isAdmin }) => {
   const [priceOpen, setPriceOpen] = useState(true);
   const [presets, setPresets] = useState<SizePreset[]>([]);
   const [products, setProducts] = useState<ProductTemplate[]>([]);
@@ -295,6 +296,11 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
   const flatFinishingIds = useMemo(() =>
     flattenGroups(selectedFinishingServices),
   [selectedFinishingServices]);
+
+  // ── Service selections callback → PrintShopPage el tudja érni ─────────
+  useEffect(() => {
+    onServicesChange?.(selectedServices1, selectedServices2, selectedFinishingServices);
+  }, [selectedServices1, selectedServices2, selectedFinishingServices]); // eslint-disable-line
 
   // ── Persist click-state to localStorage ────────────────────────────────
   useEffect(() => {
