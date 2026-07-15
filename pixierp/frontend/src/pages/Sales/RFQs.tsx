@@ -2299,19 +2299,24 @@ const RFQs: React.FC = () => {
       if (event.origin !== window.location.origin) return;
       if (event.data?.type !== 'PRINTSHOP_ITEM_SAVED') return;
       const d = event.data;
-      setNewItems(prev => [...prev, {
-        item_type: 'manufacturing',
-        ref_id: d.manufacturing_product_id,
-        manufacturing_product: { id: d.manufacturing_product_id, name: d.name },
-        name: d.name || `Egyedi termék #${d.manufacturing_product_id}`,
-        quantity: Number(d.quantity) || 1,
-        unit: 'db',
-        net_unit_price: Number(d.net_unit_price) || 0,
-        vat_rate: 27,
-        description: d.description || '',
-        _ps_mfg_id: d._ps_mfg_id || d.manufacturing_product_id,  // PrintShop gomb előhíváshoz
-        _editor_state: d._editor_state || null,  // item-specifikus állapot visszatöltéshez
-      }]);
+      setNewItems(prev => {
+        const productId = d.manufacturing_product_id;
+        // Ugyanabból a PrintShop ablakból ismételt Mentés → frissítjük a meglévő tételt (ne duplikálódjon)
+        const filtered = prev.filter(it => it.ref_id !== productId && it.manufacturing_product?.id !== productId);
+        return [...filtered, {
+          item_type: 'manufacturing',
+          ref_id: productId,
+          manufacturing_product: { id: productId, name: d.name },
+          name: d.name || `Egyedi termék #${productId}`,
+          quantity: Number(d.quantity) || 1,
+          unit: 'db',
+          net_unit_price: Number(d.net_unit_price) || 0,
+          vat_rate: 27,
+          description: d.description || '',
+          _ps_mfg_id: d._ps_mfg_id || productId,
+          _editor_state: d._editor_state || null,
+        }];
+      });
     };
     window.addEventListener('message', handleMsg);
     return () => window.removeEventListener('message', handleMsg);
