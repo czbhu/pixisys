@@ -1325,7 +1325,7 @@ const ProductEditor: React.FC = () => {
                                   </Select>
                                 </Form.Item>
                               </Col>
-                              {!isClickSheet && (
+                              {!isClickSheet && !isSheetPrint && (
                                 <Col span={12}>
                                   <Form.Item
                                     name="print_service"
@@ -1343,10 +1343,10 @@ const ProductEditor: React.FC = () => {
                               )}
                             </Row>
 
-                            {isClickSheet && (
+                            {(isClickSheet || isSheetPrint) && (
                               <>
                                 <Form.Item
-                                  label="Klikkdíjas nyomtatási opciók"
+                                  label={isSheetPrint ? 'Táblás nyomtatási opciók' : 'Klikkdíjas nyomtatási opciók'}
                                   tooltip="A PrintEditorban a felhasználó ezek közül választ nyomtatási szolgáltatást. Az első lesz az alapértelmezett. Sorrendet a nyilakkal állítsd."
                                 >
                                   <Select
@@ -1406,7 +1406,7 @@ const ProductEditor: React.FC = () => {
                                   <Checkbox>2 oldalas nyomtatásnál a fix költségeket csak az 1. oldalra számolja</Checkbox>
                                 </Form.Item>
                                 <Form.Item name="multi_sheet_enabled" valuePropName="checked">
-                                  <Checkbox>Ív hozzáadása — a felhasználó több ívet (oldalt) adhat a megrendeléshez</Checkbox>
+                                  <Checkbox>{isSheetPrint ? 'Tábla hozzáadása — a felhasználó több táblát (oldalt) adhat a megrendeléshez' : 'Ív hozzáadása — a felhasználó több ívet (oldalt) adhat a megrendeléshez'}</Checkbox>
                                 </Form.Item>
                               </>
                             )}

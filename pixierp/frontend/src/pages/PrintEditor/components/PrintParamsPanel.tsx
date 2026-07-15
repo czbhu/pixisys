@@ -1089,6 +1089,30 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                   </Radio.Group>
                 </>
               )}
+
+              {/* Táblák száma — sheet_print termékekre ha multi_sheet_enabled */}
+              {(selectedProduct?.calculator_type === 'sheet_print' || selectedProduct?.calculator_type === 'roll_print') &&
+               params.multi_sheet_enabled && (
+                <div style={{ marginBottom: 6 }}>
+                  <Text style={{ fontSize: 11, color: '#666', display: 'block', marginBottom: 3 }}>
+                    {selectedProduct?.calculator_type === 'roll_print' ? 'Tekercsek száma' : 'Táblák száma'}
+                  </Text>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <Button size="small" icon={<MinusOutlined />}
+                      disabled={(params.sheet_count ?? 1) <= 1}
+                      onClick={() => { const n = (params.sheet_count ?? 1) - 1; if (n >= 1) update({ sheet_count: n }); }}
+                    />
+                    <NumInput size="small" min={1} max={50} value={params.sheet_count ?? 1}
+                      onChange={v => { if (v && v >= 1) update({ sheet_count: v }); }}
+                      style={{ flex: 1, textAlign: 'center' }}
+                    />
+                    <Button size="small" icon={<PlusOutlined />}
+                      disabled={(params.sheet_count ?? 1) >= 50}
+                      onClick={() => { const n = (params.sheet_count ?? 1) + 1; if (n <= 50) update({ sheet_count: n }); }}
+                    />
+                  </div>
+                </div>
+              )}
             </>
           )}
 
