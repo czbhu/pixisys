@@ -1580,7 +1580,15 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
         onOk={() => {
           let applyW = modalSheetW;
           let applyH = modalSheetH;
-          if (modalAutoSheetSize && activeClickPricing?.size_comparison?.length) {
+          if (modalAutoSheetSize && isBoardImpositionMode && (activePricing as any)?.size_comparison?.length) {
+            // Táblás auto mód: a legjobb anyagméretet alkalmazzuk
+            const sc: SizeComparison[] = (activePricing as any).size_comparison;
+            const best = sc.find((s: SizeComparison) => s.is_best) ?? sc[0];
+            if (best) {
+              applyW = best.size_mm[0];
+              applyH = best.size_mm[1];
+            }
+          } else if (modalAutoSheetSize && activeClickPricing?.size_comparison?.length) {
             const sc = activeClickPricing.size_comparison;
             const wMin = selectedProduct?.custom_size_width_min ?? 0;
             const wMax = selectedProduct?.custom_size_width_max ?? Infinity;
@@ -1670,8 +1678,23 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                       Auto (legjobb anyagköltség)
                     </label>
                   </Text>
-                  {modalAutoSheetSize && activeClickPricing?.size_comparison?.length ? (() => {
-                    const sc = activeClickPricing.size_comparison;
+                  {modalAutoSheetSize && (activeClickPricing?.size_comparison?.length || (isBoardImpositionMode && (activePricing as any)?.size_comparison?.length)) ? (() => {
+                    // Táblás mód: activePricing.size_comparison; klikk mód: activeClickPricing.size_comparison
+                    if (isBoardImpositionMode) {
+                      const sc: SizeComparison[] = (activePricing as any).size_comparison ?? [];
+                      const best = sc.find((s: SizeComparison) => s.is_best) ?? sc[0];
+                      if (!best) return null;
+                      return (
+                        <div style={{ padding: '6px 10px', background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 6, fontSize: 12 }}>
+                          <strong>{best.label}</strong>
+                          &nbsp;·&nbsp;{best.size_mm[0]}×{best.size_mm[1]} mm
+                          &nbsp;·&nbsp;{best.items_per_sheet} db/tábla
+                          &nbsp;·&nbsp;{(best as any).boards_needed ?? (best as any).sheets_needed} tábla
+                          &nbsp;·&nbsp;{((best as any).total ?? best.material_cost).toLocaleString('hu-HU')} Ft
+                        </div>
+                      );
+                    }
+                    const sc: SizeComparison[] = activeClickPricing?.size_comparison ?? [];
                     const wMin = selectedProduct?.custom_size_width_min ?? 0;
                     const wMax = selectedProduct?.custom_size_width_max ?? Infinity;
                     const hMin = selectedProduct?.custom_size_height_min ?? 0;
