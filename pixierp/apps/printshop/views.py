@@ -194,8 +194,15 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
                     'markup_percentage': float(ci.markup_percentage or 0),
                 }
                 if ci.calculation_type == 'area':
-                    # Táblás: board_area_m2 × boards_needed (impozíciótól függ)
-                    _board_area = (Decimal(str(sheet_w_mm or width_mm)) / 1000) * (Decimal(str(sheet_h_mm or height_mm)) / 1000) if sheet_w_mm and sheet_h_mm else area_m2
+                    # Táblás: nyomott bef. terület = (fit_w × prod_w) × (fit_h × prod_h)
+                    if sheet_w_mm and sheet_h_mm:
+                        _bleed_d = Decimal(str(bleed_mm or 0))
+                        _pw = float(w + 2 * _bleed_d); _ph = float(h + 2 * _bleed_d)
+                        _printed_w = fit_w * (_ph if rotated else _pw)
+                        _printed_h = fit_h * (_pw if rotated else _ph)
+                        _board_area = Decimal(str(_printed_w)) / 1000 * Decimal(str(_printed_h)) / 1000
+                    else:
+                        _board_area = area_m2
                     _units = Decimal(str(boards_needed))
                     amt = price * _board_area * _units
                     print_service_items.append({
@@ -235,7 +242,15 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
                 for ci in svc2.cost_items.filter(is_active=True):
                     price2 = Decimal(str(ci.selling_price or 0))
                     if ci.calculation_type == 'area':
-                        _ba2 = (Decimal(str(sheet_w_mm or width_mm)) / 1000) * (Decimal(str(sheet_h_mm or height_mm)) / 1000) if sheet_w_mm and sheet_h_mm else area_m2
+                        # Nyomott befoglaló terület (ugyanaz mint side 1)
+                        if sheet_w_mm and sheet_h_mm:
+                            _bleed_d2 = Decimal(str(bleed_mm or 0))
+                            _pw2 = float(w + 2 * _bleed_d2); _ph2 = float(h + 2 * _bleed_d2)
+                            _printed_w2 = fit_w * (_ph2 if rotated else _pw2)
+                            _printed_h2 = fit_h * (_pw2 if rotated else _ph2)
+                            _ba2 = Decimal(str(_printed_w2)) / 1000 * Decimal(str(_printed_h2)) / 1000
+                        else:
+                            _ba2 = area_m2
                         amt2 = price2 * _ba2 * Decimal(str(boards_needed))
                         s2_items.append({'name': ci.name, 'type': 'area', 'price_per': float(price2),
                             'units': boards_needed, 'area_m2_per': float(_ba2),
@@ -300,9 +315,13 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
                     if ctype == 'fixed':
                         svc_total += price
                     elif ctype == 'area':
-                        # Felület alapú: ár × tábla_terület × táblaszám
+                        # Felület alapú: nyomott befoglaló terület × táblaszám
                         if sheet_w_mm and sheet_h_mm:
-                            _ba = (Decimal(str(sheet_w_mm)) / 1000) * (Decimal(str(sheet_h_mm)) / 1000)
+                            _bleed_svc = Decimal(str(bleed_mm or 0))
+                            _pw_svc = float(w + 2 * _bleed_svc); _ph_svc = float(h + 2 * _bleed_svc)
+                            _pw_svc2 = fit_w * (_ph_svc if rotated else _pw_svc)
+                            _ph_svc2 = fit_h * (_pw_svc if rotated else _ph_svc)
+                            _ba = Decimal(str(_pw_svc2)) / 1000 * Decimal(str(_ph_svc2)) / 1000
                         else:
                             _ba = area_m2
                         svc_total += price * _ba * Decimal(str(boards_needed if sheet_w_mm else qty))
@@ -365,7 +384,10 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
                 _ips = max(ips_r if _rot else ips_n, 1)
                 _fw = fw_r if _rot else fw_n; _fh = fh_r if _rot else fh_n
                 _bd = _math.ceil(int(qty) * _sc / _ips)
-                _area = (Decimal(str(sw)) / 1000) * (Decimal(str(sh)) / 1000)
+                # Nyomott befoglaló terület (fit_w × prod_w) × (fit_h × prod_h)
+                _printed_w = _fw * (_prod_h if _rot else _prod_w)
+                _printed_h = _fh * (_prod_w if _rot else _prod_h)
+                _area = Decimal(str(_printed_w)) / 1000 * Decimal(str(_printed_h)) / 1000
                 _svc_cost = Decimal('0')
                 for ci in _svc.cost_items.filter(is_active=True):
                     _p = Decimal(str(ci.selling_price or 0))
