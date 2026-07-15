@@ -544,7 +544,12 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
           {onEditItem ? (
             <Button size="small" onClick={() => onEditItem && onEditItem(record)}>Szerk.</Button>
           ) : null}
-          {record.item_type === 'manufacturing' && (record.manufacturing_product_printshop_params || record.imposition_data?._ps_mfg_id || (record as any)._ps_mfg_id) ? (
+          {record.item_type === 'manufacturing' && (
+            record.manufacturing_product_printshop_params ||
+            record.imposition_data?._ps_mfg_id ||
+            (record as any)._ps_mfg_id ||
+            ((record.cost_items_data as any[])?.some((ci: any) => ci?.formulas?._syncQty === false))
+          ) ? (
             <Tooltip title="Megnyitás PrintShopban">
               <Button
                 size="small"
