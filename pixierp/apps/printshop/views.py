@@ -126,7 +126,7 @@ def _get_public_preview_author_name(target_type, target):
 def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mode,
                      binding, folding_count, config, selected_service_ids=None,
                      print_service_id=None, sheet_w_mm=None, sheet_h_mm=None,
-                     bleed_mm=0, force_rotate=None, sheet_count=1):
+                     bleed_mm=0, force_rotate=None, sheet_count=1, material_id=None):
     """Árkalkuláció — visszaad egy részletes breakdown dict-et."""
     import math as _math
     from apps.manufacturing.models import Service
@@ -297,6 +297,80 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
     total = (subtotal * margin_mult).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
     unit_price = (total / qty).quantize(Decimal('0.0001'), rounding=ROUND_HALF_UP)
 
+    # ── Rendelhető méretek összehasonlítása (táblás/area alapú) ──────────
+    size_comparison = []
+    if print_service_id and material_id and bleed_mm is not None:
+        try:
+            from apps.warehouse.models import Material, MaterialSize
+            from apps.manufacturing.models import Service as _Svc
+            _mat = Material.objects.get(id=material_id)
+            _svc = _Svc.objects.prefetch_related('cost_items').get(id=print_service_id)
+            _bleed = Decimal(str(bleed_mm or 0))
+            _prod_w = float(w + 2 * _bleed)
+            _prod_h = float(h + 2 * _bleed)
+            _sc = max(int(sheet_count or 1), 1)
+
+            def _board_cost_for_size(sw, sh, mat_price):
+                if sw <= 0 or sh <= 0:
+                    return None
+                fw_n = int(sw / _prod_w) if _prod_w > 0 else 0
+                fh_n = int(sh / _prod_h) if _prod_h > 0 else 0
+                fw_r = int(sw / _prod_h) if _prod_h > 0 else 0
+                fh_r = int(sh / _prod_w) if _prod_w > 0 else 0
+                ips_n = fw_n * fh_n; ips_r = fw_r * fh_r
+                _rot = ips_r > ips_n
+                _ips = max(ips_r if _rot else ips_n, 1)
+                _fw = fw_r if _rot else fw_n; _fh = fh_r if _rot else fh_n
+                _bd = _math.ceil(int(qty) * _sc / _ips)
+                _area = (Decimal(str(sw)) / 1000) * (Decimal(str(sh)) / 1000)
+                _svc_cost = Decimal('0')
+                for ci in _svc.cost_items.filter(is_active=True):
+                    _p = Decimal(str(ci.selling_price or 0))
+                    if ci.calculation_type == 'area':
+                        _svc_cost += _p * _area * Decimal(str(_bd))
+                    elif ci.calculation_type == 'fixed':
+                        _svc_cost += _p
+                    elif ci.calculation_type in ('click', 'unit'):
+                        _svc_cost += _p * Decimal(str(_bd))
+                _mat_cost = Decimal(str(mat_price or 0)) * Decimal(str(_bd))
+                _total = (_svc_cost + _mat_cost) * (Decimal('1') + config.margin_pct / 100)
+                return {
+                    'fit_w': _fw, 'fit_h': _fh, 'items_per_sheet': _ips,
+                    'boards_needed': _bd, 'rotated': _rot,
+                    'size_mm': [round(sw, 1), round(sh, 1)],
+                    'cut_sheet_mm': None,
+                    'material_cost': float(_mat_cost.quantize(Decimal('0.01'))),
+                    'service_cost': float(_svc_cost.quantize(Decimal('0.01'))),
+                    'total': float(_total.quantize(Decimal('0.01'))),
+                    'price_per_sheet': float(mat_price or 0),
+                    'needs_cutting': False,
+                    'cuts_per_raw': 1,
+                }
+
+            _dim_mult = {'mm': 1, 'cm': 10, 'm': 1000}
+            _default_price = float(_mat.unit_selling_price or 0)
+            if _mat.width and _mat.length:
+                _m = _dim_mult.get(_mat.dimension_unit or 'mm', 1)
+                _entry = _board_cost_for_size(float(_mat.width) * _m, float(_mat.length) * _m, _default_price)
+                if _entry:
+                    _entry['label'] = 'Alapméret'; _entry['is_default'] = True
+                    size_comparison.append(_entry)
+            for ms in MaterialSize.objects.filter(material=_mat, is_active=True).order_by('sort_order'):
+                _m = _dim_mult.get(ms.dimension_unit or 'mm', 1)
+                _sw = float(ms.width) * _m - float(ms.grip_width_mm or 0)
+                _sl = float(ms.length) * _m - float(ms.grip_height_mm or 0)
+                _p = float(ms.effective_price or _default_price)
+                _entry = _board_cost_for_size(_sw, _sl, _p)
+                if _entry:
+                    _entry['label'] = ms.name or f'{round(_sw)}×{round(_sl)} mm'
+                    _entry['is_default'] = False; _entry['size_id'] = ms.id
+                    size_comparison.append(_entry)
+            if size_comparison:
+                size_comparison.sort(key=lambda x: x['total'])
+                size_comparison[0]['is_best'] = True
+        except Exception:
+            pass
+
     return {
         'paper_cost': float(paper_cost.quantize(Decimal('0.01'))),
         'print_cost_side1': float(print_cost_s1.quantize(Decimal('0.01'))),
@@ -320,6 +394,7 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
         'rotated': rotated,
         'sheet_w_mm': float(sheet_w_mm) if sheet_w_mm else None,
         'sheet_h_mm': float(sheet_h_mm) if sheet_h_mm else None,
+        'size_comparison': size_comparison,
     }
 
 
@@ -419,6 +494,7 @@ class PrintOrderViewSet(viewsets.ModelViewSet):
                 bleed_mm=float(d.get('bleed_mm', 0) or 0),
                 force_rotate=d.get('force_rotate'),
                 sheet_count=int(d.get('sheet_count', 1) or 1),
+                material_id=d.get('material_id') or None,
             )
             return Response(breakdown)
         except Exception as e:

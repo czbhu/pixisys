@@ -388,6 +388,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
             sheet_h_mm: boardSheetH,
             bleed_mm: boardBleed,
             force_rotate: boardForceRotate === 'auto' ? null : boardForceRotate === 'rotated',
+            material_id: p.material_id || undefined,
           } : {}),
         });
         setPricing(res.data);
@@ -1935,7 +1936,12 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                   })()}
 
                   {/* ── Méret összehasonlítás ───────────────────────── */}
-                  {activeClickPricing?.size_comparison && activeClickPricing.size_comparison.length > 1 && (
+                  {(() => {
+                    const sc = isBoardImpositionRef.current
+                      ? ((activePricing as any)?.size_comparison ?? [])
+                      : (activeClickPricing?.size_comparison ?? []);
+                    if (sc.length <= 1) return null;
+                    return (
                     <div style={{ marginTop: 12, padding: '12px', background: '#f0f5ff', borderRadius: 8, border: '1px solid #d6e4ff' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                         <Text strong style={{ fontSize: 12 }}>Rendelhető méretek összehasonlítása</Text>
@@ -1961,18 +1967,24 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                           </tr>
                         </thead>
                         <tbody>
-                          {activeClickPricing.size_comparison.map((sc, i) => {
-                            const isEffectivelySelected = autoSizeMode ? sc.is_best : (sc.size_id != null ? sc.size_id === forcedSizeId : !forcedSizeId && sc.is_default);
+                          {sc.map((s: SizeComparison, i: number) => {
+                            const isEffectivelySelected = autoSizeMode ? s.is_best : (s.size_id != null ? s.size_id === forcedSizeId : !forcedSizeId && s.is_default);
                             return (
                               <tr key={i} style={{
-                                background: isEffectivelySelected ? '#e6f7ff' : (sc.is_best ? '#f6ffed' : 'transparent'),
+                                background: isEffectivelySelected ? '#e6f7ff' : (s.is_best ? '#f6ffed' : 'transparent'),
                                 fontWeight: isEffectivelySelected ? 600 : 400,
                                 borderBottom: '1px solid #f0f0f0',
                                 cursor: autoSizeMode ? 'default' : 'pointer',
                               }}
                               onClick={() => {
                                 if (autoSizeMode) return;
-                                setForcedSizeId(sc.size_id ?? null);
+                                setForcedSizeId(s.size_id ?? null);
+                                // Táblás módban frissítsük a sheet méretet a kiválasztott mérettel
+                                if (isBoardImpositionRef.current) {
+                                  const ew = s.cut_sheet_mm ? s.cut_sheet_mm[0] : s.size_mm[0];
+                                  const eh = s.cut_sheet_mm ? s.cut_sheet_mm[1] : s.size_mm[1];
+                                  setModalSheetW(ew); setModalSheetH(eh);
+                                }
                               }}
                               >
                                 <td style={{ textAlign: 'center', padding: '4px 2px' }}>
@@ -1980,27 +1992,34 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                                     type="radio"
                                     checked={isEffectivelySelected}
                                     disabled={autoSizeMode}
-                                    onChange={() => { setAutoSizeMode(false); setForcedSizeId(sc.size_id ?? null); }}
+                                    onChange={() => {
+                                      setAutoSizeMode(false); setForcedSizeId(s.size_id ?? null);
+                                      if (isBoardImpositionRef.current) {
+                                        const ew = s.cut_sheet_mm ? s.cut_sheet_mm[0] : s.size_mm[0];
+                                        const eh = s.cut_sheet_mm ? s.cut_sheet_mm[1] : s.size_mm[1];
+                                        setModalSheetW(ew); setModalSheetH(eh);
+                                      }
+                                    }}
                                     onClick={e => e.stopPropagation()}
                                   />
                                 </td>
                                 <td style={{ padding: '4px 6px' }}>
-                                  {sc.label}
-                                  {sc.is_default && <Tag color="blue" style={{ marginLeft: 4, fontSize: 9, lineHeight: '14px', padding: '0 4px' }}>alap</Tag>}
-                                  {sc.is_best && <Tag color="green" style={{ marginLeft: 4, fontSize: 9, lineHeight: '14px', padding: '0 4px' }}>legjobb</Tag>}
-                                  {isEffectivelySelected && !sc.is_best && <Tag color="blue" style={{ marginLeft: 4, fontSize: 9, lineHeight: '14px', padding: '0 4px' }}>kiválasztott</Tag>}
-                                  {sc.needs_cutting && sc.cut_sheet_mm && (
+                                  {s.label}
+                                  {s.is_default && <Tag color="blue" style={{ marginLeft: 4, fontSize: 9, lineHeight: '14px', padding: '0 4px' }}>alap</Tag>}
+                                  {s.is_best && <Tag color="green" style={{ marginLeft: 4, fontSize: 9, lineHeight: '14px', padding: '0 4px' }}>legjobb</Tag>}
+                                  {isEffectivelySelected && !s.is_best && <Tag color="blue" style={{ marginLeft: 4, fontSize: 9, lineHeight: '14px', padding: '0 4px' }}>kiválasztott</Tag>}
+                                  {s.needs_cutting && s.cut_sheet_mm && (
                                     <div style={{ fontSize: 10, color: '#fa8c16', marginTop: 1 }}>
-                                      ✂ vágva: {sc.cut_sheet_mm[0]}×{sc.cut_sheet_mm[1]} mm ({sc.cuts_per_raw} ív/alap)
+                                      ✂ vágva: {s.cut_sheet_mm[0]}×{s.cut_sheet_mm[1]} mm ({s.cuts_per_raw} ív/alap)
                                     </div>
                                   )}
                                 </td>
-                                <td style={{ textAlign: 'right', padding: '4px 6px' }}>{sc.size_mm[0]}×{sc.size_mm[1]}</td>
-                                <td style={{ textAlign: 'right', padding: '4px 6px' }}>{sc.items_per_sheet}</td>
-                                <td style={{ textAlign: 'right', padding: '4px 6px' }}>{sc.sheets_needed}{sc.needs_cutting && ' ✂'}</td>
-                                <td style={{ textAlign: 'right', padding: '4px 6px' }}>{sc.price_per_sheet.toLocaleString('hu-HU')} Ft</td>
-                                <td style={{ textAlign: 'right', padding: '4px 6px', color: sc.is_best ? '#52c41a' : undefined }}>
-                                  {sc.material_cost.toLocaleString('hu-HU')} Ft
+                                <td style={{ textAlign: 'right', padding: '4px 6px' }}>{s.size_mm[0]}×{s.size_mm[1]}</td>
+                                <td style={{ textAlign: 'right', padding: '4px 6px' }}>{s.items_per_sheet}</td>
+                                <td style={{ textAlign: 'right', padding: '4px 6px' }}>{(s as any).boards_needed ?? (s as any).sheets_needed}{s.needs_cutting && ' ✂'}</td>
+                                <td style={{ textAlign: 'right', padding: '4px 6px' }}>{s.price_per_sheet.toLocaleString('hu-HU')} Ft</td>
+                                <td style={{ textAlign: 'right', padding: '4px 6px', color: s.is_best ? '#52c41a' : undefined }}>
+                                  {((s as any).total ?? s.material_cost).toLocaleString('hu-HU')} Ft
                                 </td>
                               </tr>
                             );
@@ -2008,7 +2027,8 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                         </tbody>
                       </table>
                     </div>
-                  )}
+                    );
+                  })()}
                 </>
               ) : (
                 <div style={{ textAlign: 'center', color: '#8c8c8c', padding: '32px 0' }}>
