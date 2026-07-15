@@ -244,6 +244,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
   const [selectedPrintSvcId2, setSelectedPrintSvcId2] = useState<number | null>(_cs.svcId2 ?? null);
   // Táblás/tekercses UV nyomtatás: kiválasztott nyomtatási szolgáltatás
   const [selectedBoardPrintSvcId, setSelectedBoardPrintSvcId] = useState<number | null>(null);
+  const [selectedBoardPrintSvcId2, setSelectedBoardPrintSvcId2] = useState<number | null>(null);
 
   const [clickSheetW, setClickSheetW] = useState<number>(_cs.sheetW ?? 330);
   const [clickSheetH, setClickSheetH] = useState<number>(_cs.sheetH ?? 487);
@@ -389,6 +390,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
             bleed_mm: boardBleed,
             force_rotate: boardForceRotate === 'auto' ? null : boardForceRotate === 'rotated',
             material_id: p.material_id || undefined,
+            print_service_id_2: (p.sides === '2' && selectedBoardPrintSvcId2) ? selectedBoardPrintSvcId2 : undefined,
           } : {}),
         });
         setPricing(res.data);
@@ -400,9 +402,9 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
         setCalcLoading(false);
       }
     }, 400);
-  }, [flatSelectedIds, flatFinishingIds, selectedBoardPrintSvcId, boardSheetW, boardSheetH, boardBleed, boardForceRotate]); // eslint-disable-line
+  }, [flatSelectedIds, flatFinishingIds, selectedBoardPrintSvcId, selectedBoardPrintSvcId2, boardSheetW, boardSheetH, boardBleed, boardForceRotate]); // eslint-disable-line
 
-  useEffect(() => { calculatePrice(params); }, [params, flatSelectedIds, flatFinishingIds, selectedBoardPrintSvcId, boardSheetW, boardSheetH, boardBleed, boardForceRotate]); // eslint-disable-line
+  useEffect(() => { calculatePrice(params); }, [params, flatSelectedIds, flatFinishingIds, selectedBoardPrintSvcId, selectedBoardPrintSvcId2, boardSheetW, boardSheetH, boardBleed, boardForceRotate]); // eslint-disable-line
 
   // ── Click-sheet-print calculation ────────────────────────────────────────
   // Paraméteres kalkuláció: az ívméret értékek paraméterként jönnek be, nem a closure-ból
@@ -551,6 +553,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
     if (product.print_service_options_details && product.print_service_options_details.length > 0 &&
         (product.calculator_type === 'sheet_print' || product.calculator_type === 'roll_print')) {
       setSelectedBoardPrintSvcId(product.print_service_options_details[0].id);
+      setSelectedBoardPrintSvcId2(null); // hátoldal alapértelmezés: nincs
     } else if (product.calculator_type !== 'click_sheet_print') {
       setSelectedBoardPrintSvcId(null);
     }
@@ -1073,16 +1076,36 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                (selectedProduct?.print_service_options_details ?? []).length > 0 ? (
                 <>
                   <SectionLabel label="Nyomtatás típusa" />
-                  <Select
-                    value={selectedBoardPrintSvcId ?? undefined}
-                    onChange={(v: number) => setSelectedBoardPrintSvcId(v)}
-                    style={{ width: '100%' }}
-                    size="small"
-                  >
-                    {(selectedProduct.print_service_options_details ?? []).map(svc => (
-                      <Option key={svc.id} value={svc.id}>{svc.name}</Option>
-                    ))}
-                  </Select>
+                  <div style={{ marginBottom: 6 }}>
+                    {params.sides === '2' && <Text style={{ fontSize: 11, color: '#666', display: 'block', marginBottom: 3 }}>Cím oldal</Text>}
+                    <Select
+                      value={selectedBoardPrintSvcId ?? undefined}
+                      onChange={(v: number) => setSelectedBoardPrintSvcId(v)}
+                      style={{ width: '100%' }}
+                      size="small"
+                    >
+                      {(selectedProduct.print_service_options_details ?? []).map(svc => (
+                        <Option key={svc.id} value={svc.id}>{svc.name}</Option>
+                      ))}
+                    </Select>
+                  </div>
+                  {params.sides === '2' && (
+                    <div style={{ marginBottom: 6 }}>
+                      <Text style={{ fontSize: 11, color: '#666', display: 'block', marginBottom: 3 }}>Hátoldal</Text>
+                      <Select
+                        value={selectedBoardPrintSvcId2 ?? undefined}
+                        onChange={(v: number | undefined) => setSelectedBoardPrintSvcId2(v ?? null)}
+                        allowClear
+                        placeholder="Nincs hátoldali nyomtatás"
+                        style={{ width: '100%' }}
+                        size="small"
+                      >
+                        {(selectedProduct.print_service_options_details ?? []).map(svc => (
+                          <Option key={svc.id} value={svc.id}>{svc.name}</Option>
+                        ))}
+                      </Select>
+                    </div>
+                  )}
                 </>
               ) : (
                 <>
@@ -1525,8 +1548,8 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                   {/* UV táblás/tekercses: print_service_items megjelenítése */}
                   {(activePricing as any).print_service_name && (
                     <div>Nyomtatás – <em>{(activePricing as any).print_service_name}</em>:
-                      <strong> {fmt((activePricing.print_cost_side1 ?? 0) + (activePricing.print_cost_side2 ?? 0))}</strong>
-                      {((activePricing as any).print_service_items ?? []).map((pi: any, i: number) => (
+                      <strong> {fmt(activePricing.print_cost_side1 ?? 0)}</strong>
+                      {((activePricing as any).print_service_items ?? []).filter((pi: any) => pi.type !== 'side2_service').map((pi: any, i: number) => (
                         <div key={i} style={{ paddingLeft: 12, fontSize: 11, color: '#666' }}>
                           {pi.type === 'area'
                             ? `${pi.name}: ${pi.area_m2_per?.toFixed(3)} m²/tábla × ${pi.units} tábla × ${Number(pi.price_per).toLocaleString('hu-HU')} Ft/m² = `
@@ -1538,6 +1561,22 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                       ))}
                     </div>
                   )}
+                  {/* Hátoldali nyomtatás (side 2 service) */}
+                  {((activePricing as any).print_service_items ?? []).filter((pi: any) => pi.type === 'side2_service').map((pi: any, i: number) => (
+                    <div key={`s2-${i}`}>Nyomtatás – Hátoldal – <em>{pi.name}</em>:
+                      <strong> {fmt(pi.total)}</strong>
+                      {(pi.items ?? []).map((ci: any, j: number) => (
+                        <div key={j} style={{ paddingLeft: 12, fontSize: 11, color: '#666' }}>
+                          {ci.type === 'area'
+                            ? `${ci.name}: ${ci.area_m2_per?.toFixed(3)} m²/tábla × ${ci.units} tábla × ${Number(ci.price_per).toLocaleString('hu-HU')} Ft/m² = `
+                            : ci.type === 'fixed'
+                            ? `Fix: ${ci.name}: `
+                            : `${ci.name}: ${ci.units} db × ${Number(ci.price_per).toLocaleString('hu-HU')} Ft = `}
+                          <strong>{fmt(ci.total)}</strong>
+                        </div>
+                      ))}
+                    </div>
+                  ))}
                   {!(activePricing as any).print_service_name && activePricing.print_cost_side1 > 0 && (
                     <div>Nyomtatás 1.o: <strong>{fmt(activePricing.print_cost_side1)}</strong></div>
                   )}

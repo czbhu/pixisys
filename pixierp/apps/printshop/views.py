@@ -125,7 +125,8 @@ def _get_public_preview_author_name(target_type, target):
 
 def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mode,
                      binding, folding_count, config, selected_service_ids=None,
-                     print_service_id=None, sheet_w_mm=None, sheet_h_mm=None,
+                     print_service_id=None, print_service_id_2=None,
+                     sheet_w_mm=None, sheet_h_mm=None,
                      bleed_mm=0, force_rotate=None, sheet_count=1, material_id=None):
     """Árkalkuláció — visszaad egy részletes breakdown dict-et."""
     import math as _math
@@ -225,6 +226,38 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
         except Exception:
             pass
         print_cost_s1 = print_cost
+        # Hátoldal (side 2) – ha van megadva print_service_id_2
+        if print_service_id_2 and sides == '2':
+            try:
+                svc2 = Service.objects.prefetch_related('cost_items').get(id=print_service_id_2)
+                s2_items = []
+                for ci in svc2.cost_items.filter(is_active=True):
+                    price2 = Decimal(str(ci.selling_price or 0))
+                    if ci.calculation_type == 'area':
+                        _ba2 = (Decimal(str(sheet_w_mm or width_mm)) / 1000) * (Decimal(str(sheet_h_mm or height_mm)) / 1000) if sheet_w_mm and sheet_h_mm else area_m2
+                        amt2 = price2 * _ba2 * Decimal(str(boards_needed))
+                        s2_items.append({'name': ci.name, 'type': 'area', 'price_per': float(price2),
+                            'units': boards_needed, 'area_m2_per': float(_ba2),
+                            'total': float(amt2.quantize(Decimal('0.01')))})
+                    elif ci.calculation_type == 'fixed':
+                        amt2 = price2
+                        s2_items.append({'name': ci.name, 'type': 'fixed', 'price_per': float(price2),
+                            'units': 1, 'total': float(amt2.quantize(Decimal('0.01')))})
+                    elif ci.calculation_type in ('unit', 'click'):
+                        amt2 = price2 * qty
+                        s2_items.append({'name': ci.name, 'type': 'unit', 'price_per': float(price2),
+                            'units': float(qty), 'total': float(amt2.quantize(Decimal('0.01')))})
+                    else:
+                        continue
+                    print_cost_s2 += amt2
+                    print_cost += amt2
+                print_service_items.append({
+                    'name': svc2.name, 'type': 'side2_service',
+                    'items': s2_items,
+                    'total': float(print_cost_s2.quantize(Decimal('0.01'))),
+                })
+            except Exception:
+                pass
     else:
         mode_costs = {
             'color': config.print_color_cost,
@@ -513,6 +546,7 @@ class PrintOrderViewSet(viewsets.ModelViewSet):
                     *(d.get('finishing_service_ids') or []),
                 ])),
                 print_service_id=d.get('print_service_id') or None,
+                print_service_id_2=d.get('print_service_id_2') or None,
                 sheet_w_mm=float(d.get('sheet_w_mm', 0)) or None,
                 sheet_h_mm=float(d.get('sheet_h_mm', 0)) or None,
                 bleed_mm=float(d.get('bleed_mm', 0) or 0),
