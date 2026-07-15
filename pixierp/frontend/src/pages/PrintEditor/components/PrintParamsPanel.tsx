@@ -705,6 +705,14 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
     }
   }, [selectedProduct?.id, materials]); // eslint-disable-line
 
+  // Anyagváltáskor reset a boardSheetW/H-ra → az auto-méret effect majd a legjobb méretet állítja be
+  useEffect(() => {
+    const isBoardOrRoll = selectedProduct?.calculator_type === 'sheet_print' || selectedProduct?.calculator_type === 'roll_print';
+    if (!isBoardOrRoll) return;
+    setBoardSheetW(3200);
+    setBoardSheetH(1000);
+  }, [params.material_id]); // eslint-disable-line
+
   // Táblás auto méret: ha size_comparison megérkezik és boardSheetW/H nem egyezik egyik entry-vel sem,
   // automatikusan alkalmazzuk a legjobb méretet (alapból auto mód)
   useEffect(() => {
