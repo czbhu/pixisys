@@ -542,15 +542,26 @@ const PrintShopPage: React.FC = () => {
       // Alapér
       const matLine = bd?.material_name ? `Alapanyag: ${bd.material_name}` : null;
       const extrasLine = (() => {
+        if (!bd?.service_breakdown?.length) return null;
         const cs = (() => { try { return JSON.parse(localStorage.getItem("pixierp_editor_state") || "{}").clickState ?? {}; } catch { return {}; } })();
         const s1Ids = new Set(((cs.services1 ?? []) as number[][]).flat());
         const s2Ids = new Set(((cs.services2 ?? []) as number[][]).flat());
-        const lines = (bd.service_breakdown as any[]).map((sb: any) => {
-          const side = s1Ids.has(sb.id) && s2Ids.has(sb.id) ? "1-2. oldal"
-            : s1Ids.has(sb.id) ? "1. oldal" : s2Ids.has(sb.id) ? "2. oldal" : "";
-          return sb.name + (side ? " (" + side + ")" : "");
-        });
-        return "Utómunka/extrák: " + lines.join(", ");
+        const s1Only: string[] = [], s2Only: string[] = [], both: string[] = [], other: string[] = [];
+        for (const sb of bd.service_breakdown as any[]) {
+          const in1 = s1Ids.has(sb.id), in2 = s2Ids.has(sb.id);
+          if (in1 && in2) both.push(sb.name);
+          else if (in1) s1Only.push(sb.name);
+          else if (in2) s2Only.push(sb.name);
+          else other.push(sb.name);
+        }
+        const parts: string[] = [];
+        const s1All = [...both, ...s1Only]; const s2All = [...both, ...s2Only];
+        if (s1All.length > 0) parts.push("cím oldal: " + s1All.join(", "));
+        if (s2All.length > 0) parts.push("hátoldal: " + s2All.join(", "));
+        if (other.length > 0 && s1All.length === 0 && s2All.length === 0) parts.push(other.join(", "));
+        else if (other.length > 0) parts.push("egyéb: " + other.join(", "));
+        if (parts.length === 0) return null;
+        return "Utómunka/extrák:\n" + parts.join("\n");
       })();
       // Ár
       const priceLines = bd?.total != null
@@ -792,15 +803,26 @@ const PrintShopPage: React.FC = () => {
             ? ` (vágva: ${bd.cutting_info.cut_sheet_size_mm?.[0]}×${bd.cutting_info.cut_sheet_size_mm?.[1]} mm)` : '') : null;
       const matLine = bd?.material_name ? `Alapanyag: ${bd.material_name}` : null;
       const extrasLine = (() => {
+        if (!bd?.service_breakdown?.length) return null;
         const cs = (() => { try { return JSON.parse(localStorage.getItem("pixierp_editor_state") || "{}").clickState ?? {}; } catch { return {}; } })();
         const s1Ids = new Set(((cs.services1 ?? []) as number[][]).flat());
         const s2Ids = new Set(((cs.services2 ?? []) as number[][]).flat());
-        const lines = (bd.service_breakdown as any[]).map((sb: any) => {
-          const side = s1Ids.has(sb.id) && s2Ids.has(sb.id) ? "1-2. oldal"
-            : s1Ids.has(sb.id) ? "1. oldal" : s2Ids.has(sb.id) ? "2. oldal" : "";
-          return sb.name + (side ? " (" + side + ")" : "");
-        });
-        return "Utómunka/extrák: " + lines.join(", ");
+        const s1Only: string[] = [], s2Only: string[] = [], both: string[] = [], other: string[] = [];
+        for (const sb of bd.service_breakdown as any[]) {
+          const in1 = s1Ids.has(sb.id), in2 = s2Ids.has(sb.id);
+          if (in1 && in2) both.push(sb.name);
+          else if (in1) s1Only.push(sb.name);
+          else if (in2) s2Only.push(sb.name);
+          else other.push(sb.name);
+        }
+        const parts: string[] = [];
+        const s1All = [...both, ...s1Only]; const s2All = [...both, ...s2Only];
+        if (s1All.length > 0) parts.push("cím oldal: " + s1All.join(", "));
+        if (s2All.length > 0) parts.push("hátoldal: " + s2All.join(", "));
+        if (other.length > 0 && s1All.length === 0 && s2All.length === 0) parts.push(other.join(", "));
+        else if (other.length > 0) parts.push("egyéb: " + other.join(", "));
+        if (parts.length === 0) return null;
+        return "Utómunka/extrák:\n" + parts.join("\n");
       })();
       const priceLines = bd?.total != null
         ? `Nyomtatás: ${Math.round(bd.print_cost ?? 0).toLocaleString('hu-HU')} Ft` +
