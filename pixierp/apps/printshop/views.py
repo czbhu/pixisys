@@ -124,7 +124,8 @@ def _get_public_preview_author_name(target_type, target):
 
 
 def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mode,
-                     binding, folding_count, config, selected_service_ids=None):
+                     binding, folding_count, config, selected_service_ids=None,
+                     print_service_id=None):
     """Árkalkuláció — visszaad egy részletes breakdown dict-et."""
     from apps.manufacturing.models import Service
     w = Decimal(str(width_mm))
@@ -133,20 +134,72 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
 
     # Papírköltség
     area_m2 = (w / 1000) * (h / 1000)
-    paper_cost = area_m2 * config.paper_cost_per_m2 * qty
+    paper_cost = area_m2 * config.paper_cost_per_m2 * qty if not print_service_id else Decimal('0')
 
     # Nyomtatási költség
-    mode_costs = {
-        'color': config.print_color_cost,
-        'bw': config.print_bw_cost,
-        'color_white': config.print_color_white_cost,
-        'white': config.print_color_white_cost,  # fehér festék = color_white-tal azonos
-        'none': Decimal('0'),
-    }
-    print_cost_s1 = mode_costs.get(side1_mode, Decimal('0')) * qty
-    print_cost_s2 = (mode_costs.get(side2_mode, Decimal('0')) * qty
-                     if sides == '2' else Decimal('0'))
-    print_cost = print_cost_s1 + print_cost_s2
+    print_cost = Decimal('0')
+    print_cost_s1 = Decimal('0')
+    print_cost_s2 = Decimal('0')
+    print_service_name = None
+    print_service_items = []
+
+    if print_service_id:
+        # Tábla/UV nyomtatás: szolgáltatás-alapú (area, fixed, unit) árazás
+        try:
+            svc = Service.objects.prefetch_related('cost_items').get(id=print_service_id)
+            print_service_name = svc.name
+            for ci in svc.cost_items.filter(is_active=True):
+                price = Decimal(str(ci.selling_price or 0))
+                cost_u = Decimal(str(ci.unit_price or 0))
+                sup = {
+                    'supplier_id': ci.supplier_id,
+                    'is_internal': ci.is_internal,
+                    'cost_price_per': float(cost_u),
+                    'markup_percentage': float(ci.markup_percentage or 0),
+                }
+                if ci.calculation_type == 'area':
+                    amt = price * area_m2 * qty
+                    print_service_items.append({
+                        'name': ci.name, 'type': 'area',
+                        'price_per': float(price), 'units': float(qty),
+                        'area_m2_per': float(area_m2),
+                        'total': float(amt.quantize(Decimal('0.01'))),
+                        **sup,
+                    })
+                elif ci.calculation_type == 'fixed':
+                    amt = price
+                    print_service_items.append({
+                        'name': ci.name, 'type': 'fixed',
+                        'price_per': float(price), 'units': 1,
+                        'total': float(amt.quantize(Decimal('0.01'))),
+                        **sup,
+                    })
+                elif ci.calculation_type in ('unit', 'click'):
+                    amt = price * qty
+                    print_service_items.append({
+                        'name': ci.name, 'type': 'unit',
+                        'price_per': float(price), 'units': float(qty),
+                        'total': float(amt.quantize(Decimal('0.01'))),
+                        **sup,
+                    })
+                else:
+                    continue
+                print_cost += amt
+        except Exception:
+            pass
+        print_cost_s1 = print_cost
+    else:
+        mode_costs = {
+            'color': config.print_color_cost,
+            'bw': config.print_bw_cost,
+            'color_white': config.print_color_white_cost,
+            'white': config.print_color_white_cost,
+            'none': Decimal('0'),
+        }
+        print_cost_s1 = mode_costs.get(side1_mode, Decimal('0')) * qty
+        print_cost_s2 = (mode_costs.get(side2_mode, Decimal('0')) * qty
+                         if sides == '2' else Decimal('0'))
+        print_cost = print_cost_s1 + print_cost_s2
 
     # Kötészeti költség
     if binding == 'fold':
@@ -211,6 +264,8 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
         'paper_cost': float(paper_cost.quantize(Decimal('0.01'))),
         'print_cost_side1': float(print_cost_s1.quantize(Decimal('0.01'))),
         'print_cost_side2': float(print_cost_s2.quantize(Decimal('0.01'))),
+        'print_service_name': print_service_name,
+        'print_service_items': print_service_items,
         'finishing_cost': float(finishing_cost.quantize(Decimal('0.01'))),
         'service_cost': float(service_cost.quantize(Decimal('0.01'))),
         'service_breakdown': service_breakdown,
@@ -312,6 +367,7 @@ class PrintOrderViewSet(viewsets.ModelViewSet):
                     *(d.get('selected_service_ids') or []),
                     *(d.get('finishing_service_ids') or []),
                 ])),
+                print_service_id=d.get('print_service_id') or None,
             )
             return Response(breakdown)
         except Exception as e:
