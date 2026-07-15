@@ -489,6 +489,12 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
       }
       return;
     }
+    // Táblás/tekercses termékek: ha selectedBoardPrintSvcId még nincs beállítva (pl. oldal frissítés),
+    // inicializáljuk az első elérhető nyomtatási szolgáltatással
+    if ((product.calculator_type === 'sheet_print' || product.calculator_type === 'roll_print') &&
+        (product.print_service_options_details ?? []).length > 0) {
+      setSelectedBoardPrintSvcId(prev => prev ?? (product.print_service_options_details ?? [])[0].id);
+    }
     const sg1 = product.service_groups_1 ?? [];
     const sg2 = product.service_groups_2 ?? [];
     const sgf = product.finishing_service_groups ?? [];
