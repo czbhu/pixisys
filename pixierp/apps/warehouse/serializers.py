@@ -46,6 +46,7 @@ class MaterialSerializer(serializers.ModelSerializer):
     internal_production_department_name = serializers.CharField(
         source='internal_production_department.name', read_only=True
     )
+    unit_display = serializers.CharField(source='get_unit_display', read_only=True)
     base_price = serializers.SerializerMethodField()
     gross_price = serializers.SerializerMethodField()
     net_price = serializers.SerializerMethodField()
