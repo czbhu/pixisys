@@ -116,7 +116,7 @@ class MaterialSerializer(serializers.ModelSerializer):
             'id', 'is_material', 'is_product', 'name', 'code', 'description', 
             'material_type', 'material_type_name',
             'material_group', 'material_group_name',
-            'unit', 'min_stock_level', 'width', 'length', 'height', 'dimension_unit',
+            'unit', 'unit_display', 'min_stock_level', 'width', 'length', 'height', 'dimension_unit',
             'width_fixed', 'length_fixed', 'height_fixed',
             'density', 'density_unit', 'material_format', 'roll_width', 'sheet_division',
             'yield_percentage',
