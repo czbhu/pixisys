@@ -589,6 +589,8 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           }));
           setManuCostItems(loadedItems);
           setSyncQtyRows(new Set(loadedItems.filter(i => i.syncQty).map(i => i.id)));
+          // PrintShop detektálás cost items-ből
+          if (!manuHasPrintShop && loadedItems.some(ci => (ci.formulas as any)?._syncQty === false)) setManuHasPrintShop(true);
           // savedPriceFromCalc (from formulas) takes priority; fallback to heuristic
           setManuPriceFromCalc(savedPriceFromCalc !== undefined ? savedPriceFromCalc : loadedItems.length > 0);
         }
@@ -641,6 +643,8 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           });
           setManuCostItems(loadedItems);
           setSyncQtyRows(new Set(loadedItems.filter(i => i.syncQty).map(i => i.id)));
+          // PrintShop detektálás cost items-ből (direkt tétel, nincs MP)
+          if (!manuHasPrintShop && loadedItems.some(ci => (ci.formulas as any)?._syncQty === false)) setManuHasPrintShop(true);
         }
         setManuPriceFromCalc(savedPriceFromCalc ?? false);
       }
