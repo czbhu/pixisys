@@ -274,7 +274,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
   const [boardBleed, setBoardBleed] = useState(0);
   const [boardForceRotate, setBoardForceRotate] = useState<'auto' | 'normal' | 'rotated'>('auto');
   // Ha true: az impositionModal táblás módban van (apply boardSheetW/H-t állítja be)
-  const isBoardImpositionRef = React.useRef(false);
+  const [isBoardImpositionMode, setIsBoardImpositionMode] = useState(false);
 
   // Service selection: per AND-group for side 1 and side 2
   // selectedServices1[i] = chosen service IDs (multi) for group i on side 1
@@ -691,6 +691,16 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
   }, [selectedProduct, allMaterials]);
   const activePricing = isClickSheet ? null : pricing;
   const activeClickPricing = isClickSheet ? clickPricing : null;
+
+  // Auto-select first material when board/roll product loads and no material is selected
+  useEffect(() => {
+    const isBoardOrRoll = selectedProduct?.calculator_type === 'sheet_print' || selectedProduct?.calculator_type === 'roll_print';
+    if (!isBoardOrRoll) return;
+    if (params.material_id) return; // already selected
+    if (materials.length > 0) {
+      update({ material_id: materials[0].id });
+    }
+  }, [selectedProduct?.id, materials]); // eslint-disable-line
 
   // Auto ívméret: ha a modalAutoSheetSize be van kapcsolva és új összehasonlítás érkezett,
   // frissítsük a modal ívméretét a legjobb anyag gépi max-ra clampelt natív méretére
@@ -1468,7 +1478,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                     <div
                       onClick={() => {
                         // Táblás mód: modal betöltése board méretekkel
-                        isBoardImpositionRef.current = true;
+                        setIsBoardImpositionMode(true);
                         setModalSheetW(boardSheetW);
                         setModalSheetH(boardSheetH);
                         setModalBleed(boardBleed);
@@ -1566,7 +1576,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
       <Modal
         title={<span><AppstoreOutlined style={{ marginRight: 8 }} />Impozíció – Produkciózás <span style={{fontSize:10,color:'#aaa'}}>v96</span></span>}
         open={impositionModalOpen}
-        onCancel={() => setImpositionModalOpen(false)}
+        onCancel={() => { setIsBoardImpositionMode(false); setImpositionModalOpen(false); }}
         onOk={() => {
           let applyW = modalSheetW;
           let applyH = modalSheetH;
@@ -1596,14 +1606,14 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
           setClickBleed(modalBleed);
           setClickForceRotate(modalForceRotate);
           setCuttingMode(modalCuttingMode);
-          if (isBoardImpositionRef.current) {
+          if (isBoardImpositionMode) {
             // Táblás mód: board dimenziókat frissítjük
             setBoardSheetW(applyW);
             setBoardSheetH(applyH);
             setBoardBleed(modalBleed);
             setBoardForceRotate(modalForceRotate);
           }
-          isBoardImpositionRef.current = false;
+          setIsBoardImpositionMode(false);
           setImpositionModalOpen(false);
         }}
         okText="Alkalmaz"
@@ -1937,7 +1947,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
 
                   {/* ── Méret összehasonlítás ───────────────────────── */}
                   {(() => {
-                    const isBoard = isBoardImpositionRef.current;
+                    const isBoard = isBoardImpositionMode;
                     const sc = isBoard
                       ? ((activePricing as any)?.size_comparison ?? [])
                       : (activeClickPricing?.size_comparison ?? []);
@@ -1990,7 +2000,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                                 if (autoSizeMode) return;
                                 setForcedSizeId(s.size_id ?? null);
                                 // Táblás módban frissítsük a sheet méretet a kiválasztott mérettel
-                                if (isBoardImpositionRef.current) {
+                                if (isBoardImpositionMode) {
                                   const ew = s.cut_sheet_mm ? s.cut_sheet_mm[0] : s.size_mm[0];
                                   const eh = s.cut_sheet_mm ? s.cut_sheet_mm[1] : s.size_mm[1];
                                   setModalSheetW(ew); setModalSheetH(eh);
@@ -2004,7 +2014,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                                     disabled={autoSizeMode}
                                     onChange={() => {
                                       setAutoSizeMode(false); setForcedSizeId(s.size_id ?? null);
-                                      if (isBoardImpositionRef.current) {
+                                      if (isBoardImpositionMode) {
                                         const ew = s.cut_sheet_mm ? s.cut_sheet_mm[0] : s.size_mm[0];
                                         const eh = s.cut_sheet_mm ? s.cut_sheet_mm[1] : s.size_mm[1];
                                         setModalSheetW(ew); setModalSheetH(eh);
