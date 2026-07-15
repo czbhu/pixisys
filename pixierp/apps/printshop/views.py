@@ -189,6 +189,7 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
                 sup = {
                     'supplier_id': ci.supplier_id,
                     'is_internal': ci.is_internal,
+                    'department_id': ci.department_id or svc.internal_production_department_id if ci.is_internal else None,
                     'cost_price_per': float(cost_u),
                     'markup_percentage': float(ci.markup_percentage or 0),
                 }

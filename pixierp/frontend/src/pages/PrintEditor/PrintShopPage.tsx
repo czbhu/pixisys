@@ -879,15 +879,17 @@ const PrintShopPage: React.FC = () => {
             // Hátoldal: beágyazott items
             for (const si of (pi.items ?? [])) {
               const qty = r4(si.units) || 1;
-              const sp = r4(si.price_per ?? (qty > 0 && si.total ? si.total / qty : si.total));
               const tot = r4(si.total);
+              // area típusnál: egységár = összesen / darab (ár/tábla)
+              const sp = si.type === 'area' ? r4(qty > 0 ? tot / qty : tot) : r4(si.price_per ?? (qty > 0 ? tot / qty : tot));
               const cp = calcCp(sp, r4(si.markup_percentage ?? 0), si.cost_price_per);
               costItems.push({ type: 'service', name: `${pi.name} hátoldal: ${si.name}`, quantity: qty, unit: si.type === 'fixed' ? 'db' : 'tábla', cost_price: cp, unit_price: sp, selling_unit_price: sp, selling_price: tot, markup_percent: r4(si.markup_percentage ?? 0), is_internal: si.is_internal ?? false, department: si.department_id ?? null, supplier: supId(si.supplier_id), formulas: { _syncQty: false } });
             }
           } else {
             const qty = r4(pi.units) || 1;
-            const sp = r4(pi.price_per);
             const tot = r4(pi.total);
+            // area típusnál: egységár = összesen / darab (ár/tábla), nem ár/m²
+            const sp = pi.type === 'area' ? r4(qty > 0 ? tot / qty : tot) : r4(pi.price_per);
             const cp = calcCp(sp, r4(pi.markup_percentage ?? 0), pi.cost_price_per);
             const name = boardPrintSvcName ? `${boardPrintSvcName}: ${pi.name}` : pi.name;
             costItems.push({ type: 'service', name, quantity: qty, unit: pi.type === 'area' ? 'tábla' : (pi.type === 'fixed' ? 'db' : 'tábla'), cost_price: cp, unit_price: sp, selling_unit_price: sp, selling_price: tot, markup_percent: r4(pi.markup_percentage ?? 0), is_internal: pi.is_internal ?? false, department: pi.department_id ?? null, supplier: supId(pi.supplier_id), formulas: { _syncQty: false } });
