@@ -1937,9 +1937,19 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
 
                   {/* ── Méret összehasonlítás ───────────────────────── */}
                   {(() => {
-                    const sc = isBoardImpositionRef.current
+                    const isBoard = isBoardImpositionRef.current;
+                    const sc = isBoard
                       ? ((activePricing as any)?.size_comparison ?? [])
                       : (activeClickPricing?.size_comparison ?? []);
+                    // Táblás módban: ha nincs összehasonlítás, de van basic adat → mutassunk üzenetet
+                    if (sc.length === 0 && isBoard) {
+                      return (
+                        <div style={{ marginTop: 12, padding: '10px 12px', background: '#fff7e6', borderRadius: 6,
+                          border: '1px solid #ffd591', fontSize: 11, color: '#874d00' }}>
+                          Az összehasonlítás megtekintéséhez válassz alapanyagot (pl. Alumínium kompozit, PVC lemez).
+                        </div>
+                      );
+                    }
                     if (sc.length <= 1) return null;
                     return (
                     <div style={{ marginTop: 12, padding: '12px', background: '#f0f5ff', borderRadius: 8, border: '1px solid #d6e4ff' }}>
