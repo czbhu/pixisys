@@ -549,7 +549,7 @@ class PrintOrderViewSet(viewsets.ModelViewSet):
                 cost_items = [
                     ci for ci in svc.cost_items.all()
                     if ci.is_active
-                    and ci.calculation_type not in ('length', 'perimeter', 'area', 'weight', 'time')
+                    and ci.calculation_type not in ('length', 'perimeter', 'weight', 'time')
                     and (ci.supplier_id or ci.is_internal)
                 ]
 
@@ -589,6 +589,19 @@ class PrintOrderViewSet(viewsets.ModelViewSet):
                                 'type': 'click',
                                 'price_per': float(price),
                                 'units': sheet_count,
+                                'total': float(amt.quantize(Decimal('0.01'))),
+                                **sup,
+                            })
+                        elif ctype == 'area':
+                            # Táblás/tekercses UV: ár = ár/m² × ívméret(m²) × ívszám
+                            _area_m2 = (Decimal(str(sheet_w_mm)) / 1000) * (Decimal(str(sheet_h_mm)) / 1000)
+                            amt = price * _area_m2 * Decimal(str(sheet_count))
+                            items.append({
+                                'name': ci.name,
+                                'type': 'area',
+                                'price_per': float(price),
+                                'units': sheet_count,
+                                'area_m2_per': float(_area_m2),
                                 'total': float(amt.quantize(Decimal('0.01'))),
                                 **sup,
                             })

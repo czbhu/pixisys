@@ -544,7 +544,12 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
       const gripW = Number(product.grip_width_mm ?? 0);
       const gripH = Number(product.grip_height_mm ?? 0);
       if (svc.max_width_mm) setClickSheetW(Math.max(1, svc.max_width_mm - gripW));
-      if (svc.max_height_mm) setClickSheetH(Math.max(1, svc.max_height_mm - gripH));
+      if (svc.max_height_mm) {
+        setClickSheetH(Math.max(1, svc.max_height_mm - gripH));
+      } else if (svc.max_width_mm && !svc.max_height_mm) {
+        // max_height_mm=0: UV táblás/tekercses → magasság = termék magassága (1 db / ív)
+        setClickSheetH(Math.max(1, params.height_mm + 2 * clickBleed));
+      }
     }
     if (product.sizes.length > 0) {
       const first = product.sizes[0];
