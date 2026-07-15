@@ -290,22 +290,28 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
             ptype = svc.pricing_type or 'per_sheet'
             cap = Decimal(str(svc.capacity or 1)) if svc.capacity else Decimal('1')
             svc_total = Decimal('0')
-            standalone_items = [ci for ci in svc.cost_items.all()
-                                 if not ci.supplier_id and not ci.is_internal and ci.is_active]
-            if standalone_items:
-                # New cost-item based calculation
-                for ci in standalone_items:
+            active_items = [ci for ci in svc.cost_items.all() if ci.is_active]
+            if active_items:
+                # Cost-item based calculation (standalone, internal, or supplier items)
+                for ci in active_items:
                     price = Decimal(str(ci.selling_price or 0))
-                    if ci.calculation_type == 'fixed':
+                    ctype = ci.calculation_type
+                    if ctype == 'fixed':
                         svc_total += price
-                    else:  # 'unit' or anything else → per-unit
-                        if ptype == 'per_job':
-                            svc_total += price
-                        elif ptype == 'per_cut':
-                            cuts = (qty / cap).to_integral_value(rounding='ROUND_CEILING') if cap > 0 else qty
-                            svc_total += price * cuts
-                        else:  # per_sheet
-                            svc_total += price * qty
+                    elif ctype == 'area':
+                        # Felület alapú: ár × tábla_terület × táblaszám
+                        if sheet_w_mm and sheet_h_mm:
+                            _ba = (Decimal(str(sheet_w_mm)) / 1000) * (Decimal(str(sheet_h_mm)) / 1000)
+                        else:
+                            _ba = area_m2
+                        svc_total += price * _ba * Decimal(str(boards_needed if sheet_w_mm else qty))
+                    elif ptype == 'per_job':
+                        svc_total += price
+                    elif ptype == 'per_cut':
+                        cuts = (qty / cap).to_integral_value(rounding='ROUND_CEILING') if cap > 0 else qty
+                        svc_total += price * cuts
+                    else:  # per_sheet / unit
+                        svc_total += price * qty
             else:
                 # Fallback: legacy flat fields
                 setup = Decimal(str(svc.setup_cost_selling or 0))
