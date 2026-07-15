@@ -268,6 +268,12 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
   const [forcedSizeId, setForcedSizeId] = useState<number | null>(null);
   const [autoSizeMode, setAutoSizeMode] = useState<boolean>(true); // true = auto pick cheapest
   const calcSeqRef = React.useRef(0); // race condition guard: only apply latest response
+  // Táblás/tekercses nyomtatás ívméret (impozícióhoz)
+  const [boardSheetW, setBoardSheetW] = useState(3200);
+  const [boardSheetH, setBoardSheetH] = useState(1000);
+  const [boardBleed, setBoardBleed] = useState(0);
+  const [boardForceRotate, setBoardForceRotate] = useState<'auto' | 'normal' | 'rotated'>('auto');
+  const [boardImpositionOpen, setBoardImpositionOpen] = useState(false);
 
   // Service selection: per AND-group for side 1 and side 2
   // selectedServices1[i] = chosen service IDs (multi) for group i on side 1
@@ -371,9 +377,17 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
           width_mm: p.width_mm, height_mm: p.height_mm, quantity: p.quantity,
           sides: p.sides, side1_mode: p.side1_mode, side2_mode: p.side2_mode,
           binding: p.binding, folding_count: p.folding_count,
+          sheet_count: p.sheet_count ?? 1,
           selected_service_ids: flatSelectedIds,
           finishing_service_ids: flatFinishingIds,
           print_service_id: selectedBoardPrintSvcId || undefined,
+          // Táblás/tekercses: ívméret az impozícióhoz (ha van kiválasztott svc)
+          ...(selectedBoardPrintSvcId ? {
+            sheet_w_mm: boardSheetW,
+            sheet_h_mm: boardSheetH,
+            bleed_mm: boardBleed,
+            force_rotate: boardForceRotate === 'auto' ? null : boardForceRotate === 'rotated',
+          } : {}),
         });
         setPricing(res.data);
         onPriceChange?.(res.data);
@@ -384,9 +398,9 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
         setCalcLoading(false);
       }
     }, 400);
-  }, [flatSelectedIds, flatFinishingIds, selectedBoardPrintSvcId]); // eslint-disable-line
+  }, [flatSelectedIds, flatFinishingIds, selectedBoardPrintSvcId, boardSheetW, boardSheetH, boardBleed, boardForceRotate]); // eslint-disable-line
 
-  useEffect(() => { calculatePrice(params); }, [params, flatSelectedIds, flatFinishingIds, selectedBoardPrintSvcId]); // eslint-disable-line
+  useEffect(() => { calculatePrice(params); }, [params, flatSelectedIds, flatFinishingIds, selectedBoardPrintSvcId, boardSheetW, boardSheetH, boardBleed, boardForceRotate]); // eslint-disable-line
 
   // ── Click-sheet-print calculation ────────────────────────────────────────
   // Paraméteres kalkuláció: az ívméret értékek paraméterként jönnek be, nem a closure-ból
@@ -544,12 +558,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
       const gripW = Number(product.grip_width_mm ?? 0);
       const gripH = Number(product.grip_height_mm ?? 0);
       if (svc.max_width_mm) setClickSheetW(Math.max(1, svc.max_width_mm - gripW));
-      if (svc.max_height_mm) {
-        setClickSheetH(Math.max(1, svc.max_height_mm - gripH));
-      } else if (svc.max_width_mm && !svc.max_height_mm) {
-        // max_height_mm=0: UV táblás/tekercses → magasság = termék magassága (1 db / ív)
-        setClickSheetH(Math.max(1, params.height_mm + 2 * clickBleed));
-      }
+      if (svc.max_height_mm) setClickSheetH(Math.max(1, svc.max_height_mm - gripH));
     }
     if (product.sizes.length > 0) {
       const first = product.sizes[0];
@@ -1452,6 +1461,25 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                 </>
               ) : activePricing ? (
                 <>
+                  {/* Impozíció sor kattintható (ha van board ívméret) */}
+                  {(activePricing as any).items_per_sheet != null && (activePricing as any).print_service_name && (
+                    <div
+                      onClick={() => setBoardImpositionOpen(true)}
+                      style={{ marginBottom: 4, padding: '4px 6px', background: '#f6ffed', borderRadius: 4,
+                        border: '1px solid #b7eb8f', cursor: 'pointer' }}
+                      title="Kattints az impozíció szerkesztéséhez"
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                        <AppstoreOutlined style={{ color: '#52c41a', fontSize: 11 }} />
+                        <span>Impozíció: <strong>{(activePricing as any).fit_w ?? 1} × {(activePricing as any).fit_h ?? 1}</strong> = <strong>{(activePricing as any).items_per_sheet} db/ív</strong>
+                          {(activePricing as any).rotated && <Tag color="orange" style={{ marginLeft: 6, fontSize: 10 }}>forgatva</Tag>}
+                        </span>
+                      </div>
+                      <div>Szükséges táblák: <strong>{(activePricing as any).boards_needed}</strong>
+                        {' · '}Ívméret: <strong>{boardSheetW}×{boardSheetH} mm</strong>
+                      </div>
+                    </div>
+                  )}
                   {activePricing.paper_cost > 0 && <div>Papír: <strong>{fmt(activePricing.paper_cost)}</strong></div>}
                   {/* UV táblás/tekercses: print_service_items megjelenítése */}
                   {(activePricing as any).print_service_name && (
@@ -1460,7 +1488,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                       {((activePricing as any).print_service_items ?? []).map((pi: any, i: number) => (
                         <div key={i} style={{ paddingLeft: 12, fontSize: 11, color: '#666' }}>
                           {pi.type === 'area'
-                            ? `${pi.name}: ${pi.area_m2_per?.toFixed(4)} m²/db × ${params.quantity} db × ${Number(pi.price_per).toLocaleString('hu-HU')} Ft/m² = `
+                            ? `${pi.name}: ${pi.area_m2_per?.toFixed(3)} m²/tábla × ${pi.units} tábla × ${Number(pi.price_per).toLocaleString('hu-HU')} Ft/m² = `
                             : pi.type === 'fixed'
                             ? `Fix: ${pi.name}: `
                             : `${pi.name}: ${pi.units} db × ${Number(pi.price_per).toLocaleString('hu-HU')} Ft = `}
@@ -1973,6 +2001,44 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
             </div>
           );
         })()}
+      </Modal>
+
+      {/* ── Tábla impozíció modal (sheet_print / roll_print) ──────────────── */}
+      <Modal
+        title={<span><AppstoreOutlined style={{ marginRight: 8 }} />Tábla impozíció – Produkciózás</span>}
+        open={boardImpositionOpen}
+        onCancel={() => setBoardImpositionOpen(false)}
+        onOk={() => setBoardImpositionOpen(false)}
+        okText="OK"
+        cancelText="Mégse"
+        width={440}
+      >
+        <div style={{ marginBottom: 16 }}>
+          <Text strong style={{ display: 'block', marginBottom: 6 }}>Nyomtatási terület (tábla méret)</Text>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+            <NumInput size="small" value={boardSheetW} onChange={v => v && setBoardSheetW(v)} min={1} addonAfter="mm" style={{ flex: 1 }} />
+            <Text style={{ lineHeight: '24px' }}>×</Text>
+            <NumInput size="small" value={boardSheetH} onChange={v => v && setBoardSheetH(v)} min={1} addonAfter="mm" style={{ flex: 1 }} />
+          </div>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+            <span style={{ fontSize: 12, color: '#666', whiteSpace: 'nowrap', lineHeight: '24px' }}>Ráhagyás:</span>
+            <NumInput size="small" value={boardBleed} onChange={v => setBoardBleed(v ?? 0)} min={0} addonAfter="mm" style={{ width: 100 }} />
+            <span style={{ fontSize: 12, color: '#666', lineHeight: '24px' }}>Elforgatás:</span>
+            <Radio.Group size="small" value={boardForceRotate} onChange={e => setBoardForceRotate(e.target.value)} optionType="button" buttonStyle="solid">
+              <Radio.Button value="auto">Auto</Radio.Button>
+              <Radio.Button value="normal">0°</Radio.Button>
+              <Radio.Button value="rotated">90°</Radio.Button>
+            </Radio.Group>
+          </div>
+          {activePricing && (activePricing as any).items_per_sheet != null && (
+            <div style={{ padding: '8px 12px', background: '#f0f5ff', borderRadius: 6, fontSize: 12 }}>
+              <div><strong>{(activePricing as any).fit_w ?? 1} × {(activePricing as any).fit_h ?? 1} = {(activePricing as any).items_per_sheet} db/tábla</strong>
+                {(activePricing as any).rotated && <Tag color="orange" style={{ marginLeft: 6, fontSize: 10 }}>forgatva</Tag>}
+              </div>
+              <div>Szükséges táblák: <strong>{(activePricing as any).boards_needed}</strong></div>
+            </div>
+          )}
+        </div>
       </Modal>
     </>
   );

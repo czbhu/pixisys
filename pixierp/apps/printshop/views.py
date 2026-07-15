@@ -125,12 +125,46 @@ def _get_public_preview_author_name(target_type, target):
 
 def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mode,
                      binding, folding_count, config, selected_service_ids=None,
-                     print_service_id=None):
+                     print_service_id=None, sheet_w_mm=None, sheet_h_mm=None,
+                     bleed_mm=0, force_rotate=None, sheet_count=1):
     """Árkalkuláció — visszaad egy részletes breakdown dict-et."""
+    import math as _math
     from apps.manufacturing.models import Service
     w = Decimal(str(width_mm))
     h = Decimal(str(height_mm))
     qty = Decimal(str(max(quantity, 1)))
+    sc = max(int(sheet_count or 1), 1)
+
+    # Impozíció (ha adott ívméret)
+    items_per_sheet = 1
+    boards_needed = int(qty) * sc
+    rotated = False
+    fit_w = 1
+    fit_h = 1
+    if sheet_w_mm and sheet_h_mm and sheet_w_mm > 0 and sheet_h_mm > 0:
+        bleed = Decimal(str(bleed_mm or 0))
+        prod_w = float(w + 2 * bleed)
+        prod_h = float(h + 2 * bleed)
+        sw = float(sheet_w_mm)
+        sh = float(sheet_h_mm)
+        fw_n = int(sw / prod_w)
+        fh_n = int(sh / prod_h)
+        fw_r = int(sw / prod_h)
+        fh_r = int(sh / prod_w)
+        ips_n = fw_n * fh_n
+        ips_r = fw_r * fh_r
+        if force_rotate is None:
+            rotated = ips_r > ips_n
+        else:
+            rotated = bool(force_rotate)
+        if rotated:
+            fit_w, fit_h = fw_r, fh_r
+            items_per_sheet = max(1, ips_r)
+        else:
+            fit_w, fit_h = fw_n, fh_n
+            items_per_sheet = max(1, ips_n)
+        total_pieces = int(qty) * sc
+        boards_needed = _math.ceil(total_pieces / items_per_sheet)
 
     # Papírköltség
     area_m2 = (w / 1000) * (h / 1000)
@@ -158,11 +192,14 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
                     'markup_percentage': float(ci.markup_percentage or 0),
                 }
                 if ci.calculation_type == 'area':
-                    amt = price * area_m2 * qty
+                    # Táblás: board_area_m2 × boards_needed (impozíciótól függ)
+                    _board_area = (Decimal(str(sheet_w_mm or width_mm)) / 1000) * (Decimal(str(sheet_h_mm or height_mm)) / 1000) if sheet_w_mm and sheet_h_mm else area_m2
+                    _units = Decimal(str(boards_needed))
+                    amt = price * _board_area * _units
                     print_service_items.append({
                         'name': ci.name, 'type': 'area',
-                        'price_per': float(price), 'units': float(qty),
-                        'area_m2_per': float(area_m2),
+                        'price_per': float(price), 'units': boards_needed,
+                        'area_m2_per': float(_board_area),
                         'total': float(amt.quantize(Decimal('0.01'))),
                         **sup,
                     })
@@ -274,6 +311,15 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
         'total': float(total),
         'unit_price': float(unit_price),
         'quantity': int(qty),
+        # Impozíció adatok (ha ívméret meg van adva)
+        'items_per_sheet': items_per_sheet,
+        'boards_needed': boards_needed,
+        'sheets_needed': boards_needed,
+        'fit_w': fit_w,
+        'fit_h': fit_h,
+        'rotated': rotated,
+        'sheet_w_mm': float(sheet_w_mm) if sheet_w_mm else None,
+        'sheet_h_mm': float(sheet_h_mm) if sheet_h_mm else None,
     }
 
 
@@ -368,6 +414,11 @@ class PrintOrderViewSet(viewsets.ModelViewSet):
                     *(d.get('finishing_service_ids') or []),
                 ])),
                 print_service_id=d.get('print_service_id') or None,
+                sheet_w_mm=float(d.get('sheet_w_mm', 0)) or None,
+                sheet_h_mm=float(d.get('sheet_h_mm', 0)) or None,
+                bleed_mm=float(d.get('bleed_mm', 0) or 0),
+                force_rotate=d.get('force_rotate'),
+                sheet_count=int(d.get('sheet_count', 1) or 1),
             )
             return Response(breakdown)
         except Exception as e:
