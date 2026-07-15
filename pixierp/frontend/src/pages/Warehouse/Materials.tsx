@@ -636,7 +636,17 @@ const Materials: React.FC = () => {
       }
       
       if (filterGroupId !== undefined) {
-        params.append('material_group', String(filterGroupId));
+        // Szülő + összes alkategória ID-ja (rekurzívan)
+        const collectIds = (id: number, groups: MaterialGroup[]): number[] => {
+          const children = groups.filter(g => g.parent === id);
+          return [id, ...children.flatMap(c => collectIds(c.id, groups))];
+        };
+        const allGroupIds = collectIds(filterGroupId, materialGroups);
+        if (allGroupIds.length === 1) {
+          params.append('material_group', String(filterGroupId));
+        } else {
+          params.append('material_group_ids', allGroupIds.join(','));
+        }
       }
       
       if (filterSupplierId !== undefined) {

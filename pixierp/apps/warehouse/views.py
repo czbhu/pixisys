@@ -77,6 +77,7 @@ class MaterialViewSet(viewsets.ModelViewSet):
         filter_type = self.request.query_params.get('filter_type', None)
         search = self.request.query_params.get('search', None)
         material_group = self.request.query_params.get('material_group', None)
+        material_group_ids = self.request.query_params.get('material_group_ids', None)  # vesszővel elválasztott ID lista
         supplier = self.request.query_params.get('supplier', None)
         
         if material_type:
@@ -89,7 +90,11 @@ class MaterialViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(is_product=True)
         # Ha 'all' vagy nincs megadva, akkor mindent mutat
         
-        if material_group:
+        if material_group_ids:
+            id_list = [i.strip() for i in material_group_ids.split(',') if i.strip().isdigit()]
+            if id_list:
+                queryset = queryset.filter(material_group_id__in=id_list)
+        elif material_group:
             queryset = queryset.filter(material_group_id=material_group)
         
         if supplier:
