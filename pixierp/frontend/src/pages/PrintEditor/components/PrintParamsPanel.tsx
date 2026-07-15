@@ -273,7 +273,8 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
   const [boardSheetH, setBoardSheetH] = useState(1000);
   const [boardBleed, setBoardBleed] = useState(0);
   const [boardForceRotate, setBoardForceRotate] = useState<'auto' | 'normal' | 'rotated'>('auto');
-  const [boardImpositionOpen, setBoardImpositionOpen] = useState(false);
+  // Ha true: az impositionModal táblás módban van (apply boardSheetW/H-t állítja be)
+  const isBoardImpositionRef = React.useRef(false);
 
   // Service selection: per AND-group for side 1 and side 2
   // selectedServices1[i] = chosen service IDs (multi) for group i on side 1
@@ -1464,7 +1465,15 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                   {/* Impozíció sor kattintható (ha van board ívméret) */}
                   {(activePricing as any).items_per_sheet != null && (activePricing as any).print_service_name && (
                     <div
-                      onClick={() => setBoardImpositionOpen(true)}
+                      onClick={() => {
+                        // Táblás mód: modal betöltése board méretekkel
+                        isBoardImpositionRef.current = true;
+                        setModalSheetW(boardSheetW);
+                        setModalSheetH(boardSheetH);
+                        setModalBleed(boardBleed);
+                        setModalForceRotate(boardForceRotate);
+                        setImpositionModalOpen(true);
+                      }}
                       style={{ marginBottom: 4, padding: '4px 6px', background: '#f6ffed', borderRadius: 4,
                         border: '1px solid #b7eb8f', cursor: 'pointer' }}
                       title="Kattints az impozíció szerkesztéséhez"
@@ -1586,6 +1595,14 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
           setClickBleed(modalBleed);
           setClickForceRotate(modalForceRotate);
           setCuttingMode(modalCuttingMode);
+          if (isBoardImpositionRef.current) {
+            // Táblás mód: board dimenziókat frissítjük
+            setBoardSheetW(applyW);
+            setBoardSheetH(applyH);
+            setBoardBleed(modalBleed);
+            setBoardForceRotate(modalForceRotate);
+          }
+          isBoardImpositionRef.current = false;
           setImpositionModalOpen(false);
         }}
         okText="Alkalmaz"
@@ -2003,43 +2020,6 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
         })()}
       </Modal>
 
-      {/* ── Tábla impozíció modal (sheet_print / roll_print) ──────────────── */}
-      <Modal
-        title={<span><AppstoreOutlined style={{ marginRight: 8 }} />Tábla impozíció – Produkciózás</span>}
-        open={boardImpositionOpen}
-        onCancel={() => setBoardImpositionOpen(false)}
-        onOk={() => setBoardImpositionOpen(false)}
-        okText="OK"
-        cancelText="Mégse"
-        width={440}
-      >
-        <div style={{ marginBottom: 16 }}>
-          <Text strong style={{ display: 'block', marginBottom: 6 }}>Nyomtatási terület (tábla méret)</Text>
-          <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-            <NumInput size="small" value={boardSheetW} onChange={v => v && setBoardSheetW(v)} min={1} addonAfter="mm" style={{ flex: 1 }} />
-            <Text style={{ lineHeight: '24px' }}>×</Text>
-            <NumInput size="small" value={boardSheetH} onChange={v => v && setBoardSheetH(v)} min={1} addonAfter="mm" style={{ flex: 1 }} />
-          </div>
-          <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-            <span style={{ fontSize: 12, color: '#666', whiteSpace: 'nowrap', lineHeight: '24px' }}>Ráhagyás:</span>
-            <NumInput size="small" value={boardBleed} onChange={v => setBoardBleed(v ?? 0)} min={0} addonAfter="mm" style={{ width: 100 }} />
-            <span style={{ fontSize: 12, color: '#666', lineHeight: '24px' }}>Elforgatás:</span>
-            <Radio.Group size="small" value={boardForceRotate} onChange={e => setBoardForceRotate(e.target.value)} optionType="button" buttonStyle="solid">
-              <Radio.Button value="auto">Auto</Radio.Button>
-              <Radio.Button value="normal">0°</Radio.Button>
-              <Radio.Button value="rotated">90°</Radio.Button>
-            </Radio.Group>
-          </div>
-          {activePricing && (activePricing as any).items_per_sheet != null && (
-            <div style={{ padding: '8px 12px', background: '#f0f5ff', borderRadius: 6, fontSize: 12 }}>
-              <div><strong>{(activePricing as any).fit_w ?? 1} × {(activePricing as any).fit_h ?? 1} = {(activePricing as any).items_per_sheet} db/tábla</strong>
-                {(activePricing as any).rotated && <Tag color="orange" style={{ marginLeft: 6, fontSize: 10 }}>forgatva</Tag>}
-              </div>
-              <div>Szükséges táblák: <strong>{(activePricing as any).boards_needed}</strong></div>
-            </div>
-          )}
-        </div>
-      </Modal>
     </>
   );
 };
