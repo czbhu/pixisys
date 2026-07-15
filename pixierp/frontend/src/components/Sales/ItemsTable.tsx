@@ -544,15 +544,15 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
           {onEditItem ? (
             <Button size="small" onClick={() => onEditItem && onEditItem(record)}>Szerk.</Button>
           ) : null}
-          {record.item_type === 'manufacturing' && (record.manufacturing_product_printshop_params || record.imposition_data?._ps_mfg_id) ? (
+          {record.item_type === 'manufacturing' && (record.manufacturing_product_printshop_params || record.imposition_data?._ps_mfg_id || (record as any)._ps_mfg_id) ? (
             <Tooltip title="Megnyitás PrintShopban">
               <Button
                 size="small"
                 type="primary"
                 ghost
                 onClick={() => {
-                  const mfgId = record.manufacturing_product || record.imposition_data?._ps_mfg_id;
-                  const editorState = record.imposition_data?._editor_state;
+                  const mfgId = record.manufacturing_product || record.imposition_data?._ps_mfg_id || (record as any)._ps_mfg_id;
+                  const editorState = record.imposition_data?._editor_state || (record as any)._editor_state;
                   // Ha van item-specifikus editor state, töltjük be localStorage-ba MIELŐTT megnyitjuk
                   // (direkt tételeknél, ahol nincs edit_mfg_id — így a helyes tétel tölt vissza)
                   if (editorState && !mfgId) {

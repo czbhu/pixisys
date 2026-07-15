@@ -4999,6 +4999,8 @@ const RFQs: React.FC = () => {
             name: newItems[editIdx].name,
             code: (newItems[editIdx] as any).product_code || (newItems[editIdx] as any).code || (newItems[editIdx] as any).manufacturing_product?.code || undefined,
             _fromHistory: !!(newItems[editIdx] as any)._fromHistory,
+            manufacturing_product_printshop_params: (newItems[editIdx] as any).manufacturing_product_printshop_params ?? null,
+            imposition_data: { _ps_mfg_id: (newItems[editIdx] as any)._ps_mfg_id ?? (newItems[editIdx] as any).imposition_data?._ps_mfg_id ?? null },
         } : undefined) : undefined}
         initialManuPayload={editIdx !== null && newItems[editIdx]?.item_type === 'manufacturing' ? cloneDraftRfqItem((newItems[editIdx] as any).pendingManuPayload) : undefined}
         initialValues={editIdx !== null ? (newItems[editIdx] ? {
