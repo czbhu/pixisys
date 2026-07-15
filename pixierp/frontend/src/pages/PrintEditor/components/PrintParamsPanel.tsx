@@ -1632,8 +1632,14 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
           const bleed = modalBleed ?? 0;
           const pw = Number(params.width_mm) + 2 * bleed;
           const ph = Number(params.height_mm) + 2 * bleed;
-          const sw = modalSheetW;
-          const sh = modalSheetH;
+          // Táblás auto módban a legjobb anyagméret alapján számolunk (nem a modalSheetW/H)
+          let sw = modalSheetW;
+          let sh = modalSheetH;
+          if (isBoardImpositionMode && modalAutoSheetSize) {
+            const _boardSc: SizeComparison[] = (activePricing as any)?.size_comparison ?? [];
+            const _boardBest = _boardSc.find((s: SizeComparison) => s.is_best) ?? _boardSc[0];
+            if (_boardBest) { sw = _boardBest.size_mm[0]; sh = _boardBest.size_mm[1]; }
+          }
           const fitNormal  = Math.floor(sw / pw) * Math.floor(sh / ph);
           const fitRotated = Math.floor(sw / ph) * Math.floor(sh / pw);
           const autoRotated = fitRotated > fitNormal;
@@ -1655,7 +1661,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
             <div>
               <Row gutter={16} style={{ marginBottom: 16 }}>
                 <Col span={12}>
-                  <Text strong style={{ display: 'block', marginBottom: 6 }}>Ívméret (mm)
+                  <Text strong style={{ display: 'block', marginBottom: 6 }}>{isBoardImpositionMode ? 'Tábla méret (mm)' : 'Ívméret (mm)'}
                     <label style={{ fontWeight: 400, fontSize: 11, marginLeft: 12, cursor: 'pointer' }}>
                       <input
                         type="checkbox"
@@ -1825,22 +1831,24 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                   <Row gutter={12}>
                     <Col span={8} style={{ textAlign: 'center', background: '#f6ffed', borderRadius: 8, padding: '12px 8px' }}>
                       <div style={{ fontSize: 28, fontWeight: 700, color: '#52c41a' }}>{bestFit}</div>
-                      <div style={{ fontSize: 11, color: '#666' }}>db / ív</div>
+                      <div style={{ fontSize: 11, color: '#666' }}>{isBoardImpositionMode ? 'db / tábla' : 'db / ív'}</div>
                     </Col>
                     <Col span={8} style={{ textAlign: 'center', background: '#e6f4ff', borderRadius: 8, padding: '12px 8px' }}>
                       <div style={{ fontSize: 28, fontWeight: 700, color: '#1677ff' }}>{sheetsNeeded}</div>
-                      <div style={{ fontSize: 11, color: '#666' }}>ív ({totalPieces} nyomat)</div>
+                      <div style={{ fontSize: 11, color: '#666' }}>{isBoardImpositionMode ? 'tábla' : 'ív'} ({totalPieces} nyomat)</div>
                     </Col>
+                    {!isBoardImpositionMode && (
                     <Col span={8} style={{ textAlign: 'center', background: '#fff7e6', borderRadius: 8, padding: '12px 8px' }}>
                       <div style={{ fontSize: 28, fontWeight: 700, color: '#fa8c16' }}>{clicks}</div>
                       <div style={{ fontSize: 11, color: '#666' }}>klikk ({clickSides} oldal)</div>
                     </Col>
+                    )}
                   </Row>
                   <div style={{ marginTop: 12, fontSize: 11, color: '#8c8c8c' }}>
-                    Termék (+ráhagyás): {pw.toFixed(1)} × {ph.toFixed(1)} mm · Ív: {modalSheetW} × {modalSheetH} mm{bleed > 0 ? ` · ${bleed} mm ráhagyás` : ''}
+                    Termék (+ráhagyás): {pw.toFixed(1)} × {ph.toFixed(1)} mm · {isBoardImpositionMode ? 'Tábla' : 'Ív'}: {sw} × {sh} mm{bleed > 0 ? ` · ${bleed} mm ráhagyás` : ''}
                   </div>
 
-                  {/* ── Produkciós ívek vizualizáció ─────────────────── */}
+                  {/* ── Produkciós ívek/táblák vizualizáció ─────────────── */}
                   {(() => {
                     const remainingOnLast = totalPieces % bestFit;
                     const fullSheets = remainingOnLast === 0 ? sheetsNeeded : sheetsNeeded - 1;
@@ -1885,7 +1893,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
 
                     return (
                       <div style={{ marginTop: 16, padding: '12px', background: '#f9f9f9', borderRadius: 8, border: '1px solid #f0f0f0' }}>
-                        <Text strong style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>Produkciós ívek</Text>
+                        <Text strong style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>{isBoardImpositionMode ? 'Produkciós táblák' : 'Produkciós ívek'}</Text>
                         <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start' }}>
                           {fullSheets > 0 && (
                             <div style={{ display: 'inline-block', margin: '0 4px 8px 0', textAlign: 'center' }}>
@@ -1901,7 +1909,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                         </div>
                         {wasteItems > 0 && (
                           <div style={{ fontSize: 11, color: '#8c8c8c', marginTop: 4 }}>
-                            Kihasználatlan: {wasteItems} pozíció az utolsó íven
+                            Kihasználatlan: {wasteItems} pozíció az utolsó {isBoardImpositionMode ? 'táblán' : 'íven'}
                           </div>
                         )}
                       </div>
