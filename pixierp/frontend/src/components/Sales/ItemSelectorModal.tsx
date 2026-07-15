@@ -559,9 +559,10 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
   // so that saving creates a new independent product instead of patching the original.
   useEffect(() => {
     if (!open) return;
-    // PrintShop detektálás korai jelzése az initialSelection-ből (QRI serializer már tartalmazza)
-    if (initialSelection?.manufacturing_product_printshop_params &&
-        Object.keys(initialSelection.manufacturing_product_printshop_params).length > 0) {
+    // PrintShop detektálás korai jelzése az initialSelection-ből
+    if ((initialSelection?.manufacturing_product_printshop_params &&
+        Object.keys(initialSelection.manufacturing_product_printshop_params).length > 0) ||
+        (initialSelection as any)?.imposition_data?._ps_mfg_id) {
       setManuHasPrintShop(true);
     }
     const isAddWithPreload = mode === 'add' && initialSelection?.item_type === 'manufacturing';
