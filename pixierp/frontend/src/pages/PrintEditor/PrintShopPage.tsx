@@ -872,6 +872,32 @@ const PrintShopPage: React.FC = () => {
             costItems.push({ type: 'service', name: pi.name, quantity: qty, unit: pi.type === 'fixed' ? 'db' : 'ív', cost_price: cp, unit_price: sp, selling_unit_price: sp, selling_price: tot, markup_percent: r4(pi.markup_percentage ?? 0), is_internal: pi.is_internal ?? false, department: pi.department_id ?? null, supplier: supId(pi.supplier_id), formulas: { _syncQty: false } });
           }
         }
+        // Táblás/tekercses UV nyomtatás (print_service_items, nem _1/_2)
+        const boardPrintSvcName = bd.print_service_name ?? '';
+        for (const pi of (bd.print_service_items ?? [])) {
+          if (pi.type === 'side2_service') {
+            // Hátoldal: beágyazott items
+            for (const si of (pi.items ?? [])) {
+              const qty = r4(si.units) || 1;
+              const sp = r4(si.price_per ?? (qty > 0 && si.total ? si.total / qty : si.total));
+              const tot = r4(si.total);
+              const cp = calcCp(sp, r4(si.markup_percentage ?? 0), si.cost_price_per);
+              costItems.push({ type: 'service', name: `${pi.name} hátoldal: ${si.name}`, quantity: qty, unit: si.type === 'fixed' ? 'db' : 'tábla', cost_price: cp, unit_price: sp, selling_unit_price: sp, selling_price: tot, markup_percent: r4(si.markup_percentage ?? 0), is_internal: si.is_internal ?? false, department: si.department_id ?? null, supplier: supId(si.supplier_id), formulas: { _syncQty: false } });
+            }
+          } else {
+            const qty = r4(pi.units) || 1;
+            const sp = r4(pi.price_per);
+            const tot = r4(pi.total);
+            const cp = calcCp(sp, r4(pi.markup_percentage ?? 0), pi.cost_price_per);
+            const name = boardPrintSvcName ? `${boardPrintSvcName}: ${pi.name}` : pi.name;
+            costItems.push({ type: 'service', name, quantity: qty, unit: pi.type === 'area' ? 'tábla' : (pi.type === 'fixed' ? 'db' : 'tábla'), cost_price: cp, unit_price: sp, selling_unit_price: sp, selling_price: tot, markup_percent: r4(pi.markup_percentage ?? 0), is_internal: pi.is_internal ?? false, department: pi.department_id ?? null, supplier: supId(pi.supplier_id), formulas: { _syncQty: false } });
+          }
+        }
+        // Táblás anyagköltség (board_material_cost)
+        if (r4(bd.board_material_cost) > 0) {
+          const matCost = r4(bd.board_material_cost);
+          costItems.push({ type: 'material', name: bd.board_material_label ?? 'Alapanyag', quantity: 1, unit: 'tábla', cost_price: matCost, unit_price: matCost, selling_unit_price: matCost, selling_price: matCost, markup_percent: 0, is_internal: false, supplier: null, formulas: { _syncQty: false } });
+        }
         for (const sb of (bd.service_breakdown ?? [])) {
           if (sb.items) {
             for (const si of sb.items) {
