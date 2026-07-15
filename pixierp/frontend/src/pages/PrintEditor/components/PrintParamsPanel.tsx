@@ -658,10 +658,19 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
   // Estimate per-db cost for a service option using cost_summary from backend
   const estimateSvcCostPerDb = useCallback((svc: ServiceDetail | undefined): number | null => {
     if (!svc) return null;
-    const cs = svc.cost_summary;
-    const fixedCost = cs?.fixed ?? (svc.setup_cost_selling || 0);
-    const unitCost = cs?.unit ?? (svc.unit_cost_selling || 0);
-    if (!fixedCost && !unitCost) return null;
+    // Ha az aktivált kalkuláció tartalmaz service_breakdown-t, onnan vesszük az egységárat
+    const breakdown = (pricing as any)?.service_breakdown ?? (clickPricing as any)?.service_breakdown ?? [];
+    const breakdownEntry = breakdown.find((sb: any) => sb.id === svc.id);
+    if (breakdownEntry && breakdownEntry.total != null && (params.quantity || 1) > 0) {
+      return breakdownEntry.total / (params.quantity || 1);
+    }
+    // Fallback: cost_summary összes értékének összege (fix + unit típusúak)
+    const cs = (svc.cost_summary ?? {}) as Record<string, number>;
+    const fixedCost = cs.fixed ?? (svc.setup_cost_selling || 0);
+    const unitCostSum = Object.entries(cs)
+      .filter(([k]) => k !== 'fixed')
+      .reduce((sum, [, v]) => sum + v, 0) || (svc.unit_cost_selling || 0);
+    if (!fixedCost && !unitCostSum) return null;
     const qty = params.quantity || 1;
     const sheets = clickPricing?.sheets_needed ?? 1;
     const isSheetBased = (svc.calculation_unit === 'click' || svc.calculation_unit === 'sheet');
@@ -676,9 +685,9 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
     } else {
       units = qty;
     }
-    const total = fixedCost + unitCost * units;
+    const total = fixedCost + unitCostSum * units;
     return total / qty;
-  }, [params.quantity, clickPricing?.sheets_needed]);
+  }, [params.quantity, clickPricing?.sheets_needed, pricing, clickPricing]);
   const materials = useMemo(() => {
     const allowedSpecific = selectedProduct?.allowed_materials_details ?? [];
     const allowedGroups = selectedProduct?.allowed_material_groups ?? [];
