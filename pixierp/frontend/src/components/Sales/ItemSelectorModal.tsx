@@ -70,7 +70,7 @@ interface ItemSelectorModalProps {
   onAdd: (payload: SelectedItemPayload) => Promise<any> | any;
   allowCreate?: boolean;
   mode?: 'add' | 'edit';
-  initialSelection?: { item_type: ItemType; ref_id: number; name?: string; code?: string; _fromHistory?: boolean; manufacturing_product_printshop_params?: any };
+  initialSelection?: { item_type: ItemType; ref_id: number; name?: string; code?: string; _fromHistory?: boolean; manufacturing_product_printshop_params?: any; imposition_data?: any };
   initialValues?: Partial<{ quantity: number; unit: string; net_unit_price: number; cost_price: number; vat_rate: number; description: string; internal_description: string; discount_percent: number; discount_amount: number; cost_type: string; customer_order_item: number | null; is_rate_locked: boolean; locked_exchange_rate: number | null; quote_number: string | null; cost_items_data: any[] }>;
   initialFormulas?: Record<string, string | null>;
   customer?: { id: any; name: string; company_id?: any };
@@ -796,6 +796,10 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         });
         items.sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
         setManuCostItems(items);
+        // PrintShop detektálás cost items-ből: ha van _syncQty: false, az PrintShopból jött
+        if (!manuHasPrintShop && items.some(ci => (ci.formulas as any)?._syncQty === false)) {
+          setManuHasPrintShop(true);
+        }
         // Restore syncQty from saved formulas._syncQty flag (persisted since fix).
         // For legacy items without _syncQty saved, default to ON (unless loaded from history).
         if (!initialSelection?._fromHistory) {
@@ -2687,10 +2691,10 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
                               style={{ padding: '0 2px', height: 20, fontSize: 12, color: '#1890ff' }}
                               onClick={e => {
                                 e.stopPropagation();
-                                const manuId = manuCreatedId ?? initialSelection?.ref_id;
-                                if (!manuId) return;
+                                const manuId = manuCreatedId ?? initialSelection?.ref_id
+                                  ?? (initialSelection as any)?.imposition_data?._ps_mfg_id;
                                 const ps = new URLSearchParams({ from_rfq: '1', mode: 'pdf', return_url: window.location.href });
-                                ps.set('edit_mfg_id', String(manuId));
+                                if (manuId) ps.set('edit_mfg_id', String(manuId));
                                 if (rfqId) ps.set('rfq_id', String(rfqId));
                                 if (customer) ps.set('company', String(customer));
                                 window.open(`/print-shop?${ps.toString()}`, '_blank');
