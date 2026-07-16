@@ -144,8 +144,9 @@ def _user_can_request_customer_order_status_change(user, order):
     return False
 
 
-def _apply_customer_order_status(order, new_status, changed_at=None):
+def _apply_customer_order_status(order, new_status, changed_at=None, user=None):
     now = changed_at or timezone.now()
+    old_status = order.status
     order.status = new_status
 
     if new_status == 'confirmed':
@@ -200,6 +201,20 @@ def _apply_customer_order_status(order, new_status, changed_at=None):
     try:
         if order.quote_request_id:
             _sync_rfq_primary_snapshot(order.quote_request)
+            # Napló bejegyzés a státuszváltásról
+            if old_status != new_status:
+                STATUS_HU = {
+                    'new': 'Új', 'confirmed': 'Megerősítve', 'in_production': 'Gyártásban',
+                    'ready': 'Kész', 'in_delivery': 'Szállítás alatt', 'delivered': 'Kiszállítva',
+                    'invoiced': 'Számlázva', 'cancelled': 'Törölve',
+                }
+                old_hu = STATUS_HU.get(old_status, old_status)
+                new_hu = STATUS_HU.get(new_status, new_status)
+                QuoteLog.objects.create(
+                    quote=order.quote_request,
+                    user=user,
+                    action=f'Megrendelés státusz: {old_hu} → {new_hu} ({order.order_number})',
+                )
     except Exception:
         pass
 
@@ -4914,7 +4929,7 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
             return Response({'error': 'Nincs jogosultságod státuszt váltani ezen a megrendelésen.'}, status=status.HTTP_403_FORBIDDEN)
 
         if _user_can_approve_customer_orders(request.user):
-            _apply_customer_order_status(order, new_status)
+            _apply_customer_order_status(order, new_status, user=request.user)
             if new_status == 'confirmed' and request.data.get('send_email') is True:
                 self._send_confirmation_email(order)
             return Response(self.get_serializer(order).data)
@@ -4936,7 +4951,7 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
             _, approval_response = _request_customer_order_status_approval(order, request.user, 'confirmed')
             return approval_response
 
-        _apply_customer_order_status(order, 'confirmed')
+        _apply_customer_order_status(order, 'confirmed', user=request.user)
         return Response(self.get_serializer(order).data)
     
     @action(detail=True, methods=['post'])
@@ -4953,7 +4968,7 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
             _, approval_response = _request_customer_order_status_approval(order, request.user, 'in_production')
             return approval_response
 
-        _apply_customer_order_status(order, 'in_production')
+        _apply_customer_order_status(order, 'in_production', user=request.user)
         return Response(self.get_serializer(order).data)
     
     @action(detail=True, methods=['post'])
@@ -4982,7 +4997,7 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
         else:
             ready_at = timezone.now()
 
-        _apply_customer_order_status(order, 'ready', changed_at=ready_at)
+        _apply_customer_order_status(order, 'ready', changed_at=ready_at, user=request.user)
         return Response(self.get_serializer(order).data)
     
     @action(detail=True, methods=['post'])
@@ -5148,7 +5163,7 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
         else:
             delivered_at = timezone.now()
 
-        _apply_customer_order_status(order, 'delivered', changed_at=delivered_at)
+        _apply_customer_order_status(order, 'delivered', changed_at=delivered_at, user=request.user)
         return Response(self.get_serializer(order).data)
     
     @action(detail=True, methods=['get'])
@@ -8131,11 +8146,31 @@ class DeliveryNoteViewSet(viewsets.ModelViewSet):
             for qr_id in rfq_ids_to_sync:
                 try:
                     qr_obj = QuoteRequest.objects.get(id=qr_id)
+                    old_status = qr_obj.status
                     if qr_obj.status in WRITABLE_BY_DELIVERY:
                         qr_obj.status = 'in_delivery'
                         qr_obj.status_is_manual = False
                         qr_obj.save(update_fields=['status', 'status_is_manual'])
                     _sync_rfq_primary_snapshot(qr_obj)
+                    # Napló: szállítólevél létrehozva
+                    dn_items_info = ', '.join(
+                        f'{float(di.quantity):g} {di.unit or "db"}'
+                        for di in created_note.items.filter(
+                            **({'quote_item__quote_request_id': qr_id} if True else {'customer_order_item__customer_order__quote_request_id': qr_id})
+                        )[:5]
+                    )
+                    QuoteLog.objects.create(
+                        quote=qr_obj,
+                        user=self.request.user if self.request.user.is_authenticated else None,
+                        action=f'Szállítólevél létrehozva: {created_note.delivery_note_number}'
+                               + (f' – {dn_items_info}' if dn_items_info else ''),
+                    )
+                    if old_status != qr_obj.status:
+                        QuoteLog.objects.create(
+                            quote=qr_obj,
+                            user=None,
+                            action=f'Státusz módosítva: {old_status} → {qr_obj.status} (szállítólevél alapján)',
+                        )
                 except Exception:
                     pass
         except Exception:
