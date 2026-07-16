@@ -1358,39 +1358,43 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                   <Tooltip title="Egységre vonatkozik"><Checkbox checked={!!r.is_per_unit} onChange={e => updateCustomCostItem(r.id, 'is_per_unit', e.target.checked)} /></Tooltip>
                 ),
               },
-              { title: 'Megnevezés', key: 'name', width: 160, render: (_: any, r: CustomCostItemPanel) => {
+              { title: 'Megnevezés', key: 'name', width: 150, render: (_: any, r: CustomCostItemPanel) => {
                   if (r.type === 'material' || r.type === 'service') {
                     return (
                       <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                         <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12 }} title={r.name}>{r.name || <span style={{ color: '#aaa' }}>Nincs kiválasztva</span>}</span>
                         <Button size="small" type="link" style={{ padding: 0, height: 'auto', flexShrink: 0 }}
                           onClick={() => { setCustomCostSearchQuery(''); setCustomCostSearchModal({ open: true, type: r.type as 'material' | 'service' }); }}
-                        >
-                          Csere
-                        </Button>
+                        >Csere</Button>
                       </div>
                     );
                   }
                   return <Input size="small" value={r.name} placeholder="Megnevezés" onChange={e => updateCustomCostItem(r.id, 'name', e.target.value)} style={{ width: '100%' }} />;
                 }
               },
-              { title: 'Menny.', key: 'quantity', width: 70, render: (_: any, r: CustomCostItemPanel) => <NumInput size="small" value={r.quantity} onChange={v => updateCustomCostItem(r.id, 'quantity', v ?? 1)} min={0} controls={false} style={{ width: '100%' }} /> },
-              { title: 'Egység', key: 'unit', width: 60, render: (_: any, r: CustomCostItemPanel) => <Input size="small" value={r.unit} onChange={e => updateCustomCostItem(r.id, 'unit', e.target.value)} style={{ width: '100%' }} /> },
-              { title: 'Bek. e.ár', key: 'cost_price', width: 90, render: (_: any, r: CustomCostItemPanel) => <NumInput size="small" value={r.cost_price} onChange={v => updateCustomCostItem(r.id, 'cost_price', v ?? 0)} min={0} controls={false} style={{ width: '100%' }} /> },
-              { title: 'Haszon%', key: 'markup_percent', width: 76, render: (_: any, r: CustomCostItemPanel) => <NumInput size="small" value={r.markup_percent} onChange={v => updateCustomCostItem(r.id, 'markup_percent', v ?? 0)} min={0} controls={false} style={{ width: '100%' }} /> },
-              { title: 'El. egység ár', key: 'selling_unit_price', width: 100, render: (_: any, r: CustomCostItemPanel) => <NumInput size="small" value={r.selling_unit_price} onChange={v => updateCustomCostItem(r.id, 'selling_unit_price', v ?? 0)} min={0} controls={false} style={{ width: '100%' }} /> },
-              { title: 'Összesen', key: 'selling_price', width: 90, render: (_: any, r: CustomCostItemPanel) => <span style={{ fontWeight: 600, color: r.selling_price > 0 ? '#52c41a' : undefined, whiteSpace: 'nowrap' }}>{r.selling_price.toLocaleString('hu-HU')} Ft</span> },
+              { title: 'Menny.', key: 'quantity', width: 65, render: (_: any, r: CustomCostItemPanel) => <NumInput size="small" value={r.quantity} onChange={v => updateCustomCostItem(r.id, 'quantity', v ?? 1)} min={0} controls={false} style={{ width: '100%', minWidth: 50 }} /> },
+              { title: 'Egység', key: 'unit', width: 55, render: (_: any, r: CustomCostItemPanel) => <Input size="small" value={r.unit} onChange={e => updateCustomCostItem(r.id, 'unit', e.target.value)} style={{ width: '100%', minWidth: 44 }} /> },
+              { title: 'Bek. e.ár', key: 'cost_price', width: 90, render: (_: any, r: CustomCostItemPanel) => <NumInput size="small" value={r.cost_price} onChange={v => updateCustomCostItem(r.id, 'cost_price', v ?? 0)} min={0} controls={false} style={{ width: '100%', minWidth: 70 }} /> },
+              { title: 'Haszon%', key: 'markup_percent', width: 72, render: (_: any, r: CustomCostItemPanel) => <NumInput size="small" value={r.markup_percent} onChange={v => updateCustomCostItem(r.id, 'markup_percent', v ?? 0)} min={0} controls={false} style={{ width: '100%', minWidth: 56 }} /> },
+              { title: 'El. e.ár', key: 'selling_unit_price', width: 90, render: (_: any, r: CustomCostItemPanel) => <NumInput size="small" value={r.selling_unit_price} onChange={v => updateCustomCostItem(r.id, 'selling_unit_price', v ?? 0)} min={0} controls={false} style={{ width: '100%', minWidth: 70 }} /> },
+              { title: 'Összesen', key: 'selling_price', width: 85, render: (_: any, r: CustomCostItemPanel) => <span style={{ fontWeight: 600, color: r.selling_price > 0 ? '#52c41a' : undefined, whiteSpace: 'nowrap' }}>{r.selling_price.toLocaleString('hu-HU')} Ft</span> },
               {
-                title: 'Beszállító', key: 'supplier', width: 220,
+                title: 'Beszállító', key: 'supplier', width: 200,
                 render: (_: any, r: CustomCostItemPanel) => (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                     <Checkbox checked={!!r.is_internal} onChange={e => { updateCustomCostItem(r.id, 'is_internal', e.target.checked); updateCustomCostItem(r.id, 'supplier_id', null); updateCustomCostItem(r.id, 'department_id', null); }}>Belső</Checkbox>
                     {r.is_internal ? (
-                      <Select size="small" style={{ flex: 1, minWidth: 100 }} allowClear placeholder="Részleg" value={r.department_id ?? undefined} onChange={(v: number | undefined) => updateCustomCostItem(r.id, 'department_id', v ?? null)}>
+                      <Select size="small" style={{ flex: 1, minWidth: 80, maxWidth: 130 }} allowClear placeholder="Részleg" value={r.department_id ?? undefined}
+                        onChange={(v: number | undefined) => updateCustomCostItem(r.id, 'department_id', v ?? null)}
+                        optionRender={(opt) => <Tooltip title={opt.label}><span>{String(opt.label || '').slice(0, 15)}{String(opt.label || '').length > 15 ? '…' : ''}</span></Tooltip>}
+                      >
                         {costDepartments.map(d => <Select.Option key={d.id} value={d.id}>{d.name}</Select.Option>)}
                       </Select>
                     ) : (
-                      <Select size="small" style={{ flex: 1, minWidth: 100 }} allowClear showSearch optionFilterProp="label" placeholder="Beszállító" value={r.supplier_id ?? undefined} onChange={(v: number | undefined) => updateCustomCostItem(r.id, 'supplier_id', v ?? null)}>
+                      <Select size="small" style={{ flex: 1, minWidth: 80, maxWidth: 130 }} allowClear showSearch optionFilterProp="label" placeholder="Beszállító" value={r.supplier_id ?? undefined}
+                        onChange={(v: number | undefined) => updateCustomCostItem(r.id, 'supplier_id', v ?? null)}
+                        optionRender={(opt) => <Tooltip title={opt.label}><span>{String(opt.label || '').slice(0, 15)}{String(opt.label || '').length > 15 ? '…' : ''}</span></Tooltip>}
+                      >
                         {costSuppliers.map(s => <Select.Option key={s.id} value={s.id} label={s.name}>{s.name}</Select.Option>)}
                       </Select>
                     )}
@@ -1398,7 +1402,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                 ),
               },
               {
-                title: '', key: 'actions', width: 64,
+                title: '', key: 'actions', width: 60,
                 render: (_: any, r: CustomCostItemPanel) => (
                   <div style={{ display: 'flex', gap: 2 }}>
                     <Button size="small" icon={<CopyOutlined />} title="Másolás" onClick={() => {
