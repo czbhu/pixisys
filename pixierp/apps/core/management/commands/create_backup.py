@@ -2,6 +2,7 @@ from django.core.management.base import BaseCommand
 from django.utils import timezone
 from django.conf import settings
 from apps.core.models import BackupConfiguration, BackupFile
+from datetime import timedelta
 import os
 import shutil
 import subprocess
