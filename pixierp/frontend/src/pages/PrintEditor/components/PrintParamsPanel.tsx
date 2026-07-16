@@ -557,10 +557,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
         (product.print_service_options_details ?? []).length > 0) {
       setSelectedBoardPrintSvcId(prev => prev ?? (product.print_service_options_details ?? [])[0].id);
     }
-    // Reset egyedi költség tételek termékváltáskor
-    setCustomCostItems([]);
-    onCustomCostChange?.([]);
-    try { localStorage.removeItem('pixierp_custom_cost_items'); } catch {}
+    // Reset csak termékváltáskor (nem initial loadnál) – lásd else ág lejjebb
     const sg1 = product.service_groups_1 ?? [];
     const sg2 = product.service_groups_2 ?? [];
     const sgf = product.finishing_service_groups ?? [];
@@ -573,13 +570,15 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
       })
       .catch(() => setAllServices([]));
     if (restoringRef.current) {
-      // On initial load, keep the restored selections (already set from localStorage)
+      // On initial load, keep the restored selections AND custom costs (already set from localStorage)
       restoringRef.current = false;
     } else {
-      // User changed product — reset selections
+      // User changed product — reset selections AND custom costs
       setSelectedServices1(sg1.map(() => []));
       setSelectedServices2(sg2.map(() => []));
       setSelectedFinishingServices(sgf.map(() => []));
+      setCustomCostItems([]);
+      try { localStorage.removeItem('pixierp_custom_cost_items'); } catch {}
     }
   }, [selectedProductId, products]); // eslint-disable-line
 
@@ -610,6 +609,9 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
     setSelectedPrintSvcId1(null);
     setSelectedPrintSvcId2(null);
     setClickSides((product.print_sides ?? 1) as 1 | 2);
+    // Egyedi költségek törlése termékváltáskor
+    setCustomCostItems([]);
+    try { localStorage.removeItem('pixierp_custom_cost_items'); } catch {}
     // UV táblás/tekercses termék: alapból 1 oldalas nyomtatás
     if (product.calculator_type === 'sheet_print' || product.calculator_type === 'roll_print') {
       update({ sides: '1', side2_mode: 'none' });

@@ -230,8 +230,12 @@ const PrintShopPage: React.FC = () => {
     manufacturingService.getProduct(editMfgId).then(product => {
       const saved = (product as any).printshop_params;
       if (saved && typeof saved === 'object') {
-        const { price_breakdown: _pb, _editor_state: editorState, _click_state: _legacyCs, ...printParams } = saved;
+        const { price_breakdown: _pb, _editor_state: editorState, _click_state: _legacyCs, _custom_cost_items: savedCustomCosts, ...printParams } = saved;
         setParams(prev => ({ ...prev, ...printParams }));
+        // Egyedi költségek visszaállítása
+        if (Array.isArray(savedCustomCosts) && savedCustomCosts.length > 0) {
+          try { localStorage.setItem('pixierp_custom_cost_items', JSON.stringify(savedCustomCosts)); } catch {}
+        }
         // Kész termékek/utómunkák visszaállítása: pixierp_editor_state (selected_product_id + clickState) visszaírása
         const stateToRestore = editorState || (_legacyCs ? { clickState: _legacyCs } : null);
         if (stateToRestore && typeof stateToRestore === 'object' && Object.keys(stateToRestore).length > 0) {
@@ -694,7 +698,7 @@ const PrintShopPage: React.FC = () => {
         sheet_count: params.sheet_count ?? 1,
         material: params.material_id ?? undefined,
         price_breakdown: priceBreakdown ?? undefined,
-        printshop_params: { ...params, _editor_state: (() => { try { return JSON.parse(localStorage.getItem('pixierp_editor_state') || '{}'); } catch { return null; } })(), price_breakdown: priceBreakdown ?? null },
+        printshop_params: { ...params, _editor_state: (() => { try { return JSON.parse(localStorage.getItem('pixierp_editor_state') || '{}'); } catch { return null; } })(), price_breakdown: priceBreakdown ?? null, _custom_cost_items: panelCustomCostRef.current.length > 0 ? panelCustomCostRef.current : undefined },
       };
 
       let productId: number;
@@ -999,7 +1003,7 @@ const PrintShopPage: React.FC = () => {
         binding: params.binding, folding_count: params.folding_count, folding_specs: params.folding_specs,
         sheet_count: params.sheet_count ?? 1, material: params.material_id ?? undefined,
         price_breakdown: priceBreakdown ?? undefined,
-        printshop_params: { ...params, _editor_state: (() => { try { return JSON.parse(localStorage.getItem('pixierp_editor_state') || '{}'); } catch { return null; } })(), price_breakdown: priceBreakdown ?? null },
+        printshop_params: { ...params, _editor_state: (() => { try { return JSON.parse(localStorage.getItem('pixierp_editor_state') || '{}'); } catch { return null; } })(), price_breakdown: priceBreakdown ?? null, _custom_cost_items: panelCustomCostRef.current.length > 0 ? panelCustomCostRef.current : undefined },
       };
 
       // ManufacturingProduct létrehozás / frissítés
