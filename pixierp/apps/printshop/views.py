@@ -337,7 +337,8 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
             })
 
     subtotal = paper_cost + print_cost + finishing_cost + service_cost
-    margin_mult = Decimal('1') + config.margin_pct / 100
+    # Táblás/UV nyomtatásnál a selling_price-ok már tartalmazzák a felárat → margin = 1
+    margin_mult = Decimal('1') if print_service_id else (Decimal('1') + config.margin_pct / 100)
     total = (subtotal * margin_mult).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
     unit_price = (total / qty).quantize(Decimal('0.0001'), rounding=ROUND_HALF_UP)
 
@@ -381,7 +382,8 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
                     elif ci.calculation_type in ('click', 'unit'):
                         _svc_cost += _p * Decimal(str(_bd))
                 _mat_cost = Decimal(str(mat_price or 0)) * Decimal(str(_bd))
-                _total = (_svc_cost + _mat_cost) * (Decimal('1') + config.margin_pct / 100)
+                # selling_price-ok már tartalmazzák a felárat → nincs extra margin
+                _total = _svc_cost + _mat_cost
                 return {
                     'fit_w': _fw, 'fit_h': _fh, 'items_per_sheet': _ips,
                     'boards_needed': _bd, 'rotated': _rot,
