@@ -1779,7 +1779,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                           &nbsp;·&nbsp;{best.size_mm[0]}×{best.size_mm[1]} mm
                           &nbsp;·&nbsp;{best.items_per_sheet} db/tábla
                           &nbsp;·&nbsp;{(best as any).boards_needed ?? (best as any).sheets_needed} tábla
-                          &nbsp;·&nbsp;{((best as any).total ?? best.material_cost).toLocaleString('hu-HU')} Ft
+                          &nbsp;·&nbsp;{best.material_cost.toLocaleString('hu-HU')} Ft
                         </div>
                       );
                     }
@@ -2153,7 +2153,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                                 <td style={{ textAlign: 'right', padding: '4px 6px' }}>{(s as any).boards_needed ?? (s as any).sheets_needed}{s.needs_cutting && ' ✂'}</td>
                                 <td style={{ textAlign: 'right', padding: '4px 6px' }}>{s.price_per_sheet.toLocaleString('hu-HU')} Ft</td>
                                 <td style={{ textAlign: 'right', padding: '4px 6px', color: s.is_best ? '#52c41a' : undefined }}>
-                                  {((s as any).total ?? s.material_cost).toLocaleString('hu-HU')} Ft
+                                  {s.material_cost.toLocaleString('hu-HU')} Ft
                                 </td>
                               </tr>
                             );
