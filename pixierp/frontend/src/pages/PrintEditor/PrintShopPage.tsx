@@ -15,7 +15,7 @@ import { manufacturingService } from '../../services/manufacturingService';
 import { useAuth } from '../../contexts/AuthContext';
 import api from '../../services/api';
 import { PrintParams } from './components/Step1Params';
-import PrintParamsPanel, { PriceBreakdown } from './components/PrintParamsPanel';
+import PrintParamsPanel, { PriceBreakdown, CustomCostItemPanel } from './components/PrintParamsPanel';
 import Step3OrderSummary from './components/Step3OrderSummary';
 import PrintCommentView, { clearPdfFromIDB } from './components/PrintCommentView';
 import MaterialNeedsPanel from './components/MaterialNeedsPanel';
@@ -176,6 +176,7 @@ const PrintShopPage: React.FC = () => {
     return qid ? Number(qid) : null;
   });
   const panelServicesRef = useRef<{ s1: number[][]; s2: number[][] }>({ s1: [], s2: [] }); // live service selections
+  const panelCustomCostRef = useRef<CustomCostItemPanel[]>([]); // egyedi költség tételek
   const lastSavedParamsRef = useRef<string>(JSON.stringify(
     (() => { try { const s = localStorage.getItem('pixierp_printshop'); if (s) return JSON.parse(s).params ?? {}; } catch {} return {}; })()
   ));
@@ -965,6 +966,13 @@ const PrintShopPage: React.FC = () => {
           }
         }
       }
+      // Egyedi költség tételek (ha allow_custom_cost)
+      for (const ci of panelCustomCostRef.current) {
+        if (!ci.name && ci.selling_price === 0) continue;
+        costItems.push({ type: 'other', name: ci.name || 'Egyedi tétel', quantity: r4(ci.quantity), unit: ci.unit || 'db',
+          cost_price: r4(ci.cost_price), unit_price: r4(ci.selling_unit_price), selling_unit_price: r4(ci.selling_unit_price),
+          selling_price: r4(ci.selling_price), markup_percent: r4(ci.markup_percent), is_internal: false, supplier: null, formulas: { _syncQty: false } });
+      }
       const sellingTotal = costItems.reduce((s: number, ci: any) => s + (Number(ci.selling_price) || 0), 0);
       const unitPrice = params.quantity > 0 ? sellingTotal / params.quantity : 0;
 
@@ -1366,6 +1374,7 @@ const PrintShopPage: React.FC = () => {
                   onPriceChange={setPriceBreakdown}
                   onTemplateCategoriesChange={setTemplateCategoryIds}
                   onServicesChange={(s1, s2) => { panelServicesRef.current = { s1, s2 }; }}
+                  onCustomCostChange={(items) => { panelCustomCostRef.current = items; }}
                   isAdmin={isAdmin}
                 />
                 <MaterialNeedsPanel priceBreakdown={priceBreakdown} />

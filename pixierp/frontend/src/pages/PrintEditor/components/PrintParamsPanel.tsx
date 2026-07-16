@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Select, InputNumber, Radio, Divider, Typography, Spin, Tooltip, Tag, Modal, Row, Col, Button } from 'antd';
+import { Select, Input, InputNumber, Radio, Divider, Typography, Spin, Tooltip, Tag, Modal, Row, Col, Button } from 'antd';
 import NumInput from '../../../components/NumInput';
-import { InfoCircleOutlined, CaretDownOutlined, CaretRightOutlined, AppstoreOutlined, MinusOutlined, PlusOutlined } from '@ant-design/icons';
+import { InfoCircleOutlined, CaretDownOutlined, CaretRightOutlined, AppstoreOutlined, MinusOutlined, PlusOutlined, DeleteOutlined } from '@ant-design/icons';
 import type { PrintParams } from './Step1Params';
 import api from '../../../services/api';
 
@@ -86,6 +86,7 @@ interface ProductTemplate {
   binding_services_details?: { id: number; name: string; code: string }[];
   quantity_discounts?: { id: number; min_amount: number; discount_type: string; discount_value: number }[];
   template_categories?: number[];
+  allow_custom_cost?: boolean;
 }
 
 export interface PriceBreakdown {
@@ -172,6 +173,7 @@ interface Props {
   onPriceChange?: (b: PriceBreakdown | null) => void;
   onTemplateCategoriesChange?: (ids: number[]) => void;
   onServicesChange?: (s1: number[][], s2: number[][], fin: number[][]) => void;
+  onCustomCostChange?: (items: CustomCostItemPanel[]) => void;
   isAdmin: boolean;
 }
 
@@ -224,7 +226,12 @@ const readClickState = (): any => {
   return {};
 };
 
-const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, onTemplateCategoriesChange, onServicesChange, isAdmin }) => {
+export interface CustomCostItemPanel {
+  id: number; name: string; quantity: number; unit: string;
+  cost_price: number; markup_percent: number; selling_unit_price: number; selling_price: number;
+}
+
+const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, onTemplateCategoriesChange, onServicesChange, onCustomCostChange, isAdmin }) => {
   const [priceOpen, setPriceOpen] = useState(true);
   const [presets, setPresets] = useState<SizePreset[]>([]);
   const [products, setProducts] = useState<ProductTemplate[]>([]);
@@ -276,6 +283,28 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
   const [boardForceRotate, setBoardForceRotate] = useState<'auto' | 'normal' | 'rotated'>('auto');
   // Ha true: az impositionModal táblás módban van (apply boardSheetW/H-t állítja be)
   const [isBoardImpositionMode, setIsBoardImpositionMode] = useState(false);
+  // Egyedi költség tételek (ha selectedProduct.allow_custom_cost = true)
+  const [customCostItems, setCustomCostItems] = useState<CustomCostItemPanel[]>([]);
+  const updateCustomCostItem = (id: number, field: keyof CustomCostItemPanel, value: any) => {
+    setCustomCostItems(prev => {
+      const next = prev.map(ci => {
+        if (ci.id !== id) return ci;
+        const n = { ...ci, [field]: value };
+        if (field === 'cost_price' || field === 'markup_percent') {
+          n.selling_unit_price = n.cost_price * (1 + n.markup_percent / 100);
+          n.selling_price = n.selling_unit_price * n.quantity;
+        } else if (field === 'selling_unit_price') {
+          n.markup_percent = n.cost_price > 0 ? Math.round((n.selling_unit_price / n.cost_price - 1) * 10000) / 100 : 0;
+          n.selling_price = n.selling_unit_price * n.quantity;
+        } else if (field === 'quantity') {
+          n.selling_price = n.selling_unit_price * n.quantity;
+        }
+        return n;
+      });
+      onCustomCostChange?.(next);
+      return next;
+    });
+  };
 
   // Service selection: per AND-group for side 1 and side 2
   // selectedServices1[i] = chosen service IDs (multi) for group i on side 1
@@ -495,6 +524,9 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
         (product.print_service_options_details ?? []).length > 0) {
       setSelectedBoardPrintSvcId(prev => prev ?? (product.print_service_options_details ?? [])[0].id);
     }
+    // Reset egyedi költség tételek termékváltáskor
+    setCustomCostItems([]);
+    onCustomCostChange?.([]);
     const sg1 = product.service_groups_1 ?? [];
     const sg2 = product.service_groups_2 ?? [];
     const sgf = product.finishing_service_groups ?? [];
@@ -1294,6 +1326,48 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
             </>
           )}
 
+          {/* ── Egyedi költség (ha allow_custom_cost) ─────────────── */}
+          {selectedProduct?.allow_custom_cost && (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 8, marginBottom: 4 }}>
+                <Text strong style={{ fontSize: 11, textTransform: 'uppercase', color: '#555', letterSpacing: '0.05em' }}>Egyedi költség</Text>
+                <Button size="small" type="link" icon={<PlusOutlined />}
+                  onClick={() => {
+                    const newItem: CustomCostItemPanel = { id: Date.now(), name: '', quantity: 1, unit: 'db', cost_price: 0, markup_percent: 30, selling_unit_price: 0, selling_price: 0 };
+                    const next = [...customCostItems, newItem];
+                    setCustomCostItems(next);
+                    onCustomCostChange?.(next);
+                  }}
+                  style={{ padding: 0, height: 'auto' }}
+                >
+                  Hozzáadás
+                </Button>
+              </div>
+              {customCostItems.length === 0 && (
+                <div style={{ fontSize: 11, color: '#aaa', marginBottom: 4 }}>Nincs egyedi tétel.</div>
+              )}
+              {customCostItems.map(ci => (
+                <div key={ci.id} style={{ background: '#fafafa', border: '1px solid #e8e8e8', borderRadius: 6, padding: '6px 8px', marginBottom: 4 }}>
+                  <div style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
+                    <Input size="small" placeholder="Megnevezés" value={ci.name} onChange={e => updateCustomCostItem(ci.id, 'name', e.target.value)} style={{ flex: 2 }} />
+                    <NumInput size="small" placeholder="Menny." value={ci.quantity} onChange={v => updateCustomCostItem(ci.id, 'quantity', v ?? 1)} min={0} controls={false} style={{ flex: 1 }} />
+                    <Input size="small" placeholder="Egység" value={ci.unit} onChange={e => updateCustomCostItem(ci.id, 'unit', e.target.value)} style={{ width: 44 }} />
+                    <Button size="small" danger icon={<DeleteOutlined />} onClick={() => { const next = customCostItems.filter(x => x.id !== ci.id); setCustomCostItems(next); onCustomCostChange?.(next); }} />
+                  </div>
+                  <div style={{ display: 'flex', gap: 4, alignItems: 'center', fontSize: 11 }}>
+                    <span style={{ color: '#888' }}>Bek.:</span>
+                    <NumInput size="small" value={ci.cost_price} onChange={v => updateCustomCostItem(ci.id, 'cost_price', v ?? 0)} min={0} controls={false} addonAfter="Ft" style={{ flex: 1 }} />
+                    <span style={{ color: '#888' }}>Haszon:</span>
+                    <NumInput size="small" value={ci.markup_percent} onChange={v => updateCustomCostItem(ci.id, 'markup_percent', v ?? 0)} min={0} controls={false} addonAfter="%" style={{ width: 70 }} />
+                    <span style={{ color: '#888' }}>Elad.:</span>
+                    <NumInput size="small" value={ci.selling_unit_price} onChange={v => updateCustomCostItem(ci.id, 'selling_unit_price', v ?? 0)} min={0} controls={false} addonAfter="Ft" style={{ flex: 1 }} />
+                  </div>
+                  {ci.selling_price > 0 && <div style={{ textAlign: 'right', fontSize: 11, color: '#52c41a', marginTop: 2 }}>Összesen: <strong>{ci.selling_price.toLocaleString('hu-HU')} Ft</strong></div>}
+                </div>
+              ))}
+            </>
+          )}
+
           <SectionLabel label="Mennyiség" />
           <NumInput
             size="small"
@@ -1619,8 +1693,20 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                     </>
                   )}
                   <Divider style={{ margin: '4px 0' }} />
-                  <div style={{ fontWeight: 600 }}>Összesen: {fmt(activePricing.total)}</div>
-                  <div>Egységár: {activePricing.unit_price?.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} Ft/db</div>
+                  {customCostItems.length > 0 && customCostItems.map(ci => (
+                    <div key={ci.id} style={{ fontSize: 11, color: '#555' }}>{ci.name || 'Egyedi'}: <strong>{fmt(ci.selling_price)}</strong></div>
+                  ))}
+                  {(() => {
+                    const customTotal = customCostItems.reduce((s, ci) => s + ci.selling_price, 0);
+                    const grandTotal = (activePricing.total || 0) + customTotal;
+                    const grandUnitPrice = (params.quantity || 1) > 0 ? grandTotal / (params.quantity || 1) : 0;
+                    return (
+                      <>
+                        <div style={{ fontWeight: 600 }}>Összesen: {fmt(grandTotal)}</div>
+                        <div>Egységár: {grandUnitPrice.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} Ft/db</div>
+                      </>
+                    );
+                  })()}
                   {(() => {
                     const discounts = selectedProduct?.quantity_discounts ?? [];
                     if (discounts.length === 0) return null;
