@@ -101,6 +101,9 @@ const RFQs: React.FC = () => {
   const [backgroundLoading, setBackgroundLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [rfqs, setRfqs] = useState<any[]>([]);
+  const [tablePage, setTablePage] = useState(1);
+  const [tablePageSize, setTablePageSize] = useState(10);
+  const tablePageRef = React.useRef(1); // mindig az aktuális oldalt tárolja
   const [costStatusOverrides, setCostStatusOverrides] = useState<Record<number, string>>({});
   const [mfgProductReloadTriggers, setMfgProductReloadTriggers] = useState<Record<number, number>>({});
   const [filtered, setFiltered] = useState<any[]>([]);
@@ -1012,7 +1015,7 @@ const RFQs: React.FC = () => {
                 setRfqs(prev => prev.map(rfq =>
                   rfq.id !== rfqId ? rfq : { ...rfq, status: appliedStatus, effective_status: appliedStatus, effective_status_label: appliedLabel }
                 ));
-                loadData();
+                // Nincs loadData() – az optimista frissítés elegendő
               } catch (e: any) {
                 const backendError = e?.response?.data?.error || e?.response?.data?.detail;
                 message.error(backendError || 'Hiba a státusz frissítésekor');
@@ -3558,7 +3561,7 @@ const RFQs: React.FC = () => {
           </div>
         )}
 
-        <EnhancedTable key="rfqs-items" tableKey="rfqs-items" searchValue={query} onSearchChange={handleSearchChange} searchPlaceholder="Keresés…" columns={itemsColumns as any} dataSource={flattenedItems} rowKey="uniqueId" pagination={{ pageSize: 10 }} size="small" cardBreakpoint={750} sticky={{ offsetScroll: 0 }} className="rfq-items-table" onRow={(r: any) => {
+        <EnhancedTable key="rfqs-items" tableKey="rfqs-items" searchValue={query} onSearchChange={handleSearchChange} searchPlaceholder="Keresés…" columns={itemsColumns as any} dataSource={flattenedItems} rowKey="uniqueId" pagination={{ pageSize: tablePageSize, current: tablePage, showSizeChanger: true, pageSizeOptions: ['10','25','50','100'], onChange: (pg, sz) => { setTablePage(pg); tablePageRef.current = pg; setTablePageSize(sz); } }} size="small" cardBreakpoint={750} sticky={{ offsetScroll: 0 }} className="rfq-items-table" onRow={(r: any) => {
           return { onDoubleClick: () => window.open(`/sales/rfqs/${r.rfq_number || r.rfq_id}`, '_blank'), style: { cursor: 'pointer' } };
         }}
         rowClassName={(r: any) => { const st = getDisplayStatus(r); return st !== 'new' ? `rfq-row-${st}` : ''; }} rowSelection={{ selectedRowKeys: bulkSelectedKeys, onChange: (keys) => setBulkSelectedKeys(keys), columnWidth: 32 }} expandable={{
