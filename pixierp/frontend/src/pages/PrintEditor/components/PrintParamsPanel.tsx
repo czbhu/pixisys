@@ -49,6 +49,8 @@ interface MaterialDetail {
   unit_cost_price?: number;
   markup_percentage?: number;
   unit?: string;
+  default_supplier?: number | null;
+  default_supplier_name?: string | null;
   sizes?: { id: number; name: string; width_mm: number; length_mm: number; price: number }[];
 }
 interface SizeComparison {
@@ -299,7 +301,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
   const [customCostSearchQuery, setCustomCostSearchQuery] = useState('');
   const [costSuppliers, setCostSuppliers] = useState<{id: number; name: string}[]>([]);
   const [costDepartments, setCostDepartments] = useState<{id: number; name: string}[]>([]);
-  const [allManufServices, setAllManufServices] = useState<{id: number; name: string; unit: string; unit_cost_price: number; markup_percentage: number; unit_selling_price: number; code?: string; description?: string}[]>([]);
+  const [allManufServices, setAllManufServices] = useState<{id: number; name: string; unit: string; unit_cost_price: number; markup_percentage: number; unit_selling_price: number; code?: string; description?: string; default_supplier?: number | null; default_supplier_name?: string | null; is_internal_production?: boolean; internal_production_department?: number | null}[]>([]);
   useEffect(() => {
     api.get('/crm/companies/?is_supplier=true&page_size=1000').then(r => setCostSuppliers(Array.isArray(r.data?.results) ? r.data.results : (Array.isArray(r.data) ? r.data : []))).catch(() => {});
     api.get('/hr/departments/?page_size=500').then(r => setCostDepartments(Array.isArray(r.data?.results) ? r.data.results : (Array.isArray(r.data) ? r.data : []))).catch(() => {});
@@ -1502,10 +1504,20 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                       const cp = Number(record.unit_cost_price || 0);
                       const mu = Number(record.markup_percentage ?? 30);
                       const sp = Number(record.unit_selling_price || 0) || (cp > 0 ? cp * (1 + mu / 100) : 0);
+                      // Preload supplier / internal department
+                      const isInternal = !!(record.is_internal_production);
+                      const deptId = isInternal ? (record.internal_production_department ?? null) : null;
+                      const supplierId = !isInternal ? (() => {
+                        const ds = record.default_supplier;
+                        if (ds == null) return null;
+                        const id = typeof ds === 'object' ? ds?.id : ds;
+                        return Number.isFinite(Number(id)) ? Number(id) : null;
+                      })() : null;
                       const newItem: CustomCostItemPanel = {
                         id: Date.now() + Math.random(), type: t, ref_id: record.id,
                         name: record.name, unit: record.unit || 'db', quantity: 1,
                         cost_price: cp, markup_percent: mu, selling_unit_price: sp, selling_price: sp,
+                        is_internal: isInternal, department_id: deptId, supplier_id: supplierId,
                       };
                       const next = [...customCostItems, newItem];
                       setCustomCostItems(next); onCustomCostChange?.(next);
