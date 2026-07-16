@@ -295,7 +295,12 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
   // Ha true: az impositionModal táblás módban van (apply boardSheetW/H-t állítja be)
   const [isBoardImpositionMode, setIsBoardImpositionMode] = useState(false);
   // Egyedi költség tételek (ha selectedProduct.allow_custom_cost = true)
-  const [customCostItems, setCustomCostItems] = useState<CustomCostItemPanel[]>([]);
+  const [customCostItems, setCustomCostItems] = useState<CustomCostItemPanel[]>(() => {
+    try {
+      const saved = localStorage.getItem('pixierp_custom_cost_items');
+      return saved ? JSON.parse(saved) : [];
+    } catch { return []; }
+  });
   const [customCostModalOpen, setCustomCostModalOpen] = useState(false);
   const [customCostSearchModal, setCustomCostSearchModal] = useState<{open: boolean; type: 'material' | 'service' | null}>({open: false, type: null});
   const [customCostSearchQuery, setCustomCostSearchQuery] = useState('');
@@ -307,6 +312,13 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
     api.get('/hr/departments/?page_size=500').then(r => setCostDepartments(Array.isArray(r.data?.results) ? r.data.results : (Array.isArray(r.data) ? r.data : []))).catch(() => {});
     api.get('/manufacturing/services/?page_size=1000&is_active=true').then(r => setAllManufServices(Array.isArray(r.data?.results) ? r.data.results : (Array.isArray(r.data) ? r.data : []))).catch(() => {});
   }, []);
+
+  // Mentés localStorage-ba + szülő értesítése változáskor
+  useEffect(() => {
+    try { localStorage.setItem('pixierp_custom_cost_items', JSON.stringify(customCostItems)); } catch {}
+    onCustomCostChange?.(customCostItems);
+  }, [customCostItems]); // eslint-disable-line
+
   const updateCustomCostItem = (id: number, field: keyof CustomCostItemPanel, value: any) => {
     setCustomCostItems(prev => {
       const next = prev.map(ci => {
@@ -323,7 +335,6 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
         }
         return n;
       });
-      onCustomCostChange?.(next);
       return next;
     });
   };
@@ -549,6 +560,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
     // Reset egyedi költség tételek termékváltáskor
     setCustomCostItems([]);
     onCustomCostChange?.([]);
+    try { localStorage.removeItem('pixierp_custom_cost_items'); } catch {}
     const sg1 = product.service_groups_1 ?? [];
     const sg2 = product.service_groups_2 ?? [];
     const sgf = product.finishing_service_groups ?? [];
@@ -1408,9 +1420,9 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                     <Button size="small" icon={<CopyOutlined />} title="Másolás" onClick={() => {
                       const copy = { ...r, id: Date.now() + Math.random() };
                       const next = [...customCostItems]; next.splice(next.findIndex(x => x.id === r.id) + 1, 0, copy);
-                      setCustomCostItems(next); onCustomCostChange?.(next);
+                      setCustomCostItems(next);
                     }} />
-                    <Button size="small" danger icon={<DeleteOutlined />} title="Törlés" onClick={() => { const next = customCostItems.filter(x => x.id !== r.id); setCustomCostItems(next); onCustomCostChange?.(next); }} />
+                    <Button size="small" danger icon={<DeleteOutlined />} title="Törlés" onClick={() => { const next = customCostItems.filter(x => x.id !== r.id); setCustomCostItems(next); }} />
                   </div>
                 ),
               },
@@ -1454,7 +1466,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                     <Button icon={<PlusOutlined />} onClick={() => {
                       const newItem: CustomCostItemPanel = { id: Date.now(), name: '', quantity: 1, unit: 'db', cost_price: 0, markup_percent: 30, selling_unit_price: 0, selling_price: 0, type: 'other', ref_id: null };
                       const next = [...customCostItems, newItem];
-                      setCustomCostItems(next); onCustomCostChange?.(next);
+                      setCustomCostItems(next);
                     }}>Egyéb költség</Button>
                   </div>
                   <Table
@@ -1524,7 +1536,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                         is_internal: isInternal, department_id: deptId, supplier_id: supplierId,
                       };
                       const next = [...customCostItems, newItem];
-                      setCustomCostItems(next); onCustomCostChange?.(next);
+                      setCustomCostItems(next);
                       setCustomCostSearchModal({ open: false, type: null });
                     };
                     return (
