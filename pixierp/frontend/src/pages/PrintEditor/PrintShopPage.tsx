@@ -858,13 +858,13 @@ const PrintShopPage: React.FC = () => {
       const toHtml = (lines: (string | null)[]) =>
         lines.filter(Boolean).map(l => `<p>${String(l).replace(/\n/g, '</p><p>')}</p>`).join('');
 
-      // Külső leírás: termék, méret, mennyiség, nyomtatás, utómunka (anyag/impozíció NEM)
+      // Külső leírás: termék, méret, mennyiség, nyomtatás, utómunka (impozíció/tábla méret NEM)
       const description = toHtml([
         `Termék: ${params.product_name || 'Egyedi nyomtatás'}`,
         `Méret: ${params.width_mm} × ${params.height_mm} mm, ${sidesText}`,
         `Mennyiség: ${params.quantity} db${sheetCount > 1 ? ` × ${sheetCount} lap` : ''}`,
         (!isBoardProduct && params.binding && params.binding !== 'none' && params.binding !== 'cut') ? `Kötés: ${params.binding}` : null,
-        !isBoardProduct ? matLine : null,
+        matLine,
         printSvcLine,
         !isBoardProduct ? impLine : null,
         !isBoardProduct ? sheetLine : null,
