@@ -46,6 +46,9 @@ interface MaterialDetail {
   width_mm?: number | null;
   length_mm?: number | null;
   unit_selling_price?: number;
+  unit_cost_price?: number;
+  markup_percentage?: number;
+  unit?: string;
   sizes?: { id: number; name: string; width_mm: number; length_mm: number; price: number }[];
 }
 interface SizeComparison {
@@ -233,6 +236,8 @@ export interface CustomCostItemPanel {
   is_internal?: boolean;
   supplier_id?: number | null;
   department_id?: number | null;
+  type?: 'material' | 'service' | 'other';
+  ref_id?: number | null;
 }
 
 const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, onTemplateCategoriesChange, onServicesChange, onCustomCostChange, isAdmin }) => {
@@ -292,9 +297,11 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
   const [customCostModalOpen, setCustomCostModalOpen] = useState(false);
   const [costSuppliers, setCostSuppliers] = useState<{id: number; name: string}[]>([]);
   const [costDepartments, setCostDepartments] = useState<{id: number; name: string}[]>([]);
+  const [allManufServices, setAllManufServices] = useState<{id: number; name: string; unit: string; unit_cost_price: number; markup_percentage: number; unit_selling_price: number}[]>([]);
   useEffect(() => {
     api.get('/crm/companies/?is_supplier=true&page_size=1000').then(r => setCostSuppliers(Array.isArray(r.data?.results) ? r.data.results : (Array.isArray(r.data) ? r.data : []))).catch(() => {});
     api.get('/hr/departments/?page_size=500').then(r => setCostDepartments(Array.isArray(r.data?.results) ? r.data.results : (Array.isArray(r.data) ? r.data : []))).catch(() => {});
+    api.get('/manufacturing/services/?page_size=1000&is_active=true').then(r => setAllManufServices(Array.isArray(r.data?.results) ? r.data.results : (Array.isArray(r.data) ? r.data : []))).catch(() => {});
   }, []);
   const updateCustomCostItem = (id: number, field: keyof CustomCostItemPanel, value: any) => {
     setCustomCostItems(prev => {
@@ -1347,7 +1354,42 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                   <Tooltip title="Egységre vonatkozik"><Checkbox checked={!!r.is_per_unit} onChange={e => updateCustomCostItem(r.id, 'is_per_unit', e.target.checked)} /></Tooltip>
                 ),
               },
-              { title: 'Megnevezés', key: 'name', width: 140, render: (_: any, r: CustomCostItemPanel) => <Input size="small" value={r.name} placeholder="Megnevezés" onChange={e => updateCustomCostItem(r.id, 'name', e.target.value)} style={{ width: '100%' }} /> },
+              { title: 'Megnevezés', key: 'name', width: 160, render: (_: any, r: CustomCostItemPanel) => {
+                  if (r.type === 'material') {
+                    return <Select size="small" showSearch optionFilterProp="label" style={{ width: '100%' }} value={r.ref_id ?? undefined} placeholder="Válassz anyagot"
+                      onChange={(val: number, opt: any) => {
+                        const found = allMaterials.find(m => m.id === val);
+                        const next = customCostItems.map(ci => {
+                          if (ci.id !== r.id) return ci;
+                          const cp = Number(found?.unit_cost_price ?? 0);
+                          const mu = Number(found?.markup_percentage ?? 30);
+                          const sp = Number(found?.unit_selling_price ?? 0) || cp * (1 + mu / 100);
+                          return { ...ci, ref_id: val, name: opt.label ?? '', unit: found?.unit || 'db', cost_price: cp, markup_percent: mu, selling_unit_price: sp, selling_price: sp * ci.quantity };
+                        });
+                        setCustomCostItems(next); onCustomCostChange?.(next);
+                      }}>
+                      {allMaterials.map(m => <Select.Option key={m.id} value={m.id} label={m.name}>{m.name}</Select.Option>)}
+                    </Select>;
+                  }
+                  if (r.type === 'service') {
+                    return <Select size="small" showSearch optionFilterProp="label" style={{ width: '100%' }} value={r.ref_id ?? undefined} placeholder="Válassz szolgáltatást"
+                      onChange={(val: number, opt: any) => {
+                        const found = allManufServices.find(s => s.id === val);
+                        const next = customCostItems.map(ci => {
+                          if (ci.id !== r.id) return ci;
+                          const cp = Number(found?.unit_cost_price ?? 0);
+                          const mu = Number(found?.markup_percentage ?? 30);
+                          const sp = Number(found?.unit_selling_price ?? 0) || cp * (1 + mu / 100);
+                          return { ...ci, ref_id: val, name: opt.label ?? '', unit: found?.unit || 'db', cost_price: cp, markup_percent: mu, selling_unit_price: sp, selling_price: sp * ci.quantity };
+                        });
+                        setCustomCostItems(next); onCustomCostChange?.(next);
+                      }}>
+                      {allManufServices.map(s => <Select.Option key={s.id} value={s.id} label={s.name}>{s.name}</Select.Option>)}
+                    </Select>;
+                  }
+                  return <Input size="small" value={r.name} placeholder="Megnevezés" onChange={e => updateCustomCostItem(r.id, 'name', e.target.value)} style={{ width: '100%' }} />;
+                }
+              },
               { title: 'Menny.', key: 'quantity', width: 70, render: (_: any, r: CustomCostItemPanel) => <NumInput size="small" value={r.quantity} onChange={v => updateCustomCostItem(r.id, 'quantity', v ?? 1)} min={0} controls={false} style={{ width: '100%' }} /> },
               { title: 'Egység', key: 'unit', width: 60, render: (_: any, r: CustomCostItemPanel) => <Input size="small" value={r.unit} onChange={e => updateCustomCostItem(r.id, 'unit', e.target.value)} style={{ width: '100%' }} /> },
               { title: 'Bek. e.ár', key: 'cost_price', width: 90, render: (_: any, r: CustomCostItemPanel) => <NumInput size="small" value={r.cost_price} onChange={v => updateCustomCostItem(r.id, 'cost_price', v ?? 0)} min={0} controls={false} style={{ width: '100%' }} /> },
@@ -1414,12 +1456,16 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                   width={1000}
                   destroyOnHidden={false}
                 >
-                  <div style={{ marginBottom: 12, display: 'flex', justifyContent: 'flex-end' }}>
-                    <Button icon={<PlusOutlined />} onClick={() => {
-                      const newItem: CustomCostItemPanel = { id: Date.now(), name: '', quantity: 1, unit: 'db', cost_price: 0, markup_percent: 30, selling_unit_price: 0, selling_price: 0 };
-                      const next = [...customCostItems, newItem];
-                      setCustomCostItems(next); onCustomCostChange?.(next);
-                    }}>+ Egyéb költség</Button>
+                  <div style={{ marginBottom: 12, display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                    {(['material', 'service', 'other'] as const).map(t => (
+                      <Button key={t} icon={<PlusOutlined />} onClick={() => {
+                        const newItem: CustomCostItemPanel = { id: Date.now(), name: '', quantity: 1, unit: 'db', cost_price: 0, markup_percent: 30, selling_unit_price: 0, selling_price: 0, type: t, ref_id: null };
+                        const next = [...customCostItems, newItem];
+                        setCustomCostItems(next); onCustomCostChange?.(next);
+                      }}>
+                        {t === 'material' ? 'Alapanyag/Termék' : t === 'service' ? 'Szolgáltatás' : 'Egyéb költség'}
+                      </Button>
+                    ))}
                   </div>
                   <Table
                     dataSource={customCostItems}
@@ -1508,18 +1554,21 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
           const best = applicable.length > 0 ? applicable[0] : null;
           const discountAmt = best ? (best.discount_type === 'percent' ? Math.round(total * best.discount_value / 100) : best.discount_value) : 0;
           const hasDiscount = best && discountAmt > 0;
-          const discountedTotal = total - discountAmt;
+          const customTotal = customCostItems.reduce((s, ci) => s + ci.selling_price, 0);
+          const grandTotal = total + customTotal;
+          const grandUnit = (activePricing.quantity || 1) > 0 ? grandTotal / (activePricing.quantity || 1) : 0;
+          const discountedTotal = grandTotal - discountAmt;
           const discountedUnit = discountedTotal / (activePricing.quantity || 1);
           return (
             <>
               {hasDiscount ? (
                 <>
                   <Text style={{ fontSize: 11, color: '#888' }}>
-                    Egységár: <span style={{ textDecoration: 'line-through' }}>{fmt(activePricing.unit_price)}</span>{' '}
+                    Egységár: <span style={{ textDecoration: 'line-through' }}>{fmt(grandUnit)}</span>{' '}
                     <strong style={{ color: '#52c41a' }}>{discountedUnit.toLocaleString('hu-HU', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} Ft/db</strong>
                   </Text>
                   <br />
-                  <Title level={5} style={{ margin: '2px 0 0', textDecoration: 'line-through', color: '#999' }}>{fmt(total)}</Title>
+                  <Title level={5} style={{ margin: '2px 0 0', textDecoration: 'line-through', color: '#999' }}>{fmt(grandTotal)}</Title>
                   <Title level={5} style={{ margin: '0', color: '#52c41a' }}>{fmt(discountedTotal)}</Title>
                   <Text style={{ fontSize: 10, color: '#52c41a' }}>−{fmt(discountAmt)} kedvezmény{best!.discount_type === 'percent' ? ` (${best!.discount_value}%)` : ''}</Text>
                   <br />
@@ -1527,10 +1576,10 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
               ) : (
                 <>
                   <Text style={{ fontSize: 11, color: '#888' }}>
-                    Egységár: <strong>{fmt(activePricing.unit_price)}</strong>
+                    Egységár: <strong>{fmt(grandUnit)}</strong>
                   </Text>
                   <br />
-                  <Title level={5} style={{ margin: '2px 0 0' }}>{fmt(activePricing.total)}</Title>
+                  <Title level={5} style={{ margin: '2px 0 0' }}>{fmt(grandTotal)}</Title>
                 </>
               )}
               <Text style={{ fontSize: 10, color: '#aaa' }}>{activePricing.quantity} db</Text>
@@ -1765,9 +1814,10 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                     </>
                   )}
                   <Divider style={{ margin: '4px 0' }} />
-                  {customCostItems.length > 0 && customCostItems.map(ci => (
-                    <div key={ci.id} style={{ fontSize: 11, color: '#555' }}>{ci.name || 'Egyedi'}: <strong>{fmt(ci.selling_price)}</strong></div>
-                  ))}
+                  {customCostItems.length > 0 && (() => {
+                    const customTotal = customCostItems.reduce((s, ci) => s + ci.selling_price, 0);
+                    return <div style={{ marginBottom: 2 }}>Egyedi költségek: <strong>{fmt(customTotal)}</strong></div>;
+                  })()}
                   {(() => {
                     const customTotal = customCostItems.reduce((s, ci) => s + ci.selling_price, 0);
                     const grandTotal = (activePricing.total || 0) + customTotal;
