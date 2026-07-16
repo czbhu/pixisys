@@ -529,7 +529,24 @@ class Material(models.Model):
         # Ha van bekerülési ár és haszonkulcs, de nincs eladási ár, akkor számoljuk
         if self.unit_cost_price and not self.unit_selling_price:
             self.calculate_selling_price()
+        # Ellenőrizzük, hogy változott-e valami, ami a méretek árát befolyásolja
+        _recalc_sizes = False
+        if self.pk:
+            try:
+                _old = Material.objects.get(pk=self.pk)
+                if (_old.unit_selling_price != self.unit_selling_price or
+                        _old.width != self.width or _old.length != self.length or
+                        _old.height != self.height or _old.dimension_unit != self.dimension_unit):
+                    _recalc_sizes = True
+            except Material.DoesNotExist:
+                pass
         super().save(*args, **kwargs)
+        # Ha változott az ár/méret, újraszámítjuk a nem egyedi árú méreteket
+        if _recalc_sizes:
+            from decimal import Decimal as _Dec
+            for _sz in self.sizes.filter(pricing_type__in=['area', 'weight', 'volume']):
+                _sz._calculate_price()
+                type(_sz).objects.filter(pk=_sz.pk).update(calculated_price=_sz.calculated_price)
 
 class Warehouse(models.Model):
     """Raktár modell"""

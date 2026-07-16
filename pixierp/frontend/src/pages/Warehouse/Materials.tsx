@@ -3478,7 +3478,7 @@ const Materials: React.FC = () => {
               <Option value="volume">Térfogat alapján</Option>
             </Select>
           </Form.Item>
-          <Form.Item noStyle shouldUpdate={(prev, cur) => prev.pricing_type !== cur.pricing_type}>
+          <Form.Item noStyle shouldUpdate>
             {({ getFieldValue }) => {
               const pType = getFieldValue('pricing_type');
               if (pType === 'custom') {
@@ -3488,13 +3488,27 @@ const Materials: React.FC = () => {
                   </Form.Item>
                 );
               }
-              const basePrice = editingMaterial?.unit_selling_price || 0;
-              const baseW = editingMaterial?.width || 0;
-              const baseL = editingMaterial?.length || 0;
-              const baseH = editingMaterial?.height || 1;
+              const basePrice = Number(editingMaterial?.unit_selling_price || 0);
+              const baseW = Number(editingMaterial?.width || 0);
+              const baseL = Number(editingMaterial?.length || 0);
+              const baseH = Number(editingMaterial?.height || 1);
+              const w = Number(getFieldValue('width') || 0);
+              const l = Number(getFieldValue('length') || 0);
+              const h = Number(getFieldValue('height') || baseH);
+              let calcPrice = 0;
+              if (basePrice > 0) {
+                if (pType === 'area') {
+                  const origArea = baseW * baseL;
+                  calcPrice = origArea > 0 ? Math.round(basePrice * (w * l) / origArea * 100) / 100 : 0;
+                } else if (pType === 'weight' || pType === 'volume') {
+                  const origVol = baseW * baseL * baseH;
+                  calcPrice = origVol > 0 ? Math.round(basePrice * (w * l * h) / origVol * 100) / 100 : 0;
+                }
+              }
               return (
                 <div style={{ padding: 12, background: '#f6ffed', borderRadius: 8, marginBottom: 16, fontSize: 12 }}>
-                  Az ár automatikusan számítódik az alap ár ({Number(basePrice).toLocaleString('hu-HU')} HUF) és az alap méret ({baseW}×{baseL}{baseH > 1 ? `×${baseH}` : ''}) arányában.
+                  <div>Alap ár: <strong>{basePrice.toLocaleString('hu-HU')} HUF</strong> · Alap méret: {baseW}×{baseL}{baseH > 1 ? `×${baseH}` : ''}</div>
+                  {calcPrice > 0 && <div style={{ marginTop: 4 }}>Számított ár: <strong style={{ color: '#52c41a', fontSize: 14 }}>{calcPrice.toLocaleString('hu-HU')} HUF</strong></div>}
                 </div>
               );
             }}
