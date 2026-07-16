@@ -797,14 +797,32 @@ const PrintShopPage: React.FC = () => {
         ? `${params.product_name.trim()}, ${params.quantity} db`
         : `${params.width_mm}×${params.height_mm}mm, ${params.quantity} db, íves nyomtatás`;
 
-      const printSvcLine = bd?.print_service_name_1
-        ? `Nyomtatás 1.o: ${bd.print_service_name_1}` +
-          (bd?.print_service_name_2 ? `\nNyomtatás 2.o: ${bd.print_service_name_2}` : '') : null;
-      const impLine = bd?.items_per_sheet != null
-        ? `Impozíció: ${bd.items_per_sheet} db/ív (${bd.fit_w ?? '?'}×${bd.fit_h ?? '?'})` +
-          `${bd.rotated ? ', forgatva' : ''}, ${bd.sheets_needed} ív, ${bd.clicks_total} klikk` : null;
+      const isBoardProduct = !!(bd?.print_service_name);  // táblás UV ha print_service_name van (nem _1/_2)
+
+      // Nyomtatás sor
+      const printSvcLine = isBoardProduct
+        ? (bd.print_service_name
+            ? `Nyomtatás:\nCím oldal: ${bd.print_service_name}` +
+              (bd.print_service_items?.find((pi: any) => pi.type === 'side2_service')
+                ? `\nHátoldal: ${bd.print_service_items.find((pi: any) => pi.type === 'side2_service')?.name}` : '')
+            : null)
+        : (bd?.print_service_name_1
+            ? `Nyomtatás 1.o: ${bd.print_service_name_1}` +
+              (bd?.print_service_name_2 ? `\nNyomtatás 2.o: ${bd.print_service_name_2}` : '') : null);
+
+      // Impozíció sor
+      const impLine = isBoardProduct
+        ? (bd?.items_per_sheet != null
+            ? `Impozíció: ${bd.items_per_sheet} db/tábla (${bd.fit_w ?? '?'}×${bd.fit_h ?? '?'})` +
+              `${bd.rotated ? ', forgatva' : ''}, ${bd.boards_needed} tábla` : null)
+        : (bd?.items_per_sheet != null
+            ? `Impozíció: ${bd.items_per_sheet} db/ív (${bd.fit_w ?? '?'}×${bd.fit_h ?? '?'})` +
+              `${bd.rotated ? ', forgatva' : ''}, ${bd.sheets_needed} ív` +
+              (bd.clicks_total != null ? `, ${bd.clicks_total} klikk` : '') : null);
+
+      // Méret sor (Ívméret / Tábla méret)
       const sheetLine = bd?.sheet_w_mm != null
-        ? `Ívméret: ${bd.sheet_w_mm}×${bd.sheet_h_mm} mm` +
+        ? `${isBoardProduct ? 'Tábla méret' : 'Ívméret'}: ${bd.sheet_w_mm}×${bd.sheet_h_mm} mm` +
           (bd.cutting_info?.needs_cutting
             ? ` (vágva: ${bd.cutting_info.cut_sheet_size_mm?.[0]}×${bd.cutting_info.cut_sheet_size_mm?.[1]} mm)` : '') : null;
       const matLine = bd?.material_name ? `Alapanyag: ${bd.material_name}` : null;
@@ -841,7 +859,7 @@ const PrintShopPage: React.FC = () => {
         `Termék: ${params.product_name || 'Egyedi nyomtatás'}`,
         `Méret: ${params.width_mm} × ${params.height_mm} mm, ${sidesText}`,
         `Mennyiség: ${params.quantity} db${sheetCount > 1 ? ` × ${sheetCount} lap` : ''}`,
-        params.binding && params.binding !== 'none' ? `Kötés: ${params.binding}` : null,
+        (!isBoardProduct && params.binding && params.binding !== 'none' && params.binding !== 'cut') ? `Kötés: ${params.binding}` : null,
         matLine, printSvcLine, impLine, sheetLine, extrasLine,
       ].filter(Boolean).map(l => `<p>${String(l).replace(/\n/g, '</p><p>')}</p>`).join('');
 
