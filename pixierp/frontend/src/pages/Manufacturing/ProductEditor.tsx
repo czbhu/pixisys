@@ -85,6 +85,7 @@ interface ProductTemplate {
   print_service_options_order: number[];
   fix_cost_first_side_only: boolean;
   multi_sheet_enabled: boolean;
+  allow_custom_cost: boolean;
   custom_size_enabled: boolean;
   custom_size_unit: string;
   custom_size_width_min: number | null;
@@ -1407,6 +1408,16 @@ const ProductEditor: React.FC = () => {
                                 </Form.Item>
                                 <Form.Item name="multi_sheet_enabled" valuePropName="checked">
                                   <Checkbox>{isSheetPrint ? 'Tábla hozzáadása — a felhasználó több táblát (oldalt) adhat a megrendeléshez' : 'Ív hozzáadása — a felhasználó több ívet (oldalt) adhat a megrendeléshez'}</Checkbox>
+                                </Form.Item>
+                                <Form.Item name="allow_custom_cost" valuePropName="checked">
+                                  <Tooltip title="Engedélyezi, hogy a kalkulátor oldalon egyedi költséget lehessen megadni.">
+                                    <Checkbox>Egyedi költség engedélyezése</Checkbox>
+                                  </Tooltip>
+                                </Form.Item>
+                                <Form.Item name="allow_custom_cost" valuePropName="checked">
+                                  <Tooltip title="Engedélyezi, hogy a kalkulátor oldalon egyedi költséget lehessen megadni.">
+                                    <Checkbox>Egyedi költség engedélyezése</Checkbox>
+                                  </Tooltip>
                                 </Form.Item>
                               </>
                             )}

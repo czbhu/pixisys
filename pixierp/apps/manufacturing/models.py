@@ -1515,6 +1515,11 @@ class ProductTemplate(models.Model):
         verbose_name="Több ív engedélyezése",
         help_text="Ha igaz, a felhasználó több ívet (oldalt) adhat a megrendeléshez.",
     )
+    allow_custom_cost = models.BooleanField(
+        default=False,
+        verbose_name="Egyedi költség engedélyezése",
+        help_text="Engedélyezi, hogy a kalkulátor oldalon egyedi költséget lehessen megadni.",
+    )
 
     template_categories = models.ManyToManyField(
         'printshop.PrintTemplateCategory',

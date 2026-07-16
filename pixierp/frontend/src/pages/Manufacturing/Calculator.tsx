@@ -59,6 +59,7 @@ interface Template {
   allowed_materials_details: Material[];
   allowed_services_details: Service[];
   input_fields: any[];
+  allow_custom_cost?: boolean;
 }
 
 interface ItemRow {
@@ -176,6 +177,26 @@ const Calculator: React.FC = () => {
   const [selectedMaterials, setSelectedMaterials] = useState<SelectedMaterial[]>([]);
   const [selectedServices, setSelectedServices] = useState<SelectedService[]>([]);
 
+  // Egyedi költség tételek (ha template.allow_custom_cost = true)
+  interface CustomCostItem { id: number; name: string; quantity: number; unit: string; cost_price: number; markup_percent: number; selling_unit_price: number; selling_price: number; }
+  const [customCostItems, setCustomCostItems] = useState<CustomCostItem[]>([]);
+  const updateCustomCost = (id: number, field: keyof CustomCostItem, value: any) => {
+    setCustomCostItems(prev => prev.map(ci => {
+      if (ci.id !== id) return ci;
+      const next = { ...ci, [field]: value };
+      if (field === 'cost_price' || field === 'markup_percent') {
+        next.selling_unit_price = next.cost_price * (1 + next.markup_percent / 100);
+        next.selling_price = next.selling_unit_price * next.quantity;
+      } else if (field === 'selling_unit_price') {
+        next.markup_percent = next.cost_price > 0 ? Math.round((next.selling_unit_price / next.cost_price - 1) * 10000) / 100 : 0;
+        next.selling_price = next.selling_unit_price * next.quantity;
+      } else if (field === 'quantity') {
+        next.selling_price = next.selling_unit_price * next.quantity;
+      }
+      return next;
+    }));
+  };
+
   // Totals
   const [materialCost, setMaterialCost] = useState<number>(0);
   const [serviceCost, setServiceCost] = useState<number>(0);
@@ -201,7 +222,7 @@ const Calculator: React.FC = () => {
 
   useEffect(() => {
     calculateTotals();
-  }, [selectedMaterials, selectedServices]);
+  }, [selectedMaterials, selectedServices, customCostItems]);
 
   const fetchTemplate = async () => {
     setLoading(true);
@@ -534,13 +555,15 @@ const Calculator: React.FC = () => {
      const ms = selectedMaterials.reduce((s, m) => s + (m.totalSellingPrice || 0), 0);
      const sc = selectedServices.reduce((s, x) => s + (x.quantity * x.unit_cost_price), 0);
      const ss = selectedServices.reduce((s, x) => s + x.calculated_price, 0);
+     const cc_cost = customCostItems.reduce((s, x) => s + x.cost_price * x.quantity, 0);
+     const cc_sell = customCostItems.reduce((s, x) => s + x.selling_price, 0);
 
      setMaterialCost(mc);
      setMaterialSellingPrice(ms);
-     setServiceCost(sc);
-     setServiceSellingPrice(ss);
-     setTotalCost(mc + sc);
-     setSellingPrice(ms + ss);
+     setServiceCost(sc + cc_cost);
+     setServiceSellingPrice(ss + cc_sell);
+     setTotalCost(mc + sc + cc_cost);
+     setSellingPrice(ms + ss + cc_sell);
   };
 
   const findAllMaterialsInGroup = (groupId: number) => {
@@ -788,9 +811,13 @@ const Calculator: React.FC = () => {
         supplier: s.default_supplier_id || null
     }));
 
-    const allCostItems = [...materialCostItems, ...serviceCostItems];
-
-    let description = `Kalkuláció paraméterei:\n${rowDetails}\n\n`;
+    const allCostItems = [...materialCostItems, ...serviceCostItems, ...customCostItems.map(ci => ({
+        type: 'other' as const, name: ci.name, quantity: ci.quantity, unit: ci.unit,
+        unit_price: ci.cost_price, cost_price: ci.cost_price, markup_percent: ci.markup_percent,
+        selling_unit_price: ci.selling_unit_price, selling_price: ci.selling_price,
+        supplier: null, is_per_unit: false,
+    }))];
+        let description = `Kalkuláció paraméterei:\n${rowDetails}\n\n`;
         description += `Felhasznált anyagok és szolgáltatások:\n`;
         description += `${selectedMaterials.map(m => `- ${m.material_name}: ${m.totalMaterialQty.toFixed(2)} ${m.unit}`).join('\n')}\n`;
         description += `${selectedServices.map(s => `- ${s.service_name}: ${s.quantity.toFixed(2)} ${s.unit}`).join('\n')}`;
@@ -897,13 +924,19 @@ const Calculator: React.FC = () => {
         is_per_unit: false 
     }));
 
-    const allCostItems = [...materialCostItems, ...serviceCostItems];
+    const allCostItems = [...materialCostItems, ...serviceCostItems, ...customCostItems.map(ci => ({
+        type: 'other' as const, name: ci.name, quantity: ci.quantity, unit: ci.unit,
+        unit_price: ci.cost_price, cost_price: ci.cost_price, markup_percent: ci.markup_percent,
+        selling_unit_price: ci.selling_unit_price, selling_price: ci.selling_price,
+        supplier_id: null, is_per_unit: false,
+    }))];
 
     // Description Generation
     let description = `Kalkuláció paraméterei:\n${rowDetails}\n\n`;
     description += `Felhasznált anyagok és szolgáltatások:\n`;
     description += `${selectedMaterials.map(m => `- ${m.material_name}: ${m.totalMaterialQty.toFixed(2)} ${m.unit}`).join('\n')}\n`;
     description += `${selectedServices.map(s => `- ${s.service_name}: ${s.quantity.toFixed(2)} ${s.unit}`).join('\n')}`;
+    if (customCostItems.length > 0) description += `\nEgyedi költség:\n${customCostItems.map(ci => `- ${ci.name}: ${ci.quantity} ${ci.unit} × ${ci.selling_unit_price.toLocaleString('hu-HU')} Ft = ${ci.selling_price.toLocaleString('hu-HU')} Ft`).join('\n')}`;
 
     // Internal Description (Detailed)
     let internalDescription = `Bemeneti paraméterek részletesen:\n${rowDetails}\n\n`;
@@ -1371,6 +1404,33 @@ const Calculator: React.FC = () => {
               ]}
             />
           </Card>
+
+          {/* ── Egyedi költség (ha template.allow_custom_cost = true) ── */}
+          {template?.allow_custom_cost && (
+            <Card
+              title="Egyedi költség"
+              style={{ marginBottom: 16 }}
+              extra={<Button size="small" icon={<PlusOutlined />} onClick={() => setCustomCostItems(prev => [...prev, { id: Date.now(), name: '', quantity: 1, unit: 'db', cost_price: 0, markup_percent: 30, selling_unit_price: 0, selling_price: 0 }])}>Hozzáadás</Button>}
+            >
+              <Table
+                dataSource={customCostItems}
+                rowKey="id"
+                pagination={false}
+                size="small"
+                locale={{ emptyText: 'Nincs egyedi tétel. Kattints a Hozzáadásra.' }}
+                columns={[
+                  { title: 'Megnevezés', key: 'name', render: (_: any, r: any) => <Input size="small" value={r.name} onChange={e => updateCustomCost(r.id, 'name', e.target.value)} placeholder="pl. Szerelés" style={{ width: '100%' }} /> },
+                  { title: 'Menny.', key: 'quantity', width: 70, render: (_: any, r: any) => <NumInput size="small" value={r.quantity} onChange={v => updateCustomCost(r.id, 'quantity', v ?? 1)} min={0} controls={false} style={{ width: '100%' }} /> },
+                  { title: 'Egység', key: 'unit', width: 60, render: (_: any, r: any) => <Input size="small" value={r.unit} onChange={e => updateCustomCost(r.id, 'unit', e.target.value)} style={{ width: '100%' }} /> },
+                  { title: 'Bek. ár', key: 'cost_price', width: 90, render: (_: any, r: any) => <NumInput size="small" value={r.cost_price} onChange={v => updateCustomCost(r.id, 'cost_price', v ?? 0)} min={0} controls={false} style={{ width: '100%' }} /> },
+                  { title: 'Haszon %', key: 'markup_percent', width: 80, render: (_: any, r: any) => <NumInput size="small" value={r.markup_percent} onChange={v => updateCustomCost(r.id, 'markup_percent', v ?? 0)} min={0} controls={false} style={{ width: '100%' }} /> },
+                  { title: 'Elad. e.ár', key: 'selling_unit_price', width: 90, render: (_: any, r: any) => <NumInput size="small" value={r.selling_unit_price} onChange={v => updateCustomCost(r.id, 'selling_unit_price', v ?? 0)} min={0} controls={false} style={{ width: '100%' }} /> },
+                  { title: 'Összesen', key: 'selling_price', width: 90, render: (_: any, r: any) => <span style={{ fontWeight: 600 }}>{r.selling_price.toLocaleString('hu-HU')} Ft</span> },
+                  { title: '', key: 'del', width: 40, render: (_: any, r: any) => <Button size="small" danger icon={<DeleteOutlined />} onClick={() => setCustomCostItems(prev => prev.filter(x => x.id !== r.id))} /> },
+                ]}
+              />
+            </Card>
+          )}
         </Col>
 
         <Col span={8}>
