@@ -863,23 +863,34 @@ class MaterialSize(models.Model):
         mat_mult = _DIM_MULT.get(mat.dimension_unit or 'mm', 1)
         sz_mult = _DIM_MULT.get(self.dimension_unit or 'mm', 1)
 
-        # Alap méretek mm-ben
-        bw = float(mat.width or 0) * mat_mult
-        bl = float(mat.length or 0) * mat_mult
-        bh = float(mat.height or 1) * mat_mult
         # Méret variáns mm-ben
         sw = float(self.width) * sz_mult
         sl = float(self.length) * sz_mult
         sh = float(self.height or (mat.height or 1)) * (sz_mult if self.height else mat_mult)
 
         if self.pricing_type == 'area':
-            orig_area = bw * bl
-            new_area = sw * sl
-            ratio = (new_area / orig_area) if orig_area else 0
+            if mat.unit == 'm2':
+                # Egységár = Ft/m² → közvetlenül szorzunk a méret területével
+                size_area_m2 = (sw / 1000) * (sl / 1000)
+                ratio = size_area_m2  # ratio × base_price = Ft/m² × m² = Ft
+            else:
+                # Egységár = teljes tábla ára → arányosítás
+                bw = float(mat.width or 0) * mat_mult
+                bl = float(mat.length or 0) * mat_mult
+                orig_area = bw * bl
+                new_area = sw * sl
+                ratio = (new_area / orig_area) if orig_area else 0
         elif self.pricing_type in ('weight', 'volume'):
-            orig_vol = bw * bl * bh
-            new_vol = sw * sl * sh
-            ratio = (new_vol / orig_vol) if orig_vol else 0
+            bw = float(mat.width or 0) * mat_mult
+            bl = float(mat.length or 0) * mat_mult
+            bh = float(mat.height or 1) * mat_mult
+            if mat.unit == 'm3':
+                size_vol_m3 = (sw / 1000) * (sl / 1000) * (sh / 1000)
+                ratio = size_vol_m3
+            else:
+                orig_vol = bw * bl * bh
+                new_vol = sw * sl * sh
+                ratio = (new_vol / orig_vol) if orig_vol else 0
         else:
             ratio = 1
 

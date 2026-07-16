@@ -3504,11 +3504,20 @@ const Materials: React.FC = () => {
               let calcPrice = 0;
               if (basePrice > 0) {
                 if (pType === 'area') {
-                  const origArea = bwMm * blMm;
-                  calcPrice = origArea > 0 ? Math.round(basePrice * (wMm * lMm) / origArea * 100) / 100 : 0;
+                  if (editingMaterial?.unit === 'm2') {
+                    // Ft/m² → közvetlen szorzás a méret területével
+                    calcPrice = Math.round(basePrice * (wMm / 1000) * (lMm / 1000) * 100) / 100;
+                  } else {
+                    const origArea = bwMm * blMm;
+                    calcPrice = origArea > 0 ? Math.round(basePrice * (wMm * lMm) / origArea * 100) / 100 : 0;
+                  }
                 } else if (pType === 'weight' || pType === 'volume') {
-                  const origVol = bwMm * blMm * bhMm;
-                  calcPrice = origVol > 0 ? Math.round(basePrice * (wMm * lMm * hMm) / origVol * 100) / 100 : 0;
+                  if (editingMaterial?.unit === 'm3') {
+                    calcPrice = Math.round(basePrice * (wMm / 1000) * (lMm / 1000) * (hMm / 1000) * 100) / 100;
+                  } else {
+                    const origVol = bwMm * blMm * bhMm;
+                    calcPrice = origVol > 0 ? Math.round(basePrice * (wMm * lMm * hMm) / origVol * 100) / 100 : 0;
+                  }
                 }
               }
               return (
