@@ -855,13 +855,28 @@ const PrintShopPage: React.FC = () => {
           `\nNettó összesen: ${Math.round(bd.total).toLocaleString('hu-HU')} Ft` +
           `\nEgységár: ${Number(bd.unit_price ?? 0).toLocaleString('hu-HU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Ft/db`
         : null;
-      const description = [
+      const toHtml = (lines: (string | null)[]) =>
+        lines.filter(Boolean).map(l => `<p>${String(l).replace(/\n/g, '</p><p>')}</p>`).join('');
+
+      // Külső leírás: termék, méret, mennyiség, nyomtatás, utómunka (anyag/impozíció NEM)
+      const description = toHtml([
         `Termék: ${params.product_name || 'Egyedi nyomtatás'}`,
         `Méret: ${params.width_mm} × ${params.height_mm} mm, ${sidesText}`,
         `Mennyiség: ${params.quantity} db${sheetCount > 1 ? ` × ${sheetCount} lap` : ''}`,
         (!isBoardProduct && params.binding && params.binding !== 'none' && params.binding !== 'cut') ? `Kötés: ${params.binding}` : null,
-        matLine, printSvcLine, impLine, sheetLine, extrasLine,
-      ].filter(Boolean).map(l => `<p>${String(l).replace(/\n/g, '</p><p>')}</p>`).join('');
+        !isBoardProduct ? matLine : null,
+        printSvcLine,
+        !isBoardProduct ? impLine : null,
+        !isBoardProduct ? sheetLine : null,
+        extrasLine,
+      ]);
+
+      // Belső leírás: impozíció + tábla méret (táblás termékeknél)
+      const internal_description = isBoardProduct ? toHtml([
+        matLine,
+        impLine,
+        sheetLine,
+      ]) : '';
 
       const r4 = (v: any) => Math.round((Number(v) || 0) * 10000) / 10000;
       const supId = (v: any) => (v && Number(v) > 0 ? Number(v) : null);
@@ -949,7 +964,7 @@ const PrintShopPage: React.FC = () => {
       const unitPrice = params.quantity > 0 ? sellingTotal / params.quantity : 0;
 
       const payload: any = {
-        name: autoName, description, quantity: params.quantity, quantity_unit: 'db',
+        name: autoName, description, internal_description: internal_description || undefined, quantity: params.quantity, quantity_unit: 'db',
         net_unit_price: Math.round(unitPrice * 100) / 100,
         status: 'quote_request_open',
         date: new Date().toISOString().split('T')[0],
@@ -998,6 +1013,7 @@ const PrintShopPage: React.FC = () => {
           await ss.updateQuoteItem(rfqId, savedRfqQriId, {
             item_name: autoName,
             description,
+            internal_description: internal_description || undefined,
             net_unit_price: Math.round(unitPrice * 100) / 100,
             quantity: params.quantity,
           });
