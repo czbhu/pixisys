@@ -297,26 +297,44 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
             ptype = svc.pricing_type or 'per_sheet'
             cap = Decimal(str(svc.capacity or 1)) if svc.capacity else Decimal('1')
             svc_total = Decimal('0')
+            svc_items_bd = []
             active_items = [ci for ci in svc.cost_items.all() if ci.is_active]
             if active_items:
                 # Cost-item based calculation (standalone, internal, or supplier items)
                 for ci in active_items:
                     price = Decimal(str(ci.selling_price or 0))
+                    cost_u = Decimal(str(ci.unit_price or 0))
                     ctype = ci.calculation_type
+                    dept_id = (ci.department_id or getattr(svc, 'internal_production_department_id', None)) if ci.is_internal else None
                     if ctype == 'fixed':
-                        svc_total += price
+                        amt = price; item_qty = 1.0; item_unit = 'db'
                     elif ctype == 'area':
-                        # Felület alapú utómunka: ny. terület = qty × prod_w × prod_h
                         _bleed_svc = Decimal(str(bleed_mm or 0))
                         _ba = (w + 2 * _bleed_svc) / 1000 * (h + 2 * _bleed_svc) / 1000 * Decimal(str(int(qty) * sc))
-                        svc_total += price * _ba
+                        amt = price * _ba; item_qty = float(_ba); item_unit = 'm²'
+                    elif ctype == 'perimeter':
+                        _bleed_p = Decimal(str(bleed_mm or 0))
+                        _perim = 2 * ((w + 2 * _bleed_p) + (h + 2 * _bleed_p)) / 1000
+                        _tot_perim = _perim * Decimal(str(int(qty) * sc))
+                        amt = price * _tot_perim; item_qty = float(_tot_perim); item_unit = 'fm'
                     elif ptype == 'per_job':
-                        svc_total += price
+                        amt = price; item_qty = 1.0; item_unit = 'db'
                     elif ptype == 'per_cut':
                         cuts = (qty / cap).to_integral_value(rounding='ROUND_CEILING') if cap > 0 else qty
-                        svc_total += price * cuts
+                        amt = price * cuts; item_qty = float(cuts); item_unit = 'db'
                     else:  # per_sheet / unit
-                        svc_total += price * qty
+                        amt = price * qty; item_qty = float(qty); item_unit = 'db'
+                    svc_total += amt
+                    svc_items_bd.append({
+                        'name': ci.name, 'type': ctype,
+                        'price_per': float(price), 'cost_price_per': float(cost_u),
+                        'markup_percentage': float(ci.markup_percentage or 0),
+                        'units': item_qty, 'unit': item_unit,
+                        'total': float(amt.quantize(Decimal('0.01'))),
+                        'is_internal': ci.is_internal,
+                        'department_id': dept_id,
+                        'supplier_id': ci.supplier_id,
+                    })
             else:
                 # Fallback: legacy flat fields
                 setup = Decimal(str(svc.setup_cost_selling or 0))
@@ -334,6 +352,7 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
                 'name': svc.name,
                 'pricing_type': ptype,
                 'total': float(svc_total.quantize(Decimal('0.01'))),
+                'items': svc_items_bd,
             })
 
     subtotal = paper_cost + print_cost + finishing_cost + service_cost
@@ -440,6 +459,20 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
             total = ((subtotal + board_material_cost) * margin_mult).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
             unit_price = (total / qty).quantize(Decimal('0.0001'), rounding=ROUND_HALF_UP)
 
+    # Anyag beszállító és tábla szám
+    board_material_supplier_id = None
+    board_material_boards_needed = boards_needed
+    board_material_price_per_board = float(board_material_cost / Decimal(str(max(boards_needed, 1)))) if board_material_cost > 0 else 0.0
+    if material_id and board_material_cost > 0:
+        try:
+            from apps.warehouse.models import Material as _WMatSup
+            _ms = _WMatSup.objects.prefetch_related('materialsupplier_set').get(id=material_id)
+            _sup = _ms.materialsupplier_set.first()
+            if _sup:
+                board_material_supplier_id = _sup.supplier_id
+        except Exception:
+            pass
+
     return {
         'paper_cost': float(paper_cost.quantize(Decimal('0.01'))),
         'print_cost_side1': float(print_cost_s1.quantize(Decimal('0.01'))),
@@ -466,6 +499,9 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
         'size_comparison': size_comparison,
         'board_material_cost': float(board_material_cost.quantize(Decimal('0.01'))),
         'board_material_label': board_material_label,
+        'board_material_supplier_id': board_material_supplier_id,
+        'board_material_boards_needed': board_material_boards_needed,
+        'board_material_price_per_board': board_material_price_per_board,
     }
 
 
