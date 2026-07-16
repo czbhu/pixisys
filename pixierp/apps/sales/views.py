@@ -621,7 +621,7 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                 to_attr='prefetched_cost_items',
             ),
             # A tétel-szerializáció delivery_note_* / order_ip_address mez\u0151i különben
-            # tételenként lekérdeznék a customerorderitem_set-et és a szállítóleveleket (N+1) \u2192 lassú lista.
+            # tételenként lekérdeznék a customerorderitem_set-et és a szállítóleveleket (N+1) → lassú lista.
             Prefetch(
                 'customerorderitem_set',
                 queryset=CustomerOrderItem.objects.exclude(
@@ -636,6 +636,15 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                     )
                 ).order_by('customer_order__created_at'),
                 to_attr='prefetched_active_cois',
+            ),
+            # delivered_quantity / remaining_quantity: közvetlen quote_item → megerősített szállítólevelek
+            # Enélkül a QuoteRequestItemSerializer.get_delivered_quantity() minden tételhez 3 DB query-t futtat (N+1).
+            Prefetch(
+                'delivery_items',
+                queryset=DeliveryNoteItem.objects.select_related('delivery_note').filter(
+                    delivery_note__is_confirmed=True
+                ),
+                to_attr='prefetched_confirmed_delivery_items',
             ),
         )
         if not light:

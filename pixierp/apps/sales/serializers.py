@@ -333,21 +333,43 @@ class QuoteRequestItemSerializer(serializers.ModelSerializer):
 
     def get_delivered_quantity(self, obj):
         """Összes már leszállított mennyiség (megerősített szállítólevelekből).
-        Két útvonalon keresi: közvetlen quote_item FK (új) + CustomerOrderItem-en át (régi)."""
+        Két útvonalon keresi: közvetlen quote_item FK (új) + CustomerOrderItem-en át (régi).
+        Prefetch-elt adatokat használ ha elérhetőek (N+1 elkerülése)."""
         try:
-            from apps.sales.models import DeliveryNoteItem, CustomerOrderItem
-            # Közvetlen quote_item hivatkozás (új folyamat)
-            direct = list(DeliveryNoteItem.objects.filter(
-                quote_item=obj,
-                delivery_note__is_confirmed=True,
-            ).values_list('quantity', flat=True))
-            # CustomerOrderItem-en át (régi folyamat)
-            coi_ids = list(CustomerOrderItem.objects.filter(quote_item=obj).values_list('id', flat=True))
-            via_coi = list(DeliveryNoteItem.objects.filter(
-                customer_order_item_id__in=coi_ids,
-                delivery_note__is_confirmed=True,
-            ).values_list('quantity', flat=True)) if coi_ids else []
-            total = sum(float(q) for q in direct + via_coi)
+            # Közvetlen quote_item hivatkozás (új folyamat) — prefetch-elt ha van
+            direct_items = getattr(obj, 'prefetched_confirmed_delivery_items', None)
+            if direct_items is not None:
+                direct_qty = sum(float(d.quantity) for d in direct_items)
+            else:
+                direct_qty = sum(float(q) for q in DeliveryNoteItem.objects.filter(
+                    quote_item=obj,
+                    delivery_note__is_confirmed=True,
+                ).values_list('quantity', flat=True))
+
+            # CustomerOrderItem-en át (régi folyamat) — prefetched_active_cois ha van
+            prefetched_cois = getattr(obj, 'prefetched_active_cois', None)
+            if prefetched_cois is not None:
+                via_coi_qty = 0.0
+                for coi in prefetched_cois:
+                    di_list = getattr(coi, 'prefetched_delivery_items', None)
+                    if di_list is not None:
+                        via_coi_qty += sum(
+                            float(di.quantity) for di in di_list
+                            if di.delivery_note.is_confirmed
+                        )
+                    else:
+                        via_coi_qty += sum(float(q) for q in DeliveryNoteItem.objects.filter(
+                            customer_order_item=coi,
+                            delivery_note__is_confirmed=True,
+                        ).values_list('quantity', flat=True))
+            else:
+                coi_ids = list(CustomerOrderItem.objects.filter(quote_item=obj).values_list('id', flat=True))
+                via_coi_qty = sum(float(q) for q in DeliveryNoteItem.objects.filter(
+                    customer_order_item_id__in=coi_ids,
+                    delivery_note__is_confirmed=True,
+                ).values_list('quantity', flat=True)) if coi_ids else 0.0
+
+            total = direct_qty + via_coi_qty
             return round(total, 4) if total > 0 else 0.0
         except Exception:
             return 0.0
