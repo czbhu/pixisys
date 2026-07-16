@@ -994,7 +994,10 @@ const RFQs: React.FC = () => {
     );
   };
 
-  const renderRfqStatusControl = (record: any, rfqId: number) => {
+  const [statusPopoverOpenKey, setStatusPopoverOpenKey] = React.useState<string | null>(null);
+
+  const renderRfqStatusControl = (record: any, rfqId: number | string) => {
+    const popKey = String(rfqId);
     const currentStatus = getDisplayStatus(record);
     const currentLabel = record?.effective_status_label || RFQ_STATUS_META[currentStatus]?.text || currentStatus;
     const popoverContent = (
@@ -1012,8 +1015,11 @@ const RFQs: React.FC = () => {
                 const appliedStatus = res?.requested_status || res?.status || option.value;
                 const appliedLabel = RFQ_STATUS_META[appliedStatus]?.text || option.label;
                 message.success(`Státusz: ${appliedLabel}`);
+                setStatusPopoverOpenKey(null); // zárja a popover-t
                 setRfqs(prev => prev.map(rfq =>
-                  rfq.id !== rfqId ? rfq : { ...rfq, status: appliedStatus, effective_status: appliedStatus, effective_status_label: appliedLabel }
+                  String(rfq.id) !== String(rfqId) && getRfqRef(rfq) !== String(rfqId)
+                    ? rfq
+                    : { ...rfq, status: appliedStatus, effective_status: appliedStatus, effective_status_label: appliedLabel }
                 ));
                 // Nincs loadData() – az optimista frissítés elegendő
               } catch (e: any) {
@@ -1029,7 +1035,7 @@ const RFQs: React.FC = () => {
     );
     return (
       <div style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2 }}>
-        <Popover content={popoverContent} title="Státusz váltás" trigger="click" styles={{ body: { padding: '6px 8px' } }} getPopupContainer={() => document.body} zIndex={9999}>
+        <Popover content={popoverContent} title="Státusz váltás" trigger="click" open={statusPopoverOpenKey === popKey} onOpenChange={(v) => setStatusPopoverOpenKey(v ? popKey : null)} styles={{ body: { padding: '6px 8px' } }} getPopupContainer={() => document.body} zIndex={9999}>
           <span style={{ cursor: 'pointer' }}>{statusTag(currentStatus, currentLabel)}</span>
         </Popover>
         {(['in_delivery', 'delivered'].includes(currentStatus) && record?.delivery_note_number) && (
@@ -1050,7 +1056,7 @@ const RFQs: React.FC = () => {
   const renderItemCostStatusControl = (r: any) => {
     const costStatuses: { id: number; status: string }[] = r.cost_items_statuses || [];
     if (!costStatuses.length) {
-      return renderRfqStatusControl(r, r.rfq_id);
+      return renderRfqStatusControl(r, r.rfq_pk || r.rfq_id);
     }
     const topStatus = (r.effective_status === 'invoiced') ? 'invoiced' : (r._costTopStatus ?? 'new');
     const isPartial = r._costIsPartial && topStatus !== 'invoiced';
@@ -1529,7 +1535,7 @@ const RFQs: React.FC = () => {
       sorter: (a: any, b: any) => getDisplayStatus(a).localeCompare(getDisplayStatus(b)),
       render: (_: any, r: any) => (
         <Space size={4} align="center">
-          {renderRfqStatusControl(r, r.rfq_id)}
+          {renderRfqStatusControl(r, r.rfq_pk || r.rfq_id)}
           {r.is_manufacturable && (
             <Tooltip title="Gyártható" getPopupContainer={() => document.body}>
               <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 16 }} />
