@@ -971,7 +971,10 @@ const PrintShopPage: React.FC = () => {
         if (!ci.name && ci.selling_price === 0) continue;
         costItems.push({ type: 'other', name: ci.name || 'Egyedi tétel', quantity: r4(ci.quantity), unit: ci.unit || 'db',
           cost_price: r4(ci.cost_price), unit_price: r4(ci.selling_unit_price), selling_unit_price: r4(ci.selling_unit_price),
-          selling_price: r4(ci.selling_price), markup_percent: r4(ci.markup_percent), is_internal: false, supplier: null, formulas: { _syncQty: false } });
+          selling_price: r4(ci.selling_price), markup_percent: r4(ci.markup_percent),
+          is_internal: ci.is_internal ?? false, is_per_unit: ci.is_per_unit ?? false,
+          supplier: supId(ci.supplier_id), department: ci.department_id ?? null,
+          formulas: { _syncQty: false } });
       }
       const sellingTotal = costItems.reduce((s: number, ci: any) => s + (Number(ci.selling_price) || 0), 0);
       const unitPrice = params.quantity > 0 ? sellingTotal / params.quantity : 0;

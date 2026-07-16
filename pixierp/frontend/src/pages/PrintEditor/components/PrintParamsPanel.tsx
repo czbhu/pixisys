@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Select, Input, InputNumber, Radio, Divider, Typography, Spin, Tooltip, Tag, Modal, Row, Col, Button, Table } from 'antd';
+import { Select, Input, InputNumber, Radio, Divider, Typography, Spin, Tooltip, Tag, Modal, Row, Col, Button, Table, Checkbox } from 'antd';
 import NumInput from '../../../components/NumInput';
-import { InfoCircleOutlined, CaretDownOutlined, CaretRightOutlined, AppstoreOutlined, MinusOutlined, PlusOutlined, DeleteOutlined } from '@ant-design/icons';
+import { InfoCircleOutlined, CaretDownOutlined, CaretRightOutlined, AppstoreOutlined, MinusOutlined, PlusOutlined, DeleteOutlined, CopyOutlined } from '@ant-design/icons';
 import type { PrintParams } from './Step1Params';
 import api from '../../../services/api';
 
@@ -229,6 +229,10 @@ const readClickState = (): any => {
 export interface CustomCostItemPanel {
   id: number; name: string; quantity: number; unit: string;
   cost_price: number; markup_percent: number; selling_unit_price: number; selling_price: number;
+  is_per_unit?: boolean;
+  is_internal?: boolean;
+  supplier_id?: number | null;
+  department_id?: number | null;
 }
 
 const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, onTemplateCategoriesChange, onServicesChange, onCustomCostChange, isAdmin }) => {
@@ -285,6 +289,12 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
   const [isBoardImpositionMode, setIsBoardImpositionMode] = useState(false);
   // Egyedi költség tételek (ha selectedProduct.allow_custom_cost = true)
   const [customCostItems, setCustomCostItems] = useState<CustomCostItemPanel[]>([]);
+  const [costSuppliers, setCostSuppliers] = useState<{id: number; name: string}[]>([]);
+  const [costDepartments, setCostDepartments] = useState<{id: number; name: string}[]>([]);
+  useEffect(() => {
+    api.get('/crm/companies/?is_supplier=true&page_size=1000').then(r => setCostSuppliers(Array.isArray(r.data?.results) ? r.data.results : (Array.isArray(r.data) ? r.data : []))).catch(() => {});
+    api.get('/hr/departments/?page_size=500').then(r => setCostDepartments(Array.isArray(r.data?.results) ? r.data.results : (Array.isArray(r.data) ? r.data : []))).catch(() => {});
+  }, []);
   const updateCustomCostItem = (id: number, field: keyof CustomCostItemPanel, value: any) => {
     setCustomCostItems(prev => {
       const next = prev.map(ci => {
@@ -1347,10 +1357,18 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                 rowKey="id"
                 pagination={false}
                 size="small"
-                scroll={{ x: 620 }}
+                scroll={{ x: 860 }}
                 locale={{ emptyText: <span style={{ fontSize: 11, color: '#aaa' }}>Nincs egyedi tétel</span> }}
                 style={{ marginBottom: 8 }}
                 columns={[
+                  {
+                    title: '', key: 'per_unit', width: 28,
+                    render: (_: any, r: CustomCostItemPanel) => (
+                      <Tooltip title="Egységre vonatkozik">
+                        <Checkbox checked={!!r.is_per_unit} onChange={e => updateCustomCostItem(r.id, 'is_per_unit', e.target.checked)} />
+                      </Tooltip>
+                    ),
+                  },
                   {
                     title: 'Megnevezés', key: 'name', width: 120,
                     render: (_: any, r: CustomCostItemPanel) => (
@@ -1396,11 +1414,47 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                     ),
                   },
                   {
-                    title: '', key: 'del', width: 36,
+                    title: 'Beszállító', key: 'supplier', width: 200,
                     render: (_: any, r: CustomCostItemPanel) => (
-                      <Button size="small" danger icon={<DeleteOutlined />}
-                        onClick={() => { const next = customCostItems.filter(x => x.id !== r.id); setCustomCostItems(next); onCustomCostChange?.(next); }}
-                      />
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                        <Checkbox checked={!!r.is_internal}
+                          onChange={e => { updateCustomCostItem(r.id, 'is_internal', e.target.checked); updateCustomCostItem(r.id, 'supplier_id', null); updateCustomCostItem(r.id, 'department_id', null); }}
+                        >Belső</Checkbox>
+                        {r.is_internal ? (
+                          <Select size="small" style={{ flex: 1, minWidth: 80 }} allowClear placeholder="Részleg"
+                            value={r.department_id ?? undefined}
+                            onChange={(v: number | undefined) => updateCustomCostItem(r.id, 'department_id', v ?? null)}
+                          >
+                            {costDepartments.map(d => <Select.Option key={d.id} value={d.id}>{d.name}</Select.Option>)}
+                          </Select>
+                        ) : (
+                          <Select size="small" style={{ flex: 1, minWidth: 80 }} allowClear showSearch optionFilterProp="label" placeholder="Beszállító"
+                            value={r.supplier_id ?? undefined}
+                            onChange={(v: number | undefined) => updateCustomCostItem(r.id, 'supplier_id', v ?? null)}
+                          >
+                            {costSuppliers.map(s => <Select.Option key={s.id} value={s.id} label={s.name}>{s.name}</Select.Option>)}
+                          </Select>
+                        )}
+                      </div>
+                    ),
+                  },
+                  {
+                    title: '', key: 'actions', width: 60,
+                    render: (_: any, r: CustomCostItemPanel) => (
+                      <div style={{ display: 'flex', gap: 2 }}>
+                        <Button size="small" icon={<CopyOutlined />} title="Másolás"
+                          onClick={() => {
+                            const copy = { ...r, id: Date.now() + Math.random() };
+                            const next = [...customCostItems];
+                            const idx = next.findIndex(x => x.id === r.id);
+                            next.splice(idx + 1, 0, copy);
+                            setCustomCostItems(next); onCustomCostChange?.(next);
+                          }}
+                        />
+                        <Button size="small" danger icon={<DeleteOutlined />} title="Törlés"
+                          onClick={() => { const next = customCostItems.filter(x => x.id !== r.id); setCustomCostItems(next); onCustomCostChange?.(next); }}
+                        />
+                      </div>
                     ),
                   },
                 ]}
