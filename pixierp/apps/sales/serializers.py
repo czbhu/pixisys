@@ -332,14 +332,22 @@ class QuoteRequestItemSerializer(serializers.ModelSerializer):
         return coi.customer_order.invoice_number or None
 
     def get_delivered_quantity(self, obj):
-        """Összes már leszállított mennyiség (confirmed/delivered szállítólevelekből)."""
+        """Összes már leszállított mennyiség (megerősített szállítólevelekből).
+        Két útvonalon keresi: közvetlen quote_item FK (új) + CustomerOrderItem-en át (régi)."""
         try:
-            from apps.sales.models import DeliveryNoteItem
-            qs = DeliveryNoteItem.objects.filter(
+            from apps.sales.models import DeliveryNoteItem, CustomerOrderItem
+            # Közvetlen quote_item hivatkozás (új folyamat)
+            direct = list(DeliveryNoteItem.objects.filter(
                 quote_item=obj,
-                delivery_note__status__in=['confirmed', 'delivered'],
-            ).values_list('quantity', flat=True)
-            total = sum(float(q) for q in qs)
+                delivery_note__is_confirmed=True,
+            ).values_list('quantity', flat=True))
+            # CustomerOrderItem-en át (régi folyamat)
+            coi_ids = list(CustomerOrderItem.objects.filter(quote_item=obj).values_list('id', flat=True))
+            via_coi = list(DeliveryNoteItem.objects.filter(
+                customer_order_item_id__in=coi_ids,
+                delivery_note__is_confirmed=True,
+            ).values_list('quantity', flat=True)) if coi_ids else []
+            total = sum(float(q) for q in direct + via_coi)
             return round(total, 4) if total > 0 else 0.0
         except Exception:
             return 0.0
