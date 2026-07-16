@@ -1410,17 +1410,19 @@ const ProductEditor: React.FC = () => {
                                 <Form.Item name="multi_sheet_enabled" valuePropName="checked">
                                   <Checkbox>{isSheetPrint ? 'Tábla hozzáadása — a felhasználó több táblát (oldalt) adhat a megrendeléshez' : 'Ív hozzáadása — a felhasználó több ívet (oldalt) adhat a megrendeléshez'}</Checkbox>
                                 </Form.Item>
-                                <Form.Item name="allow_custom_cost" valuePropName="checked">
-                                  <Tooltip title="Engedélyezi, hogy a kalkulátor oldalon egyedi költséget lehessen megadni.">
-                                    <Checkbox>Egyedi költség engedélyezése</Checkbox>
-                                  </Tooltip>
-                                </Form.Item>
                               </>
                             )}
 
                           </>
                         );
                       }}
+                    </Form.Item>
+
+                    {/* Egyedi költség engedélyezése – külvül a shouldUpdate-ból, hogy megbízhatóan menthetdőn */}
+                    <Form.Item name="allow_custom_cost" valuePropName="checked" style={{ marginTop: 4, marginBottom: 8 }}>
+                      <Tooltip title="Engedélyezi, hogy a kalkulátor oldalon egyedi költséget lehessen megadni.">
+                        <Checkbox>Egyedi költség engedélyezése</Checkbox>
+                      </Tooltip>
                     </Form.Item>
 
                     {/* Service groups — always visible; DIGIPR_K / DIGIPR_CMYK are protected */}
