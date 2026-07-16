@@ -864,6 +864,13 @@ const PrintShopPage: React.FC = () => {
       const toHtml = (lines: (string | null)[]) =>
         lines.filter(Boolean).map(l => `<p>${String(l).replace(/\n/g, '</p><p>')}</p>`).join('');
 
+      // Egyedi költségek sor a leírásba
+      const customCostLine = (() => {
+        const items = panelCustomCostRef.current.filter(ci => ci.name);
+        if (items.length === 0) return null;
+        return `Egyedi költségek:\n${items.map(ci => `- ${ci.name}`).join('\n')}`;
+      })();
+
       // Külső leírás: termék, méret, mennyiség, nyomtatás, utómunka (impozíció/tábla méret NEM)
       const description = toHtml([
         `Termék: ${params.product_name || 'Egyedi nyomtatás'}`,
@@ -875,6 +882,7 @@ const PrintShopPage: React.FC = () => {
         !isBoardProduct ? impLine : null,
         !isBoardProduct ? sheetLine : null,
         extrasLine,
+        customCostLine,
       ]);
 
       // Belső leírás: impozíció + tábla méret (táblás termékeknél)
