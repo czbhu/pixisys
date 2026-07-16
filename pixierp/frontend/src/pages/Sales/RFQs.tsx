@@ -1426,9 +1426,27 @@ const RFQs: React.FC = () => {
       },
     },
     {
-      title: 'Darabszám', key: 'quantity', width: 100, align: 'right' as const,
+      title: 'Darabszám', key: 'quantity', width: 110, align: 'right' as const,
       sorter: (a: any, b: any) => Number(a.quantity || 0) - Number(b.quantity || 0),
-      render: (_: any, r: any) => `${Number(r.quantity || 0).toLocaleString('hu-HU', { maximumFractionDigits: 4 })} ${r.unit || 'db'}`,
+      render: (_: any, r: any) => {
+        const qty = Number(r.quantity || 0);
+        const remaining = r.remaining_quantity != null ? Number(r.remaining_quantity) : null;
+        const delivered = r.delivered_quantity != null && Number(r.delivered_quantity) > 0 ? Number(r.delivered_quantity) : null;
+        return (
+          <div style={{ textAlign: 'right' }}>
+            <div>{qty.toLocaleString('hu-HU', { maximumFractionDigits: 4 })} {r.unit || 'db'}</div>
+            {delivered != null && remaining != null && (
+              <div style={{ fontSize: 11, color: remaining > 0 ? '#fa8c16' : '#52c41a', lineHeight: '14px', marginTop: 1 }}>
+                <span title={`Szállítva: ${delivered.toLocaleString('hu-HU', { maximumFractionDigits: 4 })} ${r.unit || 'db'}`}>
+                  {remaining > 0
+                    ? `↳ ${remaining.toLocaleString('hu-HU', { maximumFractionDigits: 4 })} ${r.unit || 'db'} hiányzik`
+                    : `↳ teljesen szállítva`}
+                </span>
+              </div>
+            )}
+          </div>
+        );
+      },
     },
     {
       title: 'Nettó egység ár', key: 'net_unit_price', width: 130, align: 'right' as const,
