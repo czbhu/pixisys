@@ -1878,7 +1878,15 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                   <Divider style={{ margin: '4px 0' }} />
                   {customCostItems.length > 0 && (() => {
                     const customTotal = customCostItems.reduce((s, ci) => s + ci.selling_price, 0);
-                    return <div style={{ marginBottom: 2 }}>Egyedi költségek: <strong>{fmt(customTotal)}</strong></div>;
+                    const baseUnitPrice = (params.quantity || 1) > 0 ? (activePricing.total || 0) / (params.quantity || 1) : 0;
+                    return (
+                      <>
+                        <div style={{ fontSize: 11, color: '#888', marginBottom: 1 }}>
+                          Egyedi költség nélkül: {baseUnitPrice.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} Ft/db · {fmt(activePricing.total || 0)}
+                        </div>
+                        <div style={{ marginBottom: 2 }}>Egyedi költségek: <strong>{fmt(customTotal)}</strong></div>
+                      </>
+                    );
                   })()}
                   {(() => {
                     const customTotal = customCostItems.reduce((s, ci) => s + ci.selling_price, 0);
