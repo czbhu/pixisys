@@ -7535,11 +7535,11 @@ class DeliveryNoteViewSet(viewsets.ModelViewSet):
             for qr_id, items_info in rfq_ids.items():
                 qr_obj = QuoteRequest.objects.filter(id=qr_id).first()
                 if qr_obj:
-                    items_str = ', '.join(f'{qty} {unit} ({name})' for name, qty, unit in items_info if name or qty)
+                    items_str = ', '.join(f'{qty} {unit}' for name, qty, unit in items_info)
                     action_text = f'Szállítólevél visszaigazolva: {dn.delivery_note_number}'
                     if items_str:
                         action_text += f' – {items_str}'
-                    QuoteLog.objects.get_or_create(quote=qr_obj, action=action_text)
+                    QuoteLog.objects.get_or_create(quote=qr_obj, action=action_text[:200])
         except Exception:
             pass
 
@@ -8208,7 +8208,7 @@ class DeliveryNoteViewSet(viewsets.ModelViewSet):
                     _sync_rfq_primary_snapshot(qr_obj)
                     # Napló bejegyzés a szállításról
                     items_info = rfq_item_info.get(qr_id, [])
-                    items_str = ', '.join(f'{qty} {unit} ({name})' for name, qty, unit in items_info if name or qty) if items_info else ''
+                    items_str = ', '.join(f'{qty} {unit}' for name, qty, unit in items_info) if items_info else ''
                     action_text = f'Szállítólevél visszaigazolva: {note.delivery_note_number}'
                     if items_str:
                         action_text += f' – {items_str}'
