@@ -1414,11 +1414,6 @@ const ProductEditor: React.FC = () => {
                                     <Checkbox>Egyedi költség engedélyezése</Checkbox>
                                   </Tooltip>
                                 </Form.Item>
-                                <Form.Item name="allow_custom_cost" valuePropName="checked">
-                                  <Tooltip title="Engedélyezi, hogy a kalkulátor oldalon egyedi költséget lehessen megadni.">
-                                    <Checkbox>Egyedi költség engedélyezése</Checkbox>
-                                  </Tooltip>
-                                </Form.Item>
                               </>
                             )}
 
