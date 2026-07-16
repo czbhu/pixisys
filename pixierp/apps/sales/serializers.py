@@ -331,6 +331,33 @@ class QuoteRequestItemSerializer(serializers.ModelSerializer):
                 return None
         return coi.customer_order.invoice_number or None
 
+    def get_delivered_quantity(self, obj):
+        """Összes már leszállított mennyiség (confirmed/delivered szállítólevelekből)."""
+        try:
+            from apps.sales.models import DeliveryNoteItem
+            qs = DeliveryNoteItem.objects.filter(
+                quote_item=obj,
+                delivery_note__status__in=['confirmed', 'delivered'],
+            ).values_list('quantity', flat=True)
+            total = sum(float(q) for q in qs)
+            return round(total, 4) if total > 0 else 0.0
+        except Exception:
+            return 0.0
+
+    def get_remaining_quantity(self, obj):
+        """Még szállítandó mennyiség = teljes menny. − leszállított menny."""
+        try:
+            delivered = self.get_delivered_quantity(obj)
+            if delivered <= 0:
+                return None  # nem volt szállítás → ne jelezzük
+            remaining = float(obj.quantity or 0) - delivered
+            return round(remaining, 4)
+        except Exception:
+            return None
+
+    delivered_quantity = serializers.SerializerMethodField()
+    remaining_quantity = serializers.SerializerMethodField()
+
     class Meta:
         model = QuoteRequestItem
         fields = '__all__'

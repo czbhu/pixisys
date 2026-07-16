@@ -526,7 +526,25 @@ const RFQs: React.FC = () => {
               title: 'Mennyiség',
               key: 'qty',
               width: 120,
-              render: (_: any, r: any) => `${Number(r.quantity || 0).toLocaleString('hu-HU', { maximumFractionDigits: 4 })} ${r.unit || 'db'}`,
+              render: (_: any, r: any) => {
+                const qty = Number(r.quantity || 0);
+                const remaining = r.remaining_quantity != null ? Number(r.remaining_quantity) : null;
+                const delivered = r.delivered_quantity != null && Number(r.delivered_quantity) > 0 ? Number(r.delivered_quantity) : null;
+                return (
+                  <div>
+                    <div>{qty.toLocaleString('hu-HU', { maximumFractionDigits: 4 })} {r.unit || 'db'}</div>
+                    {delivered != null && remaining != null && (
+                      <div style={{ fontSize: 11, color: remaining > 0 ? '#fa8c16' : '#52c41a', lineHeight: '14px', marginTop: 1 }}>
+                        <span title={`Szállítva: ${delivered.toLocaleString('hu-HU', { maximumFractionDigits: 4 })} ${r.unit || 'db'}`}>
+                          {remaining > 0
+                            ? `↳ még szállítandó: ${remaining.toLocaleString('hu-HU', { maximumFractionDigits: 4 })} ${r.unit || 'db'}`
+                            : `↳ teljesen szállítva`}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                );
+              },
             },
             {
               title: 'Csatolmányok',
