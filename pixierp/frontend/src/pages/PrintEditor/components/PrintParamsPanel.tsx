@@ -1575,7 +1575,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                       {((activePricing as any).print_service_items ?? []).filter((pi: any) => pi.type !== 'side2_service').map((pi: any, i: number) => (
                         <div key={i} style={{ paddingLeft: 12, fontSize: 11, color: '#666' }}>
                           {pi.type === 'area'
-                            ? `${pi.name}: ${pi.area_m2_per?.toFixed(3)} m² (nyomott ter.) × ${pi.units} tábla × ${Number(pi.price_per).toLocaleString('hu-HU')} Ft/m² = `
+                            ? `${pi.name}: ${pi.area_m2_per?.toFixed(4)} m²/db × ${pi.units} db × ${Number(pi.price_per).toLocaleString('hu-HU')} Ft/m² = `
                             : pi.type === 'fixed'
                             ? `Fix: ${pi.name}: `
                             : `${pi.name}: ${pi.units} db × ${Number(pi.price_per).toLocaleString('hu-HU')} Ft = `}
