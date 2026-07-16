@@ -287,8 +287,10 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
                          if sides == '2' else Decimal('0'))
         print_cost = print_cost_s1 + print_cost_s2
 
-    # Kötészeti költség
-    if binding == 'fold':
+    # Kötészeti költség (táblás/UV nyomtatásnál nincs – ott a szolgáltatásokban van)
+    if print_service_id:
+        finishing_cost = Decimal('0')
+    elif binding == 'fold':
         finishing_cost = (config.cutting_cost
                           + config.folding_cost_per_fold * Decimal(str(max(folding_count, 0))))
     else:

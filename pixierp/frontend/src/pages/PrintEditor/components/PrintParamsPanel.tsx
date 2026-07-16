@@ -1606,7 +1606,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                   {!(activePricing as any).print_service_name && activePricing.print_cost_side2 > 0 && (
                     <div>Nyomtatás 2.o: <strong>{fmt(activePricing.print_cost_side2)}</strong></div>
                   )}
-                  <div>Kötészet: <strong>{fmt(activePricing.finishing_cost)}</strong></div>
+                  {activePricing.finishing_cost > 0 && <div>Kötészet: <strong>{fmt(activePricing.finishing_cost)}</strong></div>}
                   {(activePricing.service_breakdown ?? []).length > 0 && (
                     <>
                       {(activePricing.service_breakdown ?? []).map(sb => (
