@@ -480,10 +480,12 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
     board_material_boards_needed = boards_needed
     board_material_price_per_board = float(board_material_cost / Decimal(str(max(boards_needed, 1)))) if board_material_cost > 0 else 0.0
     board_material_cost_price_per_board = 0.0
+    board_material_name = None
     if material_id and board_material_cost > 0:
         try:
             from apps.warehouse.models import Material as _WMatSup
             _ms = _WMatSup.objects.prefetch_related('materialsupplier_set').get(id=material_id)
+            board_material_name = _ms.name
             _sup = _ms.materialsupplier_set.first()
             if _sup:
                 board_material_supplier_id = _sup.supplier_id
@@ -521,6 +523,7 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
         'size_comparison': size_comparison,
         'board_material_cost': float(board_material_cost.quantize(Decimal('0.01'))),
         'board_material_label': board_material_label,
+        'board_material_name': board_material_name,
         'board_material_supplier_id': board_material_supplier_id,
         'board_material_boards_needed': board_material_boards_needed,
         'board_material_price_per_board': board_material_price_per_board,

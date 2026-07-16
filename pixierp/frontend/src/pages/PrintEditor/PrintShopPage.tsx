@@ -828,7 +828,9 @@ const PrintShopPage: React.FC = () => {
         ? `${isBoardProduct ? 'Tábla méret' : 'Ívméret'}: ${bd.sheet_w_mm}×${bd.sheet_h_mm} mm` +
           (bd.cutting_info?.needs_cutting
             ? ` (vágva: ${bd.cutting_info.cut_sheet_size_mm?.[0]}×${bd.cutting_info.cut_sheet_size_mm?.[1]} mm)` : '') : null;
-      const matLine = bd?.material_name ? `Alapanyag: ${bd.material_name}` : null;
+      const matLine = isBoardProduct
+        ? (bd?.board_material_name ? `Alapanyag: ${bd.board_material_name}` : null)
+        : (bd?.material_name ? `Alapanyag: ${bd.material_name}` : null);
       const extrasLine = (() => {
         if (!bd?.service_breakdown?.length) return null;
         // services1/2 közvetlenül a PrintParamsPanel state-ből (ref), megbízható forrás
