@@ -3495,14 +3495,20 @@ const Materials: React.FC = () => {
               const w = Number(getFieldValue('width') || 0);
               const l = Number(getFieldValue('length') || 0);
               const h = Number(getFieldValue('height') || baseH);
+              const _DIM: Record<string, number> = { mm: 1, cm: 10, m: 1000 };
+              const baseMult = _DIM[editingMaterial?.dimension_unit ?? 'mm'] ?? 1;
+              const szMult = _DIM[getFieldValue('dimension_unit') ?? 'mm'] ?? 1;
+              const bwMm = baseW * baseMult, blMm = baseL * baseMult, bhMm = baseH * baseMult;
+              const wMm = w * szMult, lMm = l * szMult;
+              const hMm = Number(getFieldValue('height') || 0) > 0 ? h * szMult : bhMm;
               let calcPrice = 0;
               if (basePrice > 0) {
                 if (pType === 'area') {
-                  const origArea = baseW * baseL;
-                  calcPrice = origArea > 0 ? Math.round(basePrice * (w * l) / origArea * 100) / 100 : 0;
+                  const origArea = bwMm * blMm;
+                  calcPrice = origArea > 0 ? Math.round(basePrice * (wMm * lMm) / origArea * 100) / 100 : 0;
                 } else if (pType === 'weight' || pType === 'volume') {
-                  const origVol = baseW * baseL * baseH;
-                  calcPrice = origVol > 0 ? Math.round(basePrice * (w * l * h) / origVol * 100) / 100 : 0;
+                  const origVol = bwMm * blMm * bhMm;
+                  calcPrice = origVol > 0 ? Math.round(basePrice * (wMm * lMm * hMm) / origVol * 100) / 100 : 0;
                 }
               }
               return (

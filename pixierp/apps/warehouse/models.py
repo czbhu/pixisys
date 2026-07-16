@@ -852,27 +852,33 @@ class MaterialSize(models.Model):
         super().save(*args, **kwargs)
 
     def _calculate_price(self):
-        """Ár arányosítás az eredeti mérethez képest."""
+        """Ár arányosítás az eredeti mérethez képest – mértékegységek figyelembevételével."""
         mat = self.material
         base_price = mat.unit_selling_price or 0
         if not base_price:
             self.calculated_price = 0
             return
 
+        _DIM_MULT = {'mm': 1, 'cm': 10, 'm': 1000}
+        mat_mult = _DIM_MULT.get(mat.dimension_unit or 'mm', 1)
+        sz_mult = _DIM_MULT.get(self.dimension_unit or 'mm', 1)
+
+        # Alap méretek mm-ben
+        bw = float(mat.width or 0) * mat_mult
+        bl = float(mat.length or 0) * mat_mult
+        bh = float(mat.height or 1) * mat_mult
+        # Méret variáns mm-ben
+        sw = float(self.width) * sz_mult
+        sl = float(self.length) * sz_mult
+        sh = float(self.height or (mat.height or 1)) * (sz_mult if self.height else mat_mult)
+
         if self.pricing_type == 'area':
-            orig_area = (mat.width or 0) * (mat.length or 0)
-            new_area = self.width * self.length
+            orig_area = bw * bl
+            new_area = sw * sl
             ratio = (new_area / orig_area) if orig_area else 0
-        elif self.pricing_type == 'weight':
-            # weight ∝ volume (w × l × h)
-            orig_vol = (mat.width or 0) * (mat.length or 0) * (mat.height or 1)
-            new_h = self.height or (mat.height or 1)
-            new_vol = self.width * self.length * new_h
-            ratio = (new_vol / orig_vol) if orig_vol else 0
-        elif self.pricing_type == 'volume':
-            orig_vol = (mat.width or 0) * (mat.length or 0) * (mat.height or 1)
-            new_h = self.height or (mat.height or 1)
-            new_vol = self.width * self.length * new_h
+        elif self.pricing_type in ('weight', 'volume'):
+            orig_vol = bw * bl * bh
+            new_vol = sw * sl * sh
             ratio = (new_vol / orig_vol) if orig_vol else 0
         else:
             ratio = 1
