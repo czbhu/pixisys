@@ -1545,7 +1545,10 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                 touched.append(field)
                 old_values[field] = getattr(item, field)
                 setattr(item, field, request.data[field])
-        item.save()
+        try:
+            item.save()
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
         changes = {}
         for field in touched:
             old_val = old_values.get(field)
@@ -1553,13 +1556,19 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             if str(old_val) != str(new_val):
                 key = labels.get(field, field)
                 changes[key] = {'old': old_val, 'new': new_val}
-        QuoteLog.objects.create(
-            quote=qr,
-            user=request.user if request.user and request.user.is_authenticated else None,
-            action=f'Tétel módosítva: {item.item_name or item.id}',
-            meta={'changes': changes} if changes else {},
-        )
-        return Response(QuoteRequestItemSerializer(item, context={'request': request}).data)
+        try:
+            QuoteLog.objects.create(
+                quote=qr,
+                user=request.user if request.user and request.user.is_authenticated else None,
+                action=f'Tétel módosítva: {item.item_name or item.id}',
+                meta={'changes': changes} if changes else {},
+            )
+        except Exception:
+            pass
+        try:
+            return Response(QuoteRequestItemSerializer(item, context={'request': request}).data)
+        except Exception:
+            return Response({'id': item.id, 'item_name': item.item_name, 'net_unit_price': float(item.net_unit_price or 0)})
 
     @action(detail=True, methods=['get'])
     def logs(self, request, pk=None):
