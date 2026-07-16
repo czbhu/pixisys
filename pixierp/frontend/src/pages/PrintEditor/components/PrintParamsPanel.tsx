@@ -295,9 +295,11 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
   // Egyedi költség tételek (ha selectedProduct.allow_custom_cost = true)
   const [customCostItems, setCustomCostItems] = useState<CustomCostItemPanel[]>([]);
   const [customCostModalOpen, setCustomCostModalOpen] = useState(false);
+  const [customCostSearchModal, setCustomCostSearchModal] = useState<{open: boolean; type: 'material' | 'service' | null}>({open: false, type: null});
+  const [customCostSearchQuery, setCustomCostSearchQuery] = useState('');
   const [costSuppliers, setCostSuppliers] = useState<{id: number; name: string}[]>([]);
   const [costDepartments, setCostDepartments] = useState<{id: number; name: string}[]>([]);
-  const [allManufServices, setAllManufServices] = useState<{id: number; name: string; unit: string; unit_cost_price: number; markup_percentage: number; unit_selling_price: number}[]>([]);
+  const [allManufServices, setAllManufServices] = useState<{id: number; name: string; unit: string; unit_cost_price: number; markup_percentage: number; unit_selling_price: number; code?: string; description?: string}[]>([]);
   useEffect(() => {
     api.get('/crm/companies/?is_supplier=true&page_size=1000').then(r => setCostSuppliers(Array.isArray(r.data?.results) ? r.data.results : (Array.isArray(r.data) ? r.data : []))).catch(() => {});
     api.get('/hr/departments/?page_size=500').then(r => setCostDepartments(Array.isArray(r.data?.results) ? r.data.results : (Array.isArray(r.data) ? r.data : []))).catch(() => {});
@@ -1355,37 +1357,17 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                 ),
               },
               { title: 'Megnevezés', key: 'name', width: 160, render: (_: any, r: CustomCostItemPanel) => {
-                  if (r.type === 'material') {
-                    return <Select size="small" showSearch optionFilterProp="label" style={{ width: '100%' }} value={r.ref_id ?? undefined} placeholder="Válassz anyagot"
-                      onChange={(val: number, opt: any) => {
-                        const found = allMaterials.find(m => m.id === val);
-                        const next = customCostItems.map(ci => {
-                          if (ci.id !== r.id) return ci;
-                          const cp = Number(found?.unit_cost_price ?? 0);
-                          const mu = Number(found?.markup_percentage ?? 30);
-                          const sp = Number(found?.unit_selling_price ?? 0) || cp * (1 + mu / 100);
-                          return { ...ci, ref_id: val, name: opt.label ?? '', unit: found?.unit || 'db', cost_price: cp, markup_percent: mu, selling_unit_price: sp, selling_price: sp * ci.quantity };
-                        });
-                        setCustomCostItems(next); onCustomCostChange?.(next);
-                      }}>
-                      {allMaterials.map(m => <Select.Option key={m.id} value={m.id} label={m.name}>{m.name}</Select.Option>)}
-                    </Select>;
-                  }
-                  if (r.type === 'service') {
-                    return <Select size="small" showSearch optionFilterProp="label" style={{ width: '100%' }} value={r.ref_id ?? undefined} placeholder="Válassz szolgáltatást"
-                      onChange={(val: number, opt: any) => {
-                        const found = allManufServices.find(s => s.id === val);
-                        const next = customCostItems.map(ci => {
-                          if (ci.id !== r.id) return ci;
-                          const cp = Number(found?.unit_cost_price ?? 0);
-                          const mu = Number(found?.markup_percentage ?? 30);
-                          const sp = Number(found?.unit_selling_price ?? 0) || cp * (1 + mu / 100);
-                          return { ...ci, ref_id: val, name: opt.label ?? '', unit: found?.unit || 'db', cost_price: cp, markup_percent: mu, selling_unit_price: sp, selling_price: sp * ci.quantity };
-                        });
-                        setCustomCostItems(next); onCustomCostChange?.(next);
-                      }}>
-                      {allManufServices.map(s => <Select.Option key={s.id} value={s.id} label={s.name}>{s.name}</Select.Option>)}
-                    </Select>;
+                  if (r.type === 'material' || r.type === 'service') {
+                    return (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12 }} title={r.name}>{r.name || <span style={{ color: '#aaa' }}>Nincs kiválasztva</span>}</span>
+                        <Button size="small" type="link" style={{ padding: 0, height: 'auto', flexShrink: 0 }}
+                          onClick={() => { setCustomCostSearchQuery(''); setCustomCostSearchModal({ open: true, type: r.type as 'material' | 'service' }); }}
+                        >
+                          Csere
+                        </Button>
+                      </div>
+                    );
                   }
                   return <Input size="small" value={r.name} placeholder="Megnevezés" onChange={e => updateCustomCostItem(r.id, 'name', e.target.value)} style={{ width: '100%' }} />;
                 }
@@ -1457,15 +1439,17 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                   destroyOnHidden={false}
                 >
                   <div style={{ marginBottom: 12, display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-                    {(['material', 'service', 'other'] as const).map(t => (
-                      <Button key={t} icon={<PlusOutlined />} onClick={() => {
-                        const newItem: CustomCostItemPanel = { id: Date.now(), name: '', quantity: 1, unit: 'db', cost_price: 0, markup_percent: 30, selling_unit_price: 0, selling_price: 0, type: t, ref_id: null };
-                        const next = [...customCostItems, newItem];
-                        setCustomCostItems(next); onCustomCostChange?.(next);
-                      }}>
-                        {t === 'material' ? 'Alapanyag/Termék' : t === 'service' ? 'Szolgáltatás' : 'Egyéb költség'}
-                      </Button>
-                    ))}
+                    <Button icon={<PlusOutlined />} onClick={() => { setCustomCostSearchQuery(''); setCustomCostSearchModal({ open: true, type: 'material' }); }}>
+                      Alapanyag/Termék
+                    </Button>
+                    <Button icon={<PlusOutlined />} onClick={() => { setCustomCostSearchQuery(''); setCustomCostSearchModal({ open: true, type: 'service' }); }}>
+                      Szolgáltatás
+                    </Button>
+                    <Button icon={<PlusOutlined />} onClick={() => {
+                      const newItem: CustomCostItemPanel = { id: Date.now(), name: '', quantity: 1, unit: 'db', cost_price: 0, markup_percent: 30, selling_unit_price: 0, selling_price: 0, type: 'other', ref_id: null };
+                      const next = [...customCostItems, newItem];
+                      setCustomCostItems(next); onCustomCostChange?.(next);
+                    }}>Egyéb költség</Button>
                   </div>
                   <Table
                     dataSource={customCostItems}
@@ -1481,6 +1465,68 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                       Egyedi költség összesen: {customTotal.toLocaleString('hu-HU')} Ft
                     </div>
                   )}
+                </Modal>
+
+                {/* Anyag / Szolgáltatás kereső modal */}
+                <Modal
+                  title={customCostSearchModal.type === 'material' ? 'Alapanyag / Termék keresése' : 'Szolgáltatás keresése'}
+                  open={customCostSearchModal.open}
+                  onCancel={() => setCustomCostSearchModal({ open: false, type: null })}
+                  footer={null}
+                  width={860}
+                  destroyOnHidden
+                >
+                  {(() => {
+                    const isMat = customCostSearchModal.type === 'material';
+                    const list: any[] = isMat ? allMaterials : allManufServices;
+                    const norm = (s: string) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+                    const q = norm(customCostSearchQuery);
+                    const filtered = q ? list.filter(r => norm([r.code || '', r.name || '', r.description || '', r.unit || ''].join(' ')).includes(q)) : list;
+                    const cols = isMat ? [
+                      { title: 'Cikkszám', dataIndex: 'code', key: 'code', width: 110 },
+                      { title: 'Megnevezés', dataIndex: 'name', key: 'name', width: 200 },
+                      { title: 'Egység', dataIndex: 'unit', key: 'unit', width: 70 },
+                      { title: 'Bek. egys. ár', key: 'cost', width: 100, render: (r: any) => { const v = Number(r.unit_cost_price || 0); return v > 0 ? v.toLocaleString('hu-HU', { maximumFractionDigits: 2 }) : '–'; } },
+                      { title: 'El. egys. ár', key: 'sell', width: 100, render: (r: any) => { const v = Number(r.unit_selling_price || 0); return v > 0 ? v.toLocaleString('hu-HU', { maximumFractionDigits: 2 }) : '–'; } },
+                      { title: 'Leírás', dataIndex: 'description', key: 'desc', ellipsis: true },
+                    ] : [
+                      { title: 'Kód', dataIndex: 'code', key: 'code', width: 110 },
+                      { title: 'Megnevezés', dataIndex: 'name', key: 'name', width: 200 },
+                      { title: 'Egység', dataIndex: 'unit', key: 'unit', width: 70 },
+                      { title: 'Bek. egys. ár', key: 'cost', width: 100, render: (r: any) => { const v = Number(r.unit_cost_price || 0); return v > 0 ? v.toLocaleString('hu-HU', { maximumFractionDigits: 2 }) : '–'; } },
+                      { title: 'El. egys. ár', key: 'sell', width: 100, render: (r: any) => { const v = Number(r.unit_selling_price || 0); return v > 0 ? v.toLocaleString('hu-HU', { maximumFractionDigits: 2 }) : '–'; } },
+                      { title: 'Leírás', dataIndex: 'description', key: 'desc', ellipsis: true },
+                    ];
+                    const handleSearchSelect = (record: any) => {
+                      const t = customCostSearchModal.type!;
+                      const cp = Number(record.unit_cost_price || 0);
+                      const mu = Number(record.markup_percentage ?? 30);
+                      const sp = Number(record.unit_selling_price || 0) || (cp > 0 ? cp * (1 + mu / 100) : 0);
+                      const newItem: CustomCostItemPanel = {
+                        id: Date.now() + Math.random(), type: t, ref_id: record.id,
+                        name: record.name, unit: record.unit || 'db', quantity: 1,
+                        cost_price: cp, markup_percent: mu, selling_unit_price: sp, selling_price: sp,
+                      };
+                      const next = [...customCostItems, newItem];
+                      setCustomCostItems(next); onCustomCostChange?.(next);
+                      setCustomCostSearchModal({ open: false, type: null });
+                    };
+                    return (
+                      <div>
+                        <Input.Search
+                          placeholder="Keresés cikkszám, megnevezés, leírás szerint..."
+                          allowClear value={customCostSearchQuery}
+                          onChange={e => setCustomCostSearchQuery(e.target.value)}
+                          style={{ marginBottom: 8 }} autoFocus
+                        />
+                        <Table size="small" dataSource={filtered} columns={cols} rowKey="id"
+                          pagination={{ pageSize: 15, showSizeChanger: false, showTotal: (t, r) => `${r[0]}-${r[1]} / ${t}` }}
+                          onRow={(record) => ({ onClick: () => handleSearchSelect(record), style: { cursor: 'pointer' } })}
+                          scroll={{ x: 'max-content' }}
+                        />
+                      </div>
+                    );
+                  })()}
                 </Modal>
               </>
             );
