@@ -322,6 +322,9 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
                     elif ptype == 'per_cut':
                         cuts = (qty / cap).to_integral_value(rounding='ROUND_CEILING') if cap > 0 else qty
                         amt = price * cuts; item_qty = float(cuts); item_unit = 'db'
+                    elif getattr(svc, 'calculation_unit', None) == 'perimeter' and ctype in ('unit', 'click'):
+                        # Kerület-alapú szolgáltatásnál a "unit" tételek beállítási díjak (per job)
+                        amt = price; item_qty = 1.0; item_unit = 'db'
                     else:  # per_sheet / unit
                         amt = price * qty; item_qty = float(qty); item_unit = 'db'
                     svc_total += amt
@@ -459,10 +462,11 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
             total = ((subtotal + board_material_cost) * margin_mult).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
             unit_price = (total / qty).quantize(Decimal('0.0001'), rounding=ROUND_HALF_UP)
 
-    # Anyag beszállító és tábla szám
+    # Anyag beszállító, tábla szám, bekerülési ár
     board_material_supplier_id = None
     board_material_boards_needed = boards_needed
     board_material_price_per_board = float(board_material_cost / Decimal(str(max(boards_needed, 1)))) if board_material_cost > 0 else 0.0
+    board_material_cost_price_per_board = 0.0
     if material_id and board_material_cost > 0:
         try:
             from apps.warehouse.models import Material as _WMatSup
@@ -470,6 +474,11 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
             _sup = _ms.materialsupplier_set.first()
             if _sup:
                 board_material_supplier_id = _sup.supplier_id
+            # Bekerülési ár arányos kiszámítása (unit_cost_price / unit_selling_price)
+            _sell = float(_ms.unit_selling_price or 0)
+            _cost = float(_ms.unit_cost_price or 0)
+            if _sell > 0 and _cost > 0:
+                board_material_cost_price_per_board = board_material_price_per_board * (_cost / _sell)
         except Exception:
             pass
 
@@ -502,6 +511,7 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
         'board_material_supplier_id': board_material_supplier_id,
         'board_material_boards_needed': board_material_boards_needed,
         'board_material_price_per_board': board_material_price_per_board,
+        'board_material_cost_price_per_board': board_material_cost_price_per_board,
     }
 
 

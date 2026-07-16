@@ -925,8 +925,9 @@ const PrintShopPage: React.FC = () => {
         if (r4(bd.board_material_cost) > 0) {
           const boardsNeeded = bd.board_material_boards_needed ?? bd.boards_needed ?? 1;
           const pricePerBoard = r4(bd.board_material_price_per_board ?? (boardsNeeded > 0 ? bd.board_material_cost / boardsNeeded : bd.board_material_cost));
+          const costPerBoard = r4(bd.board_material_cost_price_per_board ?? 0) || pricePerBoard;
           const matTot = r4(bd.board_material_cost);
-          costItems.push({ type: 'material', name: bd.board_material_label ?? 'Alapanyag', quantity: boardsNeeded, unit: 'tábla', cost_price: pricePerBoard, unit_price: pricePerBoard, selling_unit_price: pricePerBoard, selling_price: matTot, markup_percent: 0, is_internal: false, supplier: supId(bd.board_material_supplier_id), formulas: { _syncQty: false } });
+          costItems.push({ type: 'material', name: bd.board_material_label ?? 'Alapanyag', quantity: boardsNeeded, unit: 'tábla', cost_price: costPerBoard, unit_price: pricePerBoard, selling_unit_price: pricePerBoard, selling_price: matTot, markup_percent: 0, is_internal: false, supplier: supId(bd.board_material_supplier_id), formulas: { _syncQty: false } });
         }
         for (const sb of (bd.service_breakdown ?? [])) {
           if (sb.items && sb.items.length > 0) {
