@@ -798,17 +798,29 @@ const PrintShopPage: React.FC = () => {
         : `${params.width_mm}×${params.height_mm}mm, ${params.quantity} db, íves nyomtatás`;
 
       const isBoardProduct = !!(bd?.print_service_name);  // táblás UV ha print_service_name van (nem _1/_2)
+      const is2Sided = params.sides === '2';
 
-      // Nyomtatás sor
+      // Nyomtatás sor – mindkét oldalt megjelenítjük, nyomatlan oldalnál jelezzük
       const printSvcLine = isBoardProduct
         ? (bd.print_service_name
-            ? `Nyomtatás:\nCím oldal: ${bd.print_service_name}` +
-              (bd.print_service_items?.find((pi: any) => pi.type === 'side2_service')
-                ? `\nHátoldal: ${bd.print_service_items.find((pi: any) => pi.type === 'side2_service')?.name}` : '')
+            ? (() => {
+                const side2Svc = bd.print_service_items?.find((pi: any) => pi.type === 'side2_service');
+                let line = `Nyomtatás:\nCím oldal: ${bd.print_service_name}`;
+                if (is2Sided) {
+                  line += side2Svc ? `\nHátoldal: ${side2Svc.name}` : '\nHátoldal: nyomatlan';
+                }
+                return line;
+              })()
             : null)
         : (bd?.print_service_name_1
-            ? `Nyomtatás 1.o: ${bd.print_service_name_1}` +
-              (bd?.print_service_name_2 ? `\nNyomtatás 2.o: ${bd.print_service_name_2}` : '') : null);
+            ? (() => {
+                let line = `Nyomtatás 1.o: ${bd.print_service_name_1}`;
+                if (is2Sided) {
+                  line += bd?.print_service_name_2 ? `\nNyomtatás 2.o: ${bd.print_service_name_2}` : '\nNyomtatás 2.o: nyomatlan';
+                }
+                return line;
+              })()
+            : null);
 
       // Impozíció sor
       const impLine = isBoardProduct
