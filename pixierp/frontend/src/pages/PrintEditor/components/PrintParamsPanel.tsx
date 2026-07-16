@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Select, Input, InputNumber, Radio, Divider, Typography, Spin, Tooltip, Tag, Modal, Row, Col, Button } from 'antd';
+import { Select, Input, InputNumber, Radio, Divider, Typography, Spin, Tooltip, Tag, Modal, Row, Col, Button, Table } from 'antd';
 import NumInput from '../../../components/NumInput';
 import { InfoCircleOutlined, CaretDownOutlined, CaretRightOutlined, AppstoreOutlined, MinusOutlined, PlusOutlined, DeleteOutlined } from '@ant-design/icons';
 import type { PrintParams } from './Step1Params';
@@ -1331,40 +1331,80 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
             <>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 8, marginBottom: 4 }}>
                 <Text strong style={{ fontSize: 11, textTransform: 'uppercase', color: '#555', letterSpacing: '0.05em' }}>Egyedi költség</Text>
-                <Button size="small" type="link" icon={<PlusOutlined />}
+                <Button size="small" icon={<PlusOutlined />}
                   onClick={() => {
                     const newItem: CustomCostItemPanel = { id: Date.now(), name: '', quantity: 1, unit: 'db', cost_price: 0, markup_percent: 30, selling_unit_price: 0, selling_price: 0 };
                     const next = [...customCostItems, newItem];
                     setCustomCostItems(next);
                     onCustomCostChange?.(next);
                   }}
-                  style={{ padding: 0, height: 'auto' }}
                 >
-                  Hozzáadás
+                  + Egyéb költség
                 </Button>
               </div>
-              {customCostItems.length === 0 && (
-                <div style={{ fontSize: 11, color: '#aaa', marginBottom: 4 }}>Nincs egyedi tétel.</div>
-              )}
-              {customCostItems.map(ci => (
-                <div key={ci.id} style={{ background: '#fafafa', border: '1px solid #e8e8e8', borderRadius: 6, padding: '6px 8px', marginBottom: 4 }}>
-                  <div style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
-                    <Input size="small" placeholder="Megnevezés" value={ci.name} onChange={e => updateCustomCostItem(ci.id, 'name', e.target.value)} style={{ flex: 2 }} />
-                    <NumInput size="small" placeholder="Menny." value={ci.quantity} onChange={v => updateCustomCostItem(ci.id, 'quantity', v ?? 1)} min={0} controls={false} style={{ flex: 1 }} />
-                    <Input size="small" placeholder="Egység" value={ci.unit} onChange={e => updateCustomCostItem(ci.id, 'unit', e.target.value)} style={{ width: 44 }} />
-                    <Button size="small" danger icon={<DeleteOutlined />} onClick={() => { const next = customCostItems.filter(x => x.id !== ci.id); setCustomCostItems(next); onCustomCostChange?.(next); }} />
-                  </div>
-                  <div style={{ display: 'flex', gap: 4, alignItems: 'center', fontSize: 11 }}>
-                    <span style={{ color: '#888' }}>Bek.:</span>
-                    <NumInput size="small" value={ci.cost_price} onChange={v => updateCustomCostItem(ci.id, 'cost_price', v ?? 0)} min={0} controls={false} addonAfter="Ft" style={{ flex: 1 }} />
-                    <span style={{ color: '#888' }}>Haszon:</span>
-                    <NumInput size="small" value={ci.markup_percent} onChange={v => updateCustomCostItem(ci.id, 'markup_percent', v ?? 0)} min={0} controls={false} addonAfter="%" style={{ width: 70 }} />
-                    <span style={{ color: '#888' }}>Elad.:</span>
-                    <NumInput size="small" value={ci.selling_unit_price} onChange={v => updateCustomCostItem(ci.id, 'selling_unit_price', v ?? 0)} min={0} controls={false} addonAfter="Ft" style={{ flex: 1 }} />
-                  </div>
-                  {ci.selling_price > 0 && <div style={{ textAlign: 'right', fontSize: 11, color: '#52c41a', marginTop: 2 }}>Összesen: <strong>{ci.selling_price.toLocaleString('hu-HU')} Ft</strong></div>}
-                </div>
-              ))}
+              <Table
+                dataSource={customCostItems}
+                rowKey="id"
+                pagination={false}
+                size="small"
+                scroll={{ x: 620 }}
+                locale={{ emptyText: <span style={{ fontSize: 11, color: '#aaa' }}>Nincs egyedi tétel</span> }}
+                style={{ marginBottom: 8 }}
+                columns={[
+                  {
+                    title: 'Megnevezés', key: 'name', width: 120,
+                    render: (_: any, r: CustomCostItemPanel) => (
+                      <Input size="small" value={r.name} placeholder="Megnevezés" onChange={e => updateCustomCostItem(r.id, 'name', e.target.value)} style={{ width: '100%' }} />
+                    ),
+                  },
+                  {
+                    title: 'Menny.', key: 'quantity', width: 60,
+                    render: (_: any, r: CustomCostItemPanel) => (
+                      <NumInput size="small" value={r.quantity} onChange={v => updateCustomCostItem(r.id, 'quantity', v ?? 1)} min={0} controls={false} style={{ width: '100%' }} />
+                    ),
+                  },
+                  {
+                    title: 'Egység', key: 'unit', width: 52,
+                    render: (_: any, r: CustomCostItemPanel) => (
+                      <Input size="small" value={r.unit} onChange={e => updateCustomCostItem(r.id, 'unit', e.target.value)} style={{ width: '100%' }} />
+                    ),
+                  },
+                  {
+                    title: 'Bek. e.ár', key: 'cost_price', width: 80,
+                    render: (_: any, r: CustomCostItemPanel) => (
+                      <NumInput size="small" value={r.cost_price} onChange={v => updateCustomCostItem(r.id, 'cost_price', v ?? 0)} min={0} controls={false} style={{ width: '100%' }} />
+                    ),
+                  },
+                  {
+                    title: 'Haszon%', key: 'markup_percent', width: 68,
+                    render: (_: any, r: CustomCostItemPanel) => (
+                      <NumInput size="small" value={r.markup_percent} onChange={v => updateCustomCostItem(r.id, 'markup_percent', v ?? 0)} min={0} controls={false} style={{ width: '100%' }} />
+                    ),
+                  },
+                  {
+                    title: 'El. egység ár', key: 'selling_unit_price', width: 90,
+                    render: (_: any, r: CustomCostItemPanel) => (
+                      <NumInput size="small" value={r.selling_unit_price} onChange={v => updateCustomCostItem(r.id, 'selling_unit_price', v ?? 0)} min={0} controls={false} style={{ width: '100%' }} />
+                    ),
+                  },
+                  {
+                    title: 'Összesen', key: 'selling_price', width: 80,
+                    render: (_: any, r: CustomCostItemPanel) => (
+                      <span style={{ fontWeight: 600, color: r.selling_price > 0 ? '#52c41a' : undefined, whiteSpace: 'nowrap' }}>
+                        {r.selling_price.toLocaleString('hu-HU')} Ft
+                      </span>
+                    ),
+                  },
+                  {
+                    title: '', key: 'del', width: 36,
+                    render: (_: any, r: CustomCostItemPanel) => (
+                      <Button size="small" danger icon={<DeleteOutlined />}
+                        onClick={() => { const next = customCostItems.filter(x => x.id !== r.id); setCustomCostItems(next); onCustomCostChange?.(next); }}
+                      />
+                    ),
+                  },
+                ]}
+              />
             </>
           )}
 
