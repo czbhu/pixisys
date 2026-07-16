@@ -420,17 +420,30 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
                 }
 
             _dim_mult = {'mm': 1, 'cm': 10, 'm': 1000}
-            _default_price = float(_mat.unit_selling_price or 0)
+            _raw_unit_price = float(_mat.unit_selling_price or 0)
+
+            def _to_per_board_price(raw_price, sw_mm, sl_mm):
+                """Ha az anyag egysége m², a raw_price Ft/m² → átszámítjuk Ft/tábla-ra."""
+                if _mat.unit == 'm2':
+                    return raw_price * (sw_mm / 1000) * (sl_mm / 1000)
+                return raw_price  # egyéb egységnél (db, tábla) már Ft/tábla
+
             if _mat.width and _mat.length:
                 _m = _dim_mult.get(_mat.dimension_unit or 'mm', 1)
-                _entry = _board_cost_for_size(float(_mat.width) * _m, float(_mat.length) * _m, _default_price)
+                _base_sw = float(_mat.width) * _m
+                _base_sl = float(_mat.length) * _m
+                _default_price = _to_per_board_price(_raw_unit_price, _base_sw, _base_sl)
+                _entry = _board_cost_for_size(_base_sw, _base_sl, _default_price)
                 if _entry:
                     _entry['label'] = 'Alapméret'; _entry['is_default'] = True
                     size_comparison.append(_entry)
+            else:
+                _default_price = _raw_unit_price
             for ms in MaterialSize.objects.filter(material=_mat, is_active=True).order_by('sort_order'):
                 _m = _dim_mult.get(ms.dimension_unit or 'mm', 1)
                 _sw = float(ms.width) * _m - float(ms.grip_width_mm or 0)
                 _sl = float(ms.length) * _m - float(ms.grip_height_mm or 0)
+                # ms.effective_price már Ft/tábla értéket tartalmaz (_calculate_price eredménye)
                 _p = float(ms.effective_price or _default_price)
                 _entry = _board_cost_for_size(_sw, _sl, _p)
                 if _entry:
