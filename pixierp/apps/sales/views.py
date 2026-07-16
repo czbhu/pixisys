@@ -7521,6 +7521,28 @@ class DeliveryNoteViewSet(viewsets.ModelViewSet):
         for oid in order_ids:
             CustomerOrder.sync_status_from_items(oid)
 
+        # Napló bejegyzés az érintett RFQ-khoz
+        try:
+            rfq_ids: dict = {}
+            for dn_item in dn.items.all():
+                rfq_id = None
+                if dn_item.quote_item_id:
+                    rfq_id = dn_item.quote_item.quote_request_id
+                elif dn_item.customer_order_item_id:
+                    rfq_id = CustomerOrder.objects.filter(id=dn_item.customer_order_item.customer_order_id).values_list('quote_request_id', flat=True).first()
+                if rfq_id:
+                    rfq_ids.setdefault(rfq_id, []).append((dn_item.item_name or '', float(dn_item.quantity), dn_item.unit or 'db'))
+            for qr_id, items_info in rfq_ids.items():
+                qr_obj = QuoteRequest.objects.filter(id=qr_id).first()
+                if qr_obj:
+                    items_str = ', '.join(f'{qty} {unit} ({name})' for name, qty, unit in items_info if name or qty)
+                    action_text = f'Szállítólevél visszaigazolva: {dn.delivery_note_number}'
+                    if items_str:
+                        action_text += f' – {items_str}'
+                    QuoteLog.objects.get_or_create(quote=qr_obj, action=action_text)
+        except Exception:
+            pass
+
         return Response({'status': 'ok'})
 
     @action(detail=False, methods=['get'], permission_classes=[AllowAny], url_path=r'public/(?P<token>[^/.]+)/pdf')
@@ -8162,17 +8184,19 @@ class DeliveryNoteViewSet(viewsets.ModelViewSet):
         try:
             # RFQ-alapú és COI-alapú tételek szinkronizálása
             rfq_ids = set()
+            rfq_item_info: dict = {}  # rfq_id → list of (item_name, delivered_qty, unit)
             for dn_item in note.items.all():
                 if dn_item.quote_item_id:
-                    rfq_ids.add(dn_item.quote_item.quote_request_id)
+                    rfq_id = dn_item.quote_item.quote_request_id
+                    rfq_ids.add(rfq_id)
+                    rfq_item_info.setdefault(rfq_id, []).append((dn_item.item_name or '', float(dn_item.quantity), dn_item.unit or 'db'))
                 elif dn_item.customer_order_item_id:
                     rfq_id = CustomerOrder.objects.filter(
                         id=dn_item.customer_order_item.customer_order_id
                     ).values_list('quote_request_id', flat=True).first()
                     if rfq_id:
                         rfq_ids.add(rfq_id)
-            # Rendszer-esemény: szállítólevél visszaigazolása → RFQ státusz 'delivered'-re.
-            # Aktív rendszer-esemény MINDIG felülírja (status_is_manual-t is törli).
+                        rfq_item_info.setdefault(rfq_id, []).append((dn_item.item_name or '', float(dn_item.quantity), dn_item.unit or 'db'))
             WRITABLE_BY_CONFIRM = frozenset({'new', 'confirmed', 'ordered', 'in_production', 'ready', 'in_delivery'})
             for qr_id in rfq_ids:
                 qr_obj = QuoteRequest.objects.filter(id=qr_id).first()
@@ -8182,6 +8206,17 @@ class DeliveryNoteViewSet(viewsets.ModelViewSet):
                         qr_obj.status_is_manual = False
                         qr_obj.save(update_fields=['status', 'status_is_manual'])
                     _sync_rfq_primary_snapshot(qr_obj)
+                    # Napló bejegyzés a szállításról
+                    items_info = rfq_item_info.get(qr_id, [])
+                    items_str = ', '.join(f'{qty} {unit} ({name})' for name, qty, unit in items_info if name or qty) if items_info else ''
+                    action_text = f'Szállítólevél visszaigazolva: {note.delivery_note_number}'
+                    if items_str:
+                        action_text += f' – {items_str}'
+                    QuoteLog.objects.create(
+                        quote=qr_obj,
+                        user=request.user if hasattr(request, 'user') and request.user.is_authenticated else None,
+                        action=action_text[:200],
+                    )
         except Exception:
             pass
 
