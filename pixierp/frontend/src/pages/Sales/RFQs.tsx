@@ -1870,8 +1870,13 @@ const RFQs: React.FC = () => {
 
   const openHistoryModal = async () => {
     const companyId = form.getFieldValue('company_id');
-    if (!historyAllCompanies && (!companyId || companyId === 'private')) {
-      message.warning('Kérlek válassz céget először, vagy kapcsold be a "Minden ügyfél" opciót');
+    const contactIds: number[] = (form.getFieldValue('contact_ids') || [])
+      .map((c: any) => (typeof c === 'object' && c !== null) ? c.value : c)
+      .filter(Boolean);
+    const isPrivate = !companyId || companyId === 'private';
+
+    if (!historyAllCompanies && isPrivate && contactIds.length === 0) {
+      message.warning('Kérlek válassz kapcsolatot vagy céget először, vagy kapcsold be a "Minden ügyfél" opciót');
       return;
     }
     setHistoryOpen(true);
@@ -1883,6 +1888,8 @@ const RFQs: React.FC = () => {
       const params: any = {};
       if (historyAllCompanies) {
         params.all_companies = 1;
+      } else if (isPrivate && contactIds.length > 0) {
+        params.contact_ids = contactIds.join(',');
       } else {
         params.company_id = companyId;
       }

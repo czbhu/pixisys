@@ -897,14 +897,19 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
     def items_history(self, request):
         """Korábbi RFQ tételek egy céghez (betöltéshez másolásra)"""
         company_id = request.query_params.get('company_id')
+        contact_ids_raw = request.query_params.get('contact_ids', '')
+        contact_ids = [int(x) for x in contact_ids_raw.split(',') if x.strip().isdigit()]
         all_companies = str(request.query_params.get('all_companies', '')).lower() in ('1', 'true', 'yes')
-        if not company_id and not all_companies:
+        if not company_id and not all_companies and not contact_ids:
             return Response([])
 
         from django.db.models import Prefetch
         rfq_filter = {'is_deleted': False}
         if not all_companies:
-            rfq_filter['company_id'] = company_id
+            if company_id:
+                rfq_filter['company_id'] = company_id
+            elif contact_ids:
+                rfq_filter['contacts__id__in'] = contact_ids
         rfqs = QuoteRequest.objects.filter(
             **rfq_filter
         ).select_related('company').prefetch_related(
