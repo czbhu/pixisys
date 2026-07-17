@@ -799,22 +799,34 @@ const RFQs: React.FC = () => {
       setLoading(false);
 
       // Háttérben betöltjük a maradék oldalakat
-      // startTransition: alacsony prioritású frissítés — nem blokkolja a felhasználói interakciókat
+      // requestIdleCallback: csak böngésző idle-idejében fut, nem versenyez a UI-interakciókkal
       if (totalCount > PAGE_SIZE) {
         setBackgroundLoading(true);
         const totalPages = Math.ceil(totalCount / PAGE_SIZE);
-        for (let page = 2; page <= totalPages; page++) {
-          try {
-            const pageData = await salesService.getQuoteRequestsPage(page, PAGE_SIZE);
-            const results: any[] = pageData.results ?? [];
-            startTransition(() => {
-              setRfqs(prev => [...prev, ...results.map(attachSearchText)]);
-            });
-          } catch (e) {
-            console.error(`Hiba a(z) ${page}. oldal betöltésekor:`, e);
-          }
-        }
-        setBackgroundLoading(false);
+        const scheduleIdle = (fn: () => void) =>
+          'requestIdleCallback' in window
+            ? (window as any).requestIdleCallback(fn, { timeout: 8000 })
+            : setTimeout(fn, 50);
+
+        const loadPage = (page: number) => {
+          scheduleIdle(async () => {
+            try {
+              const pageData = await salesService.getQuoteRequestsPage(page, PAGE_SIZE);
+              const results: any[] = pageData.results ?? [];
+              startTransition(() => {
+                setRfqs(prev => [...prev, ...results.map(attachSearchText)]);
+              });
+            } catch (e) {
+              console.error(`Hiba a(z) ${page}. oldal betöltésekor:`, e);
+            }
+            if (page < totalPages) {
+              loadPage(page + 1);
+            } else {
+              setBackgroundLoading(false);
+            }
+          });
+        };
+        loadPage(2);
       }
     } catch (e) {
       console.error(e);
@@ -2396,10 +2408,10 @@ const RFQs: React.FC = () => {
   }, []); // eslint-disable-line
 
   useEffect(() => {
-    if (searchParams.get('create') === 'true' && !loading && !createOpen) {
+    if (searchParams.get('create') === 'true' && !createOpen) {
        openCreate();
     }
-  }, [searchParams, loading]); // eslint-disable-line
+  }, [searchParams]); // eslint-disable-line
 
   // Ha az oldal ?create=true&from_item_copy=1 paraméterrel nyílt meg (új lapon való tétel-másolás),
   // akkor a create form megnyílása után alkalmazzuk a localStorage-ból kiolvasott másolási payloadot.
