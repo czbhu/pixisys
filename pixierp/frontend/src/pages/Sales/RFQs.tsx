@@ -798,35 +798,23 @@ const RFQs: React.FC = () => {
       setProjects(projRes as any);
       setLoading(false);
 
-      // Háttérben betöltjük a maradék oldalakat
-      // requestIdleCallback: csak böngésző idle-idejében fut, nem versenyez a UI-interakciókkal
+      // Háttérben betöltjük a maradék oldalakat — gyors szekvenciális fetch,
+      // startTransition: a state-frissítés alacsony prioritású, nem blokkolja a UI-interakciókat
       if (totalCount > PAGE_SIZE) {
         setBackgroundLoading(true);
         const totalPages = Math.ceil(totalCount / PAGE_SIZE);
-        const scheduleIdle = (fn: () => void) =>
-          'requestIdleCallback' in window
-            ? (window as any).requestIdleCallback(fn, { timeout: 8000 })
-            : setTimeout(fn, 50);
-
-        const loadPage = (page: number) => {
-          scheduleIdle(async () => {
-            try {
-              const pageData = await salesService.getQuoteRequestsPage(page, PAGE_SIZE);
-              const results: any[] = pageData.results ?? [];
-              startTransition(() => {
-                setRfqs(prev => [...prev, ...results.map(attachSearchText)]);
-              });
-            } catch (e) {
-              console.error(`Hiba a(z) ${page}. oldal betöltésekor:`, e);
-            }
-            if (page < totalPages) {
-              loadPage(page + 1);
-            } else {
-              setBackgroundLoading(false);
-            }
-          });
-        };
-        loadPage(2);
+        for (let page = 2; page <= totalPages; page++) {
+          try {
+            const pageData = await salesService.getQuoteRequestsPage(page, PAGE_SIZE);
+            const results: any[] = pageData.results ?? [];
+            startTransition(() => {
+              setRfqs(prev => [...prev, ...results.map(attachSearchText)]);
+            });
+          } catch (e) {
+            console.error(`Hiba a(z) ${page}. oldal betöltésekor:`, e);
+          }
+        }
+        setBackgroundLoading(false);
       }
     } catch (e) {
       console.error(e);
