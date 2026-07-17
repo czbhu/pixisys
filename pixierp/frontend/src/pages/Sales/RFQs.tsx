@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState, startTransition } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState, startTransition, useDeferredValue } from 'react';
 import { useClipboardImagePaste } from '../../hooks/useClipboardImagePaste';
 import EnhancedTable from '../../components/EnhancedTable';
 import type { ColumnsType } from 'antd/es/table';
@@ -169,6 +169,8 @@ const RFQs: React.FC = () => {
   const [confirmEmailForm] = Form.useForm();
   const [sendPreview, setSendPreview] = useState<any | null>(null);
   const [query, setQuery] = useState(() => localStorage.getItem('rfqs_search_query') || '');
+  // useDeferredValue: a gépelés azonnal megjelenik, a szűrés késleltetett (nem blokkolja a billentyűzetet)
+  const deferredQuery = useDeferredValue(query);
   const handleSearchChange = (v: string) => { setQuery(v); localStorage.setItem('rfqs_search_query', v); };
   const [partialOrderOpenId, setPartialOrderOpenId] = useState<number | null>(null);
   const [partialSelection, setPartialSelection] = useState<number[]>([]);
@@ -757,6 +759,21 @@ const RFQs: React.FC = () => {
     || rfqFiles.length > 0
     || newCosts.length > 0;
 
+  // Előre felépített lapos kereshető szöveg RFQ-nként — elkerüli a rekurzív deepSearch-t gépeléskor
+  const attachSearchText = (rfq: any): any => {
+    const parts: (string | undefined | null)[] = [
+      rfq.number, rfq.request_number, rfq.title,
+      rfq.company?.name, rfq.company_name,
+      rfq.primary_item_name, rfq.primary_item_description,
+      rfq.status, rfq.effective_status, rfq.effective_status_label,
+      rfq.created_by_name,
+      rfq.project?.name, rfq.project_name,
+      ...(rfq.contacts || []).flatMap((c: any) => [c.name, c.email, c.phone, c.company?.name, c.company_name]),
+      ...(rfq.items || []).flatMap((it: any) => [it.item_name, it.name, it.description, it.product_code]),
+    ];
+    return { ...rfq, _searchText: normalizeTextForSearch(parts.filter(Boolean).join(' ')) };
+  };
+
   useEffect(() => {
     loadData();
   }, []);
@@ -772,7 +789,7 @@ const RFQs: React.FC = () => {
       ]);
       const firstResults: any[] = firstPageData.results ?? [];
       const totalCount: number = firstPageData.count ?? firstResults.length;
-      setRfqs(firstResults);
+      setRfqs(firstResults.map(attachSearchText));
       setCostStatusOverrides({});  // clear overrides when fresh data loads
       setProjects(projRes as any);
       setLoading(false);
@@ -787,7 +804,7 @@ const RFQs: React.FC = () => {
             const pageData = await salesService.getQuoteRequestsPage(page, PAGE_SIZE);
             const results: any[] = pageData.results ?? [];
             startTransition(() => {
-              setRfqs(prev => [...prev, ...results]);
+              setRfqs(prev => [...prev, ...results.map(attachSearchText)]);
             });
           } catch (e) {
             console.error(`Hiba a(z) ${page}. oldal betöltésekor:`, e);
@@ -888,13 +905,17 @@ const RFQs: React.FC = () => {
       filtered = filtered.filter(r => r.project === projectFilter || r.project_id === projectFilter);
     }
 
-    // Text search
-    if (query?.trim()) {
-      filtered = filtered.filter((rfq) => deepSearchMatch(query, rfq));
+    // Text search — _searchText-et használ (előszámított lapos szöveg), nem rekurzív deepSearch
+    if (deferredQuery?.trim()) {
+      const tokens = normalizeTextForSearch(deferredQuery.trim()).split(/\s+/).filter(Boolean);
+      filtered = filtered.filter((rfq) => {
+        const text = rfq._searchText || '';
+        return tokens.every((token: string) => text.includes(token));
+      });
     }
-    
+
     setFiltered(filtered);
-  }, [query, rfqs, statusFilter, creatorFilter, orderStatusFilter, projectFilter]);
+  }, [deferredQuery, rfqs, statusFilter, creatorFilter, orderStatusFilter, projectFilter]);
 
   const RFQ_STATUS_META: Record<string, { color: string; text: string }> = {
     new: { color: 'blue', text: 'Új' },
