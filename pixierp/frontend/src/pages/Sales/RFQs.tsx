@@ -1893,6 +1893,7 @@ const RFQs: React.FC = () => {
       } else {
         params.company_id = companyId;
       }
+      console.log('[history] params:', params, '| contactIds:', contactIds, '| companyId:', companyId);
       const res = await api.get('/sales/quote-requests/items_history/', { params });
       setHistoryItems(res.data || []);
     } catch {

@@ -898,8 +898,20 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         """Korábbi RFQ tételek egy céghez (betöltéshez másolásra)"""
         company_id = request.query_params.get('company_id')
         contact_ids_raw = request.query_params.get('contact_ids', '')
-        contact_ids = [int(x) for x in contact_ids_raw.split(',') if x.strip().isdigit()]
         all_companies = str(request.query_params.get('all_companies', '')).lower() in ('1', 'true', 'yes')
+
+        # contact_ids: integer IDs vagy UUID-ok (PixInvoice external_id) is jöhetnek
+        contact_ids = []
+        if contact_ids_raw:
+            raw_parts = [x.strip() for x in contact_ids_raw.split(',') if x.strip()]
+            integer_ids = [int(x) for x in raw_parts if x.isdigit()]
+            uuid_ids = [x for x in raw_parts if not x.isdigit()]
+            contact_ids.extend(integer_ids)
+            if uuid_ids:
+                from apps.crm.models import Contact as CRMContact
+                resolved = list(CRMContact.objects.filter(external_id__in=uuid_ids).values_list('id', flat=True))
+                contact_ids.extend(resolved)
+
         if not company_id and not all_companies and not contact_ids:
             return Response([])
 
@@ -912,7 +924,7 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                 rfq_filter['contacts__id__in'] = contact_ids
         rfqs = QuoteRequest.objects.filter(
             **rfq_filter
-        ).select_related('company').prefetch_related(
+        ).distinct().select_related('company').prefetch_related(
             Prefetch('items', queryset=QuoteRequestItem.objects.select_related(
                 'product', 'material', 'manufacturing_product', 'service'
             ).prefetch_related(
