@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState, startTransition } from 'react';
 import { useClipboardImagePaste } from '../../hooks/useClipboardImagePaste';
 import EnhancedTable from '../../components/EnhancedTable';
 import type { ColumnsType } from 'antd/es/table';
@@ -778,6 +778,7 @@ const RFQs: React.FC = () => {
       setLoading(false);
 
       // Háttérben betöltjük a maradék oldalakat
+      // startTransition: alacsony prioritású frissítés — nem blokkolja a felhasználói interakciókat
       if (totalCount > PAGE_SIZE) {
         setBackgroundLoading(true);
         const totalPages = Math.ceil(totalCount / PAGE_SIZE);
@@ -785,7 +786,9 @@ const RFQs: React.FC = () => {
           try {
             const pageData = await salesService.getQuoteRequestsPage(page, PAGE_SIZE);
             const results: any[] = pageData.results ?? [];
-            setRfqs(prev => [...prev, ...results]);
+            startTransition(() => {
+              setRfqs(prev => [...prev, ...results]);
+            });
           } catch (e) {
             console.error(`Hiba a(z) ${page}. oldal betöltésekor:`, e);
           }
