@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState, startTransition, useDeferredValue } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState, startTransition } from 'react';
 import { useClipboardImagePaste } from '../../hooks/useClipboardImagePaste';
 import EnhancedTable from '../../components/EnhancedTable';
 import type { ColumnsType } from 'antd/es/table';
@@ -169,8 +169,12 @@ const RFQs: React.FC = () => {
   const [confirmEmailForm] = Form.useForm();
   const [sendPreview, setSendPreview] = useState<any | null>(null);
   const [query, setQuery] = useState(() => localStorage.getItem('rfqs_search_query') || '');
-  // useDeferredValue: a gépelés azonnal megjelenik, a szűrés késleltetett (nem blokkolja a billentyűzetet)
-  const deferredQuery = useDeferredValue(query);
+  // Debounce: a gépélés azonnal megjelenik, a szűrés csak 200ms szünet után fut le
+  const [debouncedQuery, setDebouncedQuery] = useState(query);
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQuery(query), 200);
+    return () => clearTimeout(t);
+  }, [query]);
   const handleSearchChange = (v: string) => { setQuery(v); localStorage.setItem('rfqs_search_query', v); };
   const [partialOrderOpenId, setPartialOrderOpenId] = useState<number | null>(null);
   const [partialSelection, setPartialSelection] = useState<number[]>([]);
@@ -906,16 +910,16 @@ const RFQs: React.FC = () => {
     }
 
     // Text search — _searchText-et használ (előszámított lapos szöveg), nem rekurzív deepSearch
-    if (deferredQuery?.trim()) {
-      const tokens = normalizeTextForSearch(deferredQuery.trim()).split(/\s+/).filter(Boolean);
+    if (debouncedQuery?.trim()) {
+      const tokens = normalizeTextForSearch(debouncedQuery.trim()).split(/\s+/).filter(Boolean);
       filtered = filtered.filter((rfq) => {
         const text = rfq._searchText || '';
         return tokens.every((token: string) => text.includes(token));
       });
     }
 
-    setFiltered(filtered);
-  }, [deferredQuery, rfqs, statusFilter, creatorFilter, orderStatusFilter, projectFilter]);
+    startTransition(() => setFiltered(filtered));
+  }, [debouncedQuery, rfqs, statusFilter, creatorFilter, orderStatusFilter, projectFilter]);
 
   const RFQ_STATUS_META: Record<string, { color: string; text: string }> = {
     new: { color: 'blue', text: 'Új' },
