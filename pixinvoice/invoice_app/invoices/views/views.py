@@ -5774,11 +5774,25 @@ class InvoiceViewSet(viewsets.ModelViewSet):
 
                         supplier_name = child_map.get('supplierName')
                         supplier_tax_id = child_map.get('supplierTaxNumber')
+                        supplier_group_member_tax_id = None
                         if not supplier_tax_id:
                             stn = d.find(f'{ns_api}supplierTaxNumber') or d.find('supplierTaxNumber')
                             if stn is not None:
                                 ti = stn.find(f'{ns_base}taxpayerId') or stn.find('taxpayerId')
                                 supplier_tax_id = (ti.text.strip() if (ti is not None and ti.text) else (stn.text.strip() if stn.text else None))
+                                # groupMemberTaxNumber: a csoport tag saját adószáma (pl. 32980183-4-44)
+                                gmt = stn.find(f'{ns_api}groupMemberTaxNumber') or stn.find('groupMemberTaxNumber')
+                                if gmt is not None:
+                                    gmt_id = gmt.find(f'{ns_base}taxpayerId') or gmt.find('taxpayerId')
+                                    gmt_vat = gmt.find(f'{ns_base}vatCode') or gmt.find('vatCode')
+                                    gmt_cty = gmt.find(f'{ns_base}countyCode') or gmt.find('countyCode')
+                                    if gmt_id is not None and gmt_id.text:
+                                        parts = [gmt_id.text.strip()]
+                                        if gmt_vat is not None and gmt_vat.text:
+                                            parts.append(gmt_vat.text.strip())
+                                        if gmt_cty is not None and gmt_cty.text:
+                                            parts.append(gmt_cty.text.strip())
+                                        supplier_group_member_tax_id = '-'.join(parts)
 
                         customer_tax_id = child_map.get('customerTaxNumber')
                         if not customer_tax_id:
@@ -5823,6 +5837,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                                 or None
                             ),
                             'supplier_tax_number': supplier_tax_id,
+                            'supplier_group_member_tax_number': supplier_group_member_tax_id,
                             'supplier_name': supplier_name,
                             'customer_tax_number': customer_tax_id,
                             'customer_name': child_map.get('customerName'),
@@ -6415,6 +6430,16 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             ntx = _normalize_tax_value(tx)
             if ntx:
                 supplier_tax_values.add(ntx)
+            # Csoporttag adószám is keresési alap
+            try:
+                mtx = str(getattr(_row, 'supplier_group_member_tax_number', '') or '').strip()
+            except Exception:
+                mtx = ''
+            if mtx:
+                supplier_tax_values.add(mtx)
+                nmtx = _normalize_tax_value(mtx)
+                if nmtx:
+                    supplier_tax_values.add(nmtx)
             try:
                 nm = str(getattr(_row, 'supplier_name', '') or '').strip()
             except Exception:
@@ -6854,9 +6879,17 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             row_currency = (str(resolved_currency).strip().upper() if resolved_currency else str(getattr(r, 'currency', '') or '').strip().upper()) or 'HUF'
 
             supplier_tax_key = _normalize_tax_value(getattr(r, 'supplier_tax_number', ''))
+            # Csoporttag adószám: pontosabb azonosítás csoport-tagokhoz (pl. MOL Downstream)
+            supplier_member_tax_key = _normalize_tax_value(getattr(r, 'supplier_group_member_tax_number', ''))
             supplier_name_key = str(getattr(r, 'supplier_name', '') or '').strip().lower()
             supplier_customer = None
-            if supplier_tax_key:
+            # 1. Csoporttag adószám szerinti keresés (legpontosabb)
+            if supplier_member_tax_key:
+                supplier_customer = supplier_customers_by_tax.get(supplier_member_tax_key)
+                if not supplier_customer:
+                    supplier_customer = all_customers_by_tax.get(supplier_member_tax_key)
+            # 2. Csoport/saját adószám
+            if not supplier_customer and supplier_tax_key:
                 supplier_customer = supplier_customers_by_tax.get(supplier_tax_key)
             if not supplier_customer and supplier_name_key:
                 supplier_customer = supplier_customers_by_name.get(supplier_name_key)

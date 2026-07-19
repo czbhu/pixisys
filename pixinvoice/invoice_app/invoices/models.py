@@ -170,6 +170,7 @@ class IncomingInvoiceDigest(models.Model):
     invoice_delivery_date = models.DateField(blank=True, null=True)
     due_date = models.DateField(blank=True, null=True)
     supplier_tax_number = models.CharField(max_length=20, blank=True, null=True)
+    supplier_group_member_tax_number = models.CharField(max_length=20, blank=True, null=True, verbose_name="Supplier Group Member Tax Number")
     supplier_name = models.CharField(max_length=300, blank=True, null=True)
     customer_tax_number = models.CharField(max_length=20, blank=True, null=True)
     customer_name = models.CharField(max_length=300, blank=True, null=True)
