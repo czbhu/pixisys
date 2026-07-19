@@ -14621,7 +14621,7 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
         # Kizárólag a CRM törzsből vesszük a bankszámlaszámot
         def _get_customer_candidates():
             supplier_tax_raw = str(batch_item.supplier_tax_number or '').strip()
-            supplier_name_raw = str(batch_item.supplier_name or '').strip()
+            supplier_name_raw = re.sub(r'\s+', ' ', str(batch_item.supplier_name or '')).strip()
             normalized_tax = re.sub(r'[^A-Za-z0-9]', '', supplier_tax_raw).upper() if supplier_tax_raw else ''
             digit_tax = ''.join(ch for ch in supplier_tax_raw if ch.isdigit()) if supplier_tax_raw else ''
             tax8 = digit_tax[:8] if len(digit_tax) >= 8 else ''
@@ -14635,10 +14635,12 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
                     tax_q |= Q(full_tax_number__iexact=value)
                     tax_q |= Q(vat_group_member_tax_number__iexact=value)
                     tax_q |= Q(eu_tax_number__iexact=value)
+                    tax_q |= Q(group_tax_number__iexact=value)
                 if tax8:
                     tax_q |= Q(tax_number__iexact=tax8)
                     tax_q |= Q(full_tax_number__istartswith=tax8)
                     tax_q |= Q(vat_group_member_tax_number__istartswith=tax8)
+                    tax_q |= Q(group_tax_number__istartswith=tax8)
                 if tax_q:
                     candidates = list(Customer.objects.filter(tax_q).distinct()[:20])
             if not candidates and supplier_name_raw:
