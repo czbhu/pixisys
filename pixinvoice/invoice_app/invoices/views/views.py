@@ -14726,7 +14726,9 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
                     if len(digits) >= 8:
                         tax_variants.add(digits[:8])
                 if name_raw:
-                    name_set.add(name_raw)
+                    name_norm = re.sub(r'\s+', ' ', name_raw).strip()
+                    name_set.add(name_norm)
+                    name_set.add(name_norm.upper())
 
             # Bulk fetch customers by tax number (single query, all prefetched)
             customers_by_tax = {}
@@ -14734,14 +14736,15 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
                 tax_q = Q()
                 for v in tax_variants:
                     tax_q |= (Q(tax_number__iexact=v) | Q(full_tax_number__iexact=v) |
-                               Q(vat_group_member_tax_number__iexact=v) | Q(eu_tax_number__iexact=v))
+                               Q(vat_group_member_tax_number__iexact=v) | Q(eu_tax_number__iexact=v) |
+                               Q(group_tax_number__iexact=v))
                 bulk_customers = list(
                     Customer.objects.filter(tax_q)
                     .prefetch_related(Prefetch('bank_accounts'))
                     .distinct()
                 )
                 for c in bulk_customers:
-                    for attr in ('tax_number', 'full_tax_number', 'vat_group_member_tax_number', 'eu_tax_number'):
+                    for attr in ('tax_number', 'full_tax_number', 'vat_group_member_tax_number', 'eu_tax_number', 'group_tax_number'):
                         val = str(getattr(c, attr, '') or '').strip().upper()
                         if not val:
                             continue
@@ -14763,7 +14766,8 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
                 for n in name_set:
                     name_q |= Q(name__iexact=n)
                 for c in Customer.objects.filter(name_q).prefetch_related(Prefetch('bank_accounts')).distinct():
-                    key = c.name.strip().lower()
+                    # Whitespace normalizálva tároljuk a kulcsot
+                    key = re.sub(r'\s+', ' ', c.name or '').strip().lower()
                     lst = customers_by_name.setdefault(key, [])
                     if c not in lst:
                         lst.append(c)
@@ -14789,7 +14793,9 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
                                     seen_ids.add(c.id)
                                     candidates.append(c)
                 if not candidates and name_raw:
-                    candidates = customers_by_name.get(name_raw.lower(), [])
+                    # Whitespace normalizálás (dupla szóköz NAV XML artifact)
+                    name_key = re.sub(r'\s+', ' ', name_raw).strip().lower()
+                    candidates = customers_by_name.get(name_key, [])
 
                 acct_type, account, swift_bic = None, None, None
                 for customer in candidates:
@@ -15184,7 +15190,7 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
                 resp['X-Missing-Accounts'] = ','.join([str(m.get('invoice_number') or '') for m in skipped_missing])
         return resp
 
-    def _extract_supplier_account(self, xml_text: str, company=None, supplier_tax_number: str = None, preferred_currency: str = None):
+    def _extract_supplier_account(self, xml_text: str, company=None, supplier_tax_number: str = None, preferred_currency: str = None, supplier_name: str = None):
         """
         Kinyeri a beszállító bankszámlaszámát.
         1. Először az XML-ből próbálja
@@ -15193,7 +15199,7 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
         if not xml_text:
             # Ha nincs XML, próbáljuk az ügyféltörzsből
             if company and supplier_tax_number:
-                account = get_supplier_bank_account_for_invoice(company, supplier_tax_number, '', preferred_currency)
+                account = get_supplier_bank_account_for_invoice(company, supplier_tax_number, '', preferred_currency, supplier_name)
                 if account:
                     # Tisztítjuk és detektáljuk az account típusát
                     clean_account = account.replace(' ', '').replace('-', '')
@@ -15219,7 +15225,7 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
             
             # Ha nincs az XML-ben, próbáljuk az ügyféltörzsből
             if company and supplier_tax_number:
-                account = get_supplier_bank_account_for_invoice(company, supplier_tax_number, xml_text, preferred_currency)
+                account = get_supplier_bank_account_for_invoice(company, supplier_tax_number, xml_text, preferred_currency, supplier_name)
                 if account:
                     # Tisztítjuk és detektáljuk az account típusát
                     clean_account = account.replace(' ', '').replace('-', '')

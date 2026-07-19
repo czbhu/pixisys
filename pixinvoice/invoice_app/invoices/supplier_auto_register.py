@@ -344,7 +344,7 @@ def auto_register_or_update_supplier(company, xml_text: str, payment_method: Opt
             return None, None
 
 
-def get_supplier_bank_account_for_invoice(company, supplier_tax_number: str, invoice_xml: str, preferred_currency: str = None) -> Optional[str]:
+def get_supplier_bank_account_for_invoice(company, supplier_tax_number: str, invoice_xml: str, preferred_currency: str = None, supplier_name: str = None) -> Optional[str]:
     """
     Visszaadja a beszállító bankszámlaszámát a számlához.
     
@@ -355,6 +355,7 @@ def get_supplier_bank_account_for_invoice(company, supplier_tax_number: str, inv
         company: Cég objektum
         supplier_tax_number: Beszállító adószáma
         invoice_xml: NAV számla XML
+        supplier_name: Opcionális - pontosabb egyeztetéshez (csoport tag cégek)
         
     Returns:
         Bankszámlaszám vagy None
@@ -376,9 +377,43 @@ def get_supplier_bank_account_for_invoice(company, supplier_tax_number: str, inv
             return iban.replace(' ', '').replace('-', '')
         return None
 
+    def _find_customer(tax_no, name=None):
+        """Keresés az összes adószám mezőben, névvel pontosítva ha szükséges."""
+        import re as _re
+        from django.db.models import Q as _Q
+        if not tax_no:
+            return None
+        normalized = ''.join(ch for ch in str(tax_no) if ch.isdigit())
+        # 1. Közvetlen adószám egyezés
+        customer = Customer.objects.filter(
+            _Q(tax_number=tax_no) | _Q(tax_number=normalized)
+            | _Q(full_tax_number=tax_no) | _Q(full_tax_number=normalized)
+            | _Q(vat_group_member_tax_number=tax_no) | _Q(vat_group_member_tax_number=normalized)
+        ).first()
+        if customer:
+            return customer
+        # 2. Csoport adószám prefix (pl. 17781774 → group_tax_number starts with 17781774)
+        if len(normalized) >= 8:
+            prefix = normalized[:8]
+            candidates = Customer.objects.filter(
+                _Q(group_tax_number__startswith=prefix)
+                | _Q(full_tax_number__startswith=prefix)
+                | _Q(vat_group_member_tax_number__startswith=prefix)
+            )
+            if name:
+                name_norm = _re.sub(r'\s+', ' ', str(name)).strip().upper()
+                named = candidates.filter(name=name_norm)
+                if not named.exists():
+                    named = candidates.filter(name__iexact=name_norm)
+                if named.exists():
+                    return named.first()
+            if candidates.count() == 1:
+                return candidates.first()
+        return None
+
     # Ha nincs XML-ben, ügyféltörzsből
     if supplier_tax_number:
-        customer = Customer.objects.filter(tax_number=supplier_tax_number).first()
+        customer = _find_customer(supplier_tax_number, supplier_name)
         if customer:
             qs = customer.bank_accounts
             if preferred_currency:
