@@ -6445,8 +6445,13 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             except Exception:
                 nm = ''
             if nm:
-                supplier_name_values.add(nm)
-                supplier_name_values.add(nm.upper())   # CRM általában nagybetűsen tárolja
+                # Whitespace normalizálás: dupla szóköz (NAV XML artifact) → egyszeres
+                import re as _re
+                nm_norm = _re.sub(r'\s+', ' ', nm).strip()
+                supplier_name_values.add(nm_norm)
+                supplier_name_values.add(nm_norm.upper())   # CRM általában nagybetűsen tárolja
+                if nm != nm_norm:
+                    supplier_name_values.add(nm)  # eredeti is, ha eltér
 
         supplier_customers_by_tax = {}
         supplier_customers_by_name = {}
@@ -6881,7 +6886,8 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             supplier_tax_key = _normalize_tax_value(getattr(r, 'supplier_tax_number', ''))
             # Csoporttag adószám: pontosabb azonosítás csoport-tagokhoz (pl. MOL Downstream)
             supplier_member_tax_key = _normalize_tax_value(getattr(r, 'supplier_group_member_tax_number', ''))
-            supplier_name_key = str(getattr(r, 'supplier_name', '') or '').strip().lower()
+            import re as _re
+            supplier_name_key = _re.sub(r'\s+', ' ', str(getattr(r, 'supplier_name', '') or '')).strip().lower()
             supplier_customer = None
             # 1. Csoporttag adószám szerinti keresés (legpontosabb)
             if supplier_member_tax_key:
