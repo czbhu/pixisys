@@ -6451,24 +6451,43 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                         keys.add(mtx[:8])
             except Exception:
                 pass
+            try:
+                gtx = _normalize_tax_value(getattr(cust_obj, 'group_tax_number', ''))
+                if gtx:
+                    keys.add(gtx)
+                    if len(gtx) >= 8:
+                        keys.add(gtx[:8])
+            except Exception:
+                pass
             return keys
         if supplier_tax_values or supplier_name_values:
+            # Normalizált adószám értékek: az eredeti + csak-szám változat
+            # A group_tax_number DB-ben formázottan tárolódhat (pl. 17781774-5-44),
+            # ezért az egyeztetéshez minden variánst megvizsgálunk.
+            all_tax_values = set(supplier_tax_values)
+            for tv in list(supplier_tax_values):
+                ntv = ''.join(ch for ch in str(tv) if ch.isdigit())
+                if ntv:
+                    all_tax_values.add(ntv)
+
             supplier_candidates = Customer.objects.filter(is_supplier=True)
-            if supplier_tax_values and supplier_name_values:
-                supplier_candidates = supplier_candidates.filter(
-                    Q(tax_number__in=list(supplier_tax_values))
-                    | Q(full_tax_number__in=list(supplier_tax_values))
-                    | Q(vat_group_member_tax_number__in=list(supplier_tax_values))
-                    | Q(name__in=list(supplier_name_values))
+            tax_q = Q()
+            if all_tax_values:
+                tax_q = (
+                    Q(tax_number__in=list(all_tax_values))
+                    | Q(full_tax_number__in=list(all_tax_values))
+                    | Q(vat_group_member_tax_number__in=list(all_tax_values))
+                    | Q(group_tax_number__in=list(all_tax_values))
                 )
-            elif supplier_tax_values:
-                supplier_candidates = supplier_candidates.filter(
-                    Q(tax_number__in=list(supplier_tax_values))
-                    | Q(full_tax_number__in=list(supplier_tax_values))
-                    | Q(vat_group_member_tax_number__in=list(supplier_tax_values))
-                )
-            else:
-                supplier_candidates = supplier_candidates.filter(name__in=list(supplier_name_values))
+                # group_tax_number tárolódhat 17781774-5-44 formátumban, de a számla
+                # csak 17781774-et küld → startswith egyezés minden 8 jegyű adószámhoz
+                for tv in all_tax_values:
+                    if len(tv) == 8 and tv.isdigit():
+                        tax_q |= Q(group_tax_number__startswith=tv)
+                        tax_q |= Q(full_tax_number__startswith=tv)
+                        tax_q |= Q(vat_group_member_tax_number__startswith=tv)
+            name_q = Q(name__in=list(supplier_name_values)) if supplier_name_values else Q()
+            supplier_candidates = supplier_candidates.filter(tax_q | name_q) if (tax_q or name_q) else supplier_candidates.none()
             for c in supplier_candidates:
                 for tax_key in _customer_tax_keys(c):
                     if tax_key and tax_key not in supplier_customers_by_tax:
@@ -6478,21 +6497,17 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                     supplier_customers_by_name[name_key] = c
 
             all_candidates = Customer.objects.all()
-            if supplier_tax_values and supplier_name_values:
-                all_candidates = all_candidates.filter(
-                    Q(tax_number__in=list(supplier_tax_values))
-                    | Q(full_tax_number__in=list(supplier_tax_values))
-                    | Q(vat_group_member_tax_number__in=list(supplier_tax_values))
-                    | Q(name__in=list(supplier_name_values))
-                )
-            elif supplier_tax_values:
-                all_candidates = all_candidates.filter(
-                    Q(tax_number__in=list(supplier_tax_values))
-                    | Q(full_tax_number__in=list(supplier_tax_values))
-                    | Q(vat_group_member_tax_number__in=list(supplier_tax_values))
-                )
-            else:
-                all_candidates = all_candidates.filter(name__in=list(supplier_name_values))
+            all_candidates = all_candidates.filter(tax_q | name_q) if (tax_q or name_q) else all_candidates.none()
+            for c in supplier_candidates:
+                for tax_key in _customer_tax_keys(c):
+                    if tax_key and tax_key not in supplier_customers_by_tax:
+                        supplier_customers_by_tax[tax_key] = c
+                name_key = str(getattr(c, 'name', '') or '').strip().lower()
+                if name_key and name_key not in supplier_customers_by_name:
+                    supplier_customers_by_name[name_key] = c
+
+            all_candidates = Customer.objects.all()
+            all_candidates = all_candidates.filter(tax_q | name_q) if (tax_q or name_q) else all_candidates.none()
 
             for c in all_candidates:
                 for tax_key in _customer_tax_keys(c):
