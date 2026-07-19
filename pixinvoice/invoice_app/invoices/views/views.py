@@ -6443,6 +6443,14 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                         keys.add(ftx[:8])
             except Exception:
                 pass
+            try:
+                mtx = _normalize_tax_value(getattr(cust_obj, 'vat_group_member_tax_number', ''))
+                if mtx:
+                    keys.add(mtx)
+                    if len(mtx) >= 8:
+                        keys.add(mtx[:8])
+            except Exception:
+                pass
             return keys
         if supplier_tax_values or supplier_name_values:
             supplier_candidates = Customer.objects.filter(is_supplier=True)
@@ -6450,12 +6458,14 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 supplier_candidates = supplier_candidates.filter(
                     Q(tax_number__in=list(supplier_tax_values))
                     | Q(full_tax_number__in=list(supplier_tax_values))
+                    | Q(vat_group_member_tax_number__in=list(supplier_tax_values))
                     | Q(name__in=list(supplier_name_values))
                 )
             elif supplier_tax_values:
                 supplier_candidates = supplier_candidates.filter(
                     Q(tax_number__in=list(supplier_tax_values))
                     | Q(full_tax_number__in=list(supplier_tax_values))
+                    | Q(vat_group_member_tax_number__in=list(supplier_tax_values))
                 )
             else:
                 supplier_candidates = supplier_candidates.filter(name__in=list(supplier_name_values))
@@ -6472,12 +6482,14 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 all_candidates = all_candidates.filter(
                     Q(tax_number__in=list(supplier_tax_values))
                     | Q(full_tax_number__in=list(supplier_tax_values))
+                    | Q(vat_group_member_tax_number__in=list(supplier_tax_values))
                     | Q(name__in=list(supplier_name_values))
                 )
             elif supplier_tax_values:
                 all_candidates = all_candidates.filter(
                     Q(tax_number__in=list(supplier_tax_values))
                     | Q(full_tax_number__in=list(supplier_tax_values))
+                    | Q(vat_group_member_tax_number__in=list(supplier_tax_values))
                 )
             else:
                 all_candidates = all_candidates.filter(name__in=list(supplier_name_values))
