@@ -6421,6 +6421,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 nm = ''
             if nm:
                 supplier_name_values.add(nm)
+                supplier_name_values.add(nm.upper())   # CRM általában nagybetűsen tárolja
 
         supplier_customers_by_tax = {}
         supplier_customers_by_name = {}
@@ -6462,8 +6463,6 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             return keys
         if supplier_tax_values or supplier_name_values:
             # Normalizált adószám értékek: az eredeti + csak-szám változat
-            # A group_tax_number DB-ben formázottan tárolódhat (pl. 17781774-5-44),
-            # ezért az egyeztetéshez minden variánst megvizsgálunk.
             all_tax_values = set(supplier_tax_values)
             for tv in list(supplier_tax_values):
                 ntv = ''.join(ch for ch in str(tv) if ch.isdigit())
@@ -6479,13 +6478,6 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                     | Q(vat_group_member_tax_number__in=list(all_tax_values))
                     | Q(group_tax_number__in=list(all_tax_values))
                 )
-                # group_tax_number tárolódhat 17781774-5-44 formátumban, de a számla
-                # csak 17781774-et küld → startswith egyezés minden 8 jegyű adószámhoz
-                for tv in all_tax_values:
-                    if len(tv) == 8 and tv.isdigit():
-                        tax_q |= Q(group_tax_number__startswith=tv)
-                        tax_q |= Q(full_tax_number__startswith=tv)
-                        tax_q |= Q(vat_group_member_tax_number__startswith=tv)
             name_q = Q(name__in=list(supplier_name_values)) if supplier_name_values else Q()
             supplier_candidates = supplier_candidates.filter(tax_q | name_q) if (tax_q or name_q) else supplier_candidates.none()
             for c in supplier_candidates:
