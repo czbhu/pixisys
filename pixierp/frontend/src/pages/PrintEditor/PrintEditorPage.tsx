@@ -56,7 +56,10 @@ const PrintEditorPage: React.FC = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const isAdmin = !!(user?.is_staff || user?.is_superuser);
+  const hasPrintShopPerm = Array.isArray(user?.permissions) && user.permissions.some(
+    (p: any) => (p.resource === 'printshop.shop' || p.resource === 'printshop.sheet') && p.allowed !== false
+  );
+  const isAdmin = !!(user?.is_staff || user?.is_superuser || hasPrintShopPerm);
 
   const canvasRef = useRef<CanvasEditorHandle>(null);
   const [viewMode] = useState<'editor' | 'preview'>('editor');

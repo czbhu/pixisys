@@ -18,3 +18,73 @@
 WS Token Error: Token is invalid or expired
 /home/ceze/pixisys/pixierp/venv/lib/python3.11/site-packages/rest_framework/pagination.py:200: UnorderedObjectListWarning: Pagination may yield inconsistent results with an unordered object_list: <class 'apps.finance.models.CashRegisterEmployee'> QuerySet.
   paginator = self.django_paginator_class(queryset, page_size)
+WS Token Error: Token is invalid or expired
+[KIOSK_DEBUG] request_qr from abris.szeman (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: abris.szeman (ID: 9)
+[KIOSK_DEBUG] User abris.szeman is Employee. Depts: [<Department: Grafikus>, <Department: Gyártás - Szerelés, kihelyezés>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>, <Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] request_qr from abris.szeman (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: abris.szeman (ID: 9)
+[KIOSK_DEBUG] User abris.szeman is Employee. Depts: [<Department: Grafikus>, <Department: Gyártás - Szerelés, kihelyezés>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>, <Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Stopping rotation task for abris.szeman
+[KIOSK_DEBUG] Checking kiosks for user: abris.szeman (ID: 9)
+[KIOSK_DEBUG] User abris.szeman is Employee. Depts: [<Department: Grafikus>, <Department: Gyártás - Szerelés, kihelyezés>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>, <Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Sending stop_qr to kiosks: ['kiosk-s9yivlwfd-1770718612432']
+/home/ceze/pixisys/pixierp/venv/lib/python3.11/site-packages/rest_framework/pagination.py:200: UnorderedObjectListWarning: Pagination may yield inconsistent results with an unordered object_list: <class 'apps.finance.models.CashRegisterEmployee'> QuerySet.
+  paginator = self.django_paginator_class(queryset, page_size)
+/home/ceze/pixisys/pixierp/venv/lib/python3.11/site-packages/rest_framework/pagination.py:200: UnorderedObjectListWarning: Pagination may yield inconsistent results with an unordered object_list: <class 'apps.finance.models.CashRegisterEmployee'> QuerySet.
+  paginator = self.django_paginator_class(queryset, page_size)
+[KIOSK_DEBUG] request_qr from roland.radocz (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: roland.radocz (ID: 13)
+[KIOSK_DEBUG] User roland.radocz is Employee. Depts: [<Department: Gyártás - nyomtatás UV>, <Department: Gyártás - Szerelés, kihelyezés>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>, <Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] request_qr from roland.radocz (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: roland.radocz (ID: 13)
+[KIOSK_DEBUG] User roland.radocz is Employee. Depts: [<Department: Gyártás - nyomtatás UV>, <Department: Gyártás - Szerelés, kihelyezés>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>, <Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Stopping rotation task for roland.radocz
+[KIOSK_DEBUG] Checking kiosks for user: roland.radocz (ID: 13)
+[KIOSK_DEBUG] User roland.radocz is Employee. Depts: [<Department: Gyártás - nyomtatás UV>, <Department: Gyártás - Szerelés, kihelyezés>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>, <Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Sending stop_qr to kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] request_qr from petra.tothfalusi (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: petra.tothfalusi (ID: 12)
+[KIOSK_DEBUG] User petra.tothfalusi is Employee. Depts: [<Department: Gyártás - kötészet>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] request_qr from petra.tothfalusi (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: petra.tothfalusi (ID: 12)
+[KIOSK_DEBUG] User petra.tothfalusi is Employee. Depts: [<Department: Gyártás - kötészet>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Stopping rotation task for petra.tothfalusi
+[KIOSK_DEBUG] Checking kiosks for user: petra.tothfalusi (ID: 12)
+[KIOSK_DEBUG] User petra.tothfalusi is Employee. Depts: [<Department: Gyártás - kötészet>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Sending stop_qr to kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] request_qr from janos.orosz (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: janos.orosz (ID: 3)
+[KIOSK_DEBUG] User janos.orosz is Employee. Depts: [<Department: Adminisztráció>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Stopping rotation task for janos.orosz
+[KIOSK_DEBUG] Checking kiosks for user: janos.orosz (ID: 3)
+[KIOSK_DEBUG] User janos.orosz is Employee. Depts: [<Department: Adminisztráció>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Sending stop_qr to kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[DEBUG] Project update: project_id from request = None
+[DEBUG] Project cleared (set to None)
+[DEBUG] Project update: project_id from request = 9
+[DEBUG] Project set to: Campus Fesztivál
+/home/ceze/pixisys/pixierp/venv/lib/python3.11/site-packages/rest_framework/pagination.py:200: UnorderedObjectListWarning: Pagination may yield inconsistent results with an unordered object_list: <class 'apps.finance.models.CashRegisterEmployee'> QuerySet.
+  paginator = self.django_paginator_class(queryset, page_size)
