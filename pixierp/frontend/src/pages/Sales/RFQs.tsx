@@ -3690,7 +3690,7 @@ const RFQs: React.FC = () => {
           </div>
         )}
 
-        <EnhancedTable key="rfqs-items" tableKey="rfqs-items" searchValue={query} onSearchChange={handleSearchChange} searchPlaceholder="Keresés…" columns={itemsColumns as any} dataSource={flattenedItems} rowKey="uniqueId" pagination={{ pageSize: tablePageSize, current: tablePage, total: totalCount, showSizeChanger: true, pageSizeOptions: ['25','50','100'], onChange: (pg, sz) => { setTablePage(pg); tablePageRef.current = pg; setTablePageSize(sz); } }} size="small" cardBreakpoint={750} sticky={{ offsetScroll: 0 }} className="rfq-items-table" onRow={(r: any) => {
+        <EnhancedTable key="rfqs-items" tableKey="rfqs-items" loading={loading} searchValue={query} onSearchChange={handleSearchChange} searchPlaceholder="Keresés…" columns={itemsColumns as any} dataSource={flattenedItems} rowKey="uniqueId" pagination={{ pageSize: tablePageSize, current: tablePage, total: totalCount, showSizeChanger: true, pageSizeOptions: ['25','50','100'], onChange: (pg, sz) => { setTablePage(pg); tablePageRef.current = pg; setTablePageSize(sz); } }} size="small" cardBreakpoint={750} sticky={{ offsetScroll: 0 }} className="rfq-items-table" onRow={(r: any) => {
           return { onDoubleClick: () => window.open(`/sales/rfqs/${r.rfq_number || r.rfq_id}`, '_blank'), style: { cursor: 'pointer' } };
         }}
         rowClassName={(r: any) => { const st = getDisplayStatus(r); return st !== 'new' ? `rfq-row-${st}` : ''; }} rowSelection={{ selectedRowKeys: bulkSelectedKeys, onChange: (keys) => setBulkSelectedKeys(keys), columnWidth: 32 }} expandable={{

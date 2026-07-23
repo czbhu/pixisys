@@ -9,7 +9,7 @@
  */
 
 import React, { useMemo, useState, useCallback, useEffect, useRef } from 'react';
-import { Table, Button, Dropdown, Tooltip, Space, Input, Pagination, Select, Card } from 'antd';
+import { Table, Button, Dropdown, Tooltip, Space, Input, Pagination, Select, Card, Skeleton } from 'antd';
 import type { TableProps, TableColumnType } from 'antd';
 import {
   AppstoreOutlined,
@@ -736,6 +736,26 @@ function EnhancedTable<T extends object = any>({
     </div>
   ) : null;
 
+  const isLoading = !!(tableProps.loading);
+
+  // Skeleton sorok: ha tölt és nincs adat → animált placeholder sorok
+  const SKELETON_ROWS = 12;
+  const skeletonDataSource = useMemo(() => {
+    if (!isLoading || fullDataSource.length > 0) return null;
+    return Array.from({ length: SKELETON_ROWS }, (_, i) => ({ _skeleton: true, _skeletonId: `sk-${i}` }));
+  }, [isLoading, fullDataSource.length]);
+
+  const skeletonColumns = useMemo(() => {
+    if (!skeletonDataSource) return null;
+    return processedColumns.map((col: any) => ({
+      ...col,
+      render: () => (
+        <Skeleton.Input active size="small" style={{ width: `${55 + Math.random() * 35}%`, minWidth: 40, height: 14, borderRadius: 4 }} />
+      ),
+      sorter: undefined,
+    }));
+  }, [skeletonDataSource, processedColumns]); // eslint-disable-line
+
   const tableContent = (
     <>
       {!disableCardLayout && useCardLayout ? (
@@ -767,13 +787,15 @@ function EnhancedTable<T extends object = any>({
                 <Table<T>
                   key={tableResetKey}
                   {...tableProps}
-                  rowSelection={enhancedRowSelection}
-                  dataSource={pagedDataSource as T[]}
+                  loading={skeletonDataSource ? false : isLoading}
+                  rowSelection={skeletonDataSource ? undefined : enhancedRowSelection}
+                  dataSource={(skeletonDataSource ?? pagedDataSource) as T[]}
+                  rowKey={skeletonDataSource ? '_skeletonId' : ((tableProps.rowKey as any) ?? 'id')}
+                  columns={(skeletonDataSource ? skeletonColumns : processedColumns) as TableColumnType<T>[]}
                   tableLayout="fixed"
                   scroll={{ x: processedColumns.reduce((s, c) => s + (typeof (c as any).width === 'number' ? (c as any).width : 150), 0), ...((tableProps as any).scroll || {}) }}
                   pagination={topPag}
                   footer={footerFn}
-                  columns={processedColumns as TableColumnType<T>[]}
                   onChange={(_pag, _filters, sorter) => {
                     const s = Array.isArray(sorter) ? sorter[0] : sorter;
                     if (s && s.columnKey && s.order) {
