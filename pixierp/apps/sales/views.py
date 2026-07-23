@@ -589,6 +589,32 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         # Majd szűrjük a törölt elemeket
         queryset = queryset.filter(is_deleted=False)
 
+        # ?q=: szerver oldali szöveges keresés (skalázható, 10.000+ sornál szükséges)
+        # Keres: szám, cím, cégnév, kontakt neve, tétel neve, státusz
+        try:
+            q_param = getattr(self, 'request', None) and self.request.query_params.get('q', '').strip()
+        except Exception:
+            q_param = ''
+        if q_param:
+            from django.db.models import Q as _Q
+            terms = q_param.split()
+            for term in terms:
+                queryset = queryset.filter(
+                    _Q(number__icontains=term)
+                    | _Q(request_number__icontains=term)
+                    | _Q(title__icontains=term)
+                    | _Q(company__name__icontains=term)
+                    | _Q(contacts__first_name__icontains=term)
+                    | _Q(contacts__last_name__icontains=term)
+                    | _Q(items__item_name__icontains=term)
+                    | _Q(status__icontains=term)
+                    | _Q(project__name__icontains=term)
+                    | _Q(owner__first_name__icontains=term)
+                    | _Q(owner__last_name__icontains=term)
+                    | _Q(created_by__first_name__icontains=term)
+                    | _Q(created_by__last_name__icontains=term)
+                ).distinct()
+
         # ?light=1: listanézet gyorsítása — a tételeknél kihagyjuk a csatolmányok prefetch-ét
         # (csak a lista táblázathoz szükséges adatok kerülnek lekérdezésre)
         try:

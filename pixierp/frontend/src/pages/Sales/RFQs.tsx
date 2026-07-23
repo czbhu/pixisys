@@ -779,6 +779,42 @@ const RFQs: React.FC = () => {
     return { ...rfq, _searchText: normalizeTextForSearch(parts.filter(Boolean).join(' ')) };
   };
 
+  // Szerver oldali kereső kérés — aktív keresőszónál nem tölt be mindent, hanem a backend szűr
+  // Ez teszi skalázhatóvá 10.000+ rekordnál is
+  const serverSearchRef = React.useRef<AbortController | null>(null);
+  useEffect(() => {
+    const q = debouncedQuery?.trim();
+    if (!q) {
+      // Üres keresés: visszaállunk a kliens oldali nézetre (rfqs már be van töltve)
+      return;
+    }
+    // Szerver oldali keresés: abort az előző kérést, indít egy újat
+    if (serverSearchRef.current) serverSearchRef.current.abort();
+    const ctrl = new AbortController();
+    serverSearchRef.current = ctrl;
+    setLoading(true);
+    salesService.getQuoteRequestsPage(1, 200, { q })
+      .then(res => {
+        if (ctrl.signal.aborted) return;
+        setRfqs((res.results ?? []).map(attachSearchText));
+        setLoading(false);
+      })
+      .catch(err => {
+        if (ctrl.signal.aborted) return;
+        console.error('Server search error:', err);
+        setLoading(false);
+      });
+  }, [debouncedQuery]); // eslint-disable-line
+
+  // Ha a keresés törlődik, töltsük vissza az összes adatot
+  const prevQueryRef = React.useRef(debouncedQuery);
+  useEffect(() => {
+    if (prevQueryRef.current && !debouncedQuery) {
+      loadData(); // keresés törlése → friss teljes betöltés
+    }
+    prevQueryRef.current = debouncedQuery;
+  }, [debouncedQuery]); // eslint-disable-line
+
   useEffect(() => {
     loadData();
   }, []);
