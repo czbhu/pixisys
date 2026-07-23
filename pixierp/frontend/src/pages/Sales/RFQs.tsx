@@ -779,41 +779,61 @@ const RFQs: React.FC = () => {
     return { ...rfq, _searchText: normalizeTextForSearch(parts.filter(Boolean).join(' ')) };
   };
 
-  // Szerver oldali kereső kérés — aktív keresőszónál nem tölt be mindent, hanem a backend szűr
-  // Ez teszi skalázhatóvá 10.000+ rekordnál is
-  const serverSearchRef = React.useRef<AbortController | null>(null);
+  // Szerver oldali szűrés: ha bármely szűrő aktív → egyetlen API kérés a backend felé
+  // Ez teszi skalázhatóvá 10.000+ sornál is (nem tölt be mindent a böngészőbe)
+  const serverFetchRef = React.useRef<AbortController | null>(null);
+  const isAnyFilterActive = !!(
+    debouncedQuery?.trim() ||
+    creatorFilter ||
+    projectFilter ||
+    (statusFilter.length > 0 && !statusFilter.includes('mind'))
+  );
+
   useEffect(() => {
-    const q = debouncedQuery?.trim();
-    if (!q) {
-      // Üres keresés: visszaállunk a kliens oldali nézetre (rfqs már be van töltve)
-      return;
-    }
-    // Szerver oldali keresés: abort az előző kérést, indít egy újat
-    if (serverSearchRef.current) serverSearchRef.current.abort();
+    if (!isAnyFilterActive) return; // üres szűrő → loadData() kezeli
+
+    if (serverFetchRef.current) serverFetchRef.current.abort();
     const ctrl = new AbortController();
-    serverSearchRef.current = ctrl;
+    serverFetchRef.current = ctrl;
+
+    const params: Record<string, string> = {};
+    if (debouncedQuery?.trim()) params.q = debouncedQuery.trim();
+    if (creatorFilter) params.creator = creatorFilter;
+    if (projectFilter) params.project_id = String(projectFilter);
+    if (statusFilter.length > 0 && !statusFilter.includes('mind')) {
+      // STATUS_COMBOS kibontása → egyedi státuszok listája a backendnek
+      const expanded = new Set<string>();
+      for (const s of statusFilter) {
+        const combo = STATUS_COMBOS[s as keyof typeof STATUS_COMBOS];
+        if (combo) combo.forEach(st => expanded.add(st));
+        else expanded.add(s);
+      }
+      params.status = Array.from(expanded).join(',');
+    }
+
     setLoading(true);
-    salesService.getQuoteRequestsPage(1, 200, { q })
+    salesService.getQuoteRequestsPage(1, 500, params)
       .then(res => {
         if (ctrl.signal.aborted) return;
-        setRfqs((res.results ?? []).map(attachSearchText));
+        startTransition(() => setRfqs((res.results ?? []).map(attachSearchText)));
         setLoading(false);
+        setBackgroundLoading(false);
       })
       .catch(err => {
         if (ctrl.signal.aborted) return;
-        console.error('Server search error:', err);
+        console.error('Server filter error:', err);
         setLoading(false);
       });
-  }, [debouncedQuery]); // eslint-disable-line
+  }, [debouncedQuery, creatorFilter, projectFilter, statusFilter, isAnyFilterActive]); // eslint-disable-line
 
-  // Ha a keresés törlődik, töltsük vissza az összes adatot
-  const prevQueryRef = React.useRef(debouncedQuery);
+  // Ha az összes szűrő törlődik, töltsük vissza az összes adatot
+  const wasFilterActiveRef = React.useRef(false);
   useEffect(() => {
-    if (prevQueryRef.current && !debouncedQuery) {
-      loadData(); // keresés törlése → friss teljes betöltés
+    if (wasFilterActiveRef.current && !isAnyFilterActive) {
+      loadData();
     }
-    prevQueryRef.current = debouncedQuery;
-  }, [debouncedQuery]); // eslint-disable-line
+    wasFilterActiveRef.current = isAnyFilterActive;
+  }, [isAnyFilterActive]); // eslint-disable-line
 
   useEffect(() => {
     loadData();
@@ -934,29 +954,15 @@ const RFQs: React.FC = () => {
   }, [activeComboKey, statusFilter]);
 
   useEffect(() => {
-    let filtered = rfqs || [];
-
-    // Creator filter
-    if (creatorFilter) {
-      filtered = filtered.filter(r => r.created_by_name === creatorFilter);
+    // Ha aktív szűrő van: a szerver már szűrt → rfqs = már szűrt adat, egyenesen átadjuk
+    // Ha nincs szűrő: kliens oldali szűrés (creator, project még mindig itt fut, de már gyors)
+    let data = rfqs || [];
+    if (!isAnyFilterActive) {
+      if (creatorFilter) data = data.filter(r => r.created_by_name === creatorFilter);
+      if (projectFilter) data = data.filter(r => r.project === projectFilter || r.project_id === projectFilter);
     }
-
-    // Project filter
-    if (projectFilter) {
-      filtered = filtered.filter(r => r.project === projectFilter || r.project_id === projectFilter);
-    }
-
-    // Text search — _searchText-et használ (előszámított lapos szöveg), nem rekurzív deepSearch
-    if (debouncedQuery?.trim()) {
-      const tokens = normalizeTextForSearch(debouncedQuery.trim()).split(/\s+/).filter(Boolean);
-      filtered = filtered.filter((rfq) => {
-        const text = rfq._searchText || '';
-        return tokens.every((token: string) => text.includes(token));
-      });
-    }
-
-    startTransition(() => setFiltered(filtered));
-  }, [debouncedQuery, rfqs, statusFilter, creatorFilter, orderStatusFilter, projectFilter]);
+    startTransition(() => setFiltered(data));
+  }, [debouncedQuery, rfqs, statusFilter, creatorFilter, orderStatusFilter, projectFilter, isAnyFilterActive]);
 
   const RFQ_STATUS_META: Record<string, { color: string; text: string }> = {
     new: { color: 'blue', text: 'Új' },

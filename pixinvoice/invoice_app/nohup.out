@@ -3296,3 +3296,11 @@ INFO name pruned
 [DEBUG 2026-07-23 15:57:59] SMTP send clean success.
 [DEBUG 2026-07-23 15:57:59] Checking IMAP...
 [DEBUG 2026-07-23 15:57:59] Connecting to IMAP mail.magyarmedia.com
+WARNING Not Found: /api/auth/token/refresh/
+WARNING Not Found: /api/auth/token/refresh/
+WARNING Not Found: /api/auth/token/refresh/
+WARNING Not Found: /api/auth/token/refresh/
+WARNING Unauthorized: /api/menu-badges/
+WARNING Unauthorized: /api/menu-badges/
+WARNING Unauthorized: /api/menu-badges/
+WARNING Unauthorized: /api/menu-badges/

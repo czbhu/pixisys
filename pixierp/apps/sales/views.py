@@ -589,16 +589,17 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         # Majd szűrjük a törölt elemeket
         queryset = queryset.filter(is_deleted=False)
 
-        # ?q=: szerver oldali szöveges keresés (skalázható, 10.000+ sornál szükséges)
-        # Keres: szám, cím, cégnév, kontakt neve, tétel neve, státusz
+        # Szerver oldali szűrők (skalázható, 10.000+ sornál is gyors SQL)
         try:
-            q_param = getattr(self, 'request', None) and self.request.query_params.get('q', '').strip()
+            rp = getattr(self, 'request', None) and self.request.query_params
         except Exception:
-            q_param = ''
+            rp = None
+
+        # ?q=: szöveges keresés
+        q_param = (rp.get('q', '') or '').strip() if rp else ''
         if q_param:
             from django.db.models import Q as _Q
-            terms = q_param.split()
-            for term in terms:
+            for term in q_param.split():
                 queryset = queryset.filter(
                     _Q(number__icontains=term)
                     | _Q(request_number__icontains=term)
@@ -614,6 +615,36 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                     | _Q(created_by__first_name__icontains=term)
                     | _Q(created_by__last_name__icontains=term)
                 ).distinct()
+
+        # ?status=new,quoted,...: státusz szűrő (vesszővel elválasztott lista)
+        status_param = (rp.get('status', '') or '').strip() if rp else ''
+        if status_param:
+            statuses = [s.strip() for s in status_param.split(',') if s.strip()]
+            if statuses:
+                queryset = queryset.filter(status__in=statuses)
+
+        # ?effective_status=...: effective_status szűrő
+        eff_status_param = (rp.get('effective_status', '') or '').strip() if rp else ''
+        if eff_status_param:
+            eff_statuses = [s.strip() for s in eff_status_param.split(',') if s.strip()]
+            if eff_statuses:
+                queryset = queryset.filter(effective_status__in=eff_statuses)
+
+        # ?creator=name: létrehozó neve (first_name + last_name tartalmaz)
+        creator_param = (rp.get('creator', '') or '').strip() if rp else ''
+        if creator_param:
+            from django.db.models import Q as _Q
+            queryset = queryset.filter(
+                _Q(created_by__first_name__icontains=creator_param)
+                | _Q(created_by__last_name__icontains=creator_param)
+                | _Q(owner__first_name__icontains=creator_param)
+                | _Q(owner__last_name__icontains=creator_param)
+            )
+
+        # ?project_id=5: projekt szűrő
+        project_param = (rp.get('project_id', '') or '').strip() if rp else ''
+        if project_param and project_param.isdigit():
+            queryset = queryset.filter(project_id=int(project_param))
 
         # ?light=1: listanézet gyorsítása — a tételeknél kihagyjuk a csatolmányok prefetch-ét
         # (csak a lista táblázathoz szükséges adatok kerülnek lekérdezésre)
