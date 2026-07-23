@@ -800,10 +800,7 @@ const RFQs: React.FC = () => {
     setLoading(true);
     setRfqs([]);
 
-    const params: Record<string, string> = {
-      page: String(page),
-      page_size: String(pageSize),
-    };
+    const params: Record<string, string> = {};
     if (debouncedQuery?.trim()) params.q = debouncedQuery.trim();
     if (creatorFilter) params.creator = creatorFilter;
     if (projectFilter) params.project_id = String(projectFilter);
