@@ -595,8 +595,12 @@ function EnhancedTable<T extends object = any>({
   const origPageSize = (pag && typeof pag === 'object') ? ((pag as any).pageSize ?? 20) : 20;
   const origCurrent = (pag && typeof pag === 'object') ? (pag as any).current : undefined;
   const origOnChange = (pag && typeof pag === 'object') ? (pag as any).onChange : undefined;
+  // origTotal: szerver oldali lapozásnál a parent adja meg a valós összeget (pl. 757),
+  // kliens oldali lapozásnál dataLen (a betöltött sorok száma) az irányadó
+  const origTotal = (pag && typeof pag === 'object') ? (pag as any).total : undefined;
   const fullDataSource = (tableProps.dataSource ?? []) as any[];
   const dataLen = fullDataSource.length;
+  const totalForPagination = origTotal ?? dataLen;
 
   const [intPage, setIntPage] = useState(1);
   const [intPageSize, setIntPageSize] = useUserPreference<number>(`${tableKey}_pageSize`, origPageSize);
@@ -666,7 +670,7 @@ function EnhancedTable<T extends object = any>({
 
   const pagRow = pag !== false ? (
     <div style={{ position: 'relative', display: 'flex', justifyContent: 'center', alignItems: 'center', marginBottom: 4 }}>
-      <Pagination current={page} pageSize={size} total={dataLen} onChange={handlePageChange} showTotal={(t: number, r: [number, number]) => `${r[0]}-${r[1]} / ${t}`} size="small" showSizeChanger={false} />
+      <Pagination current={page} pageSize={size} total={totalForPagination} onChange={handlePageChange} showTotal={(t: number, r: [number, number]) => `${r[0]}-${r[1]} / ${t}`} size="small" showSizeChanger={false} />
       <Select value={size} onChange={handleSizeChange} size="small" variant="borderless" style={{ position: 'absolute', right: 0, width: 100, fontSize: 11, height: 24, lineHeight: '24px' }} popupMatchSelectWidth={false} options={pagSizeOptions} />
     </div>
   ) : null;
@@ -675,7 +679,7 @@ function EnhancedTable<T extends object = any>({
 
   const footerFn = pag !== false && dataLen > size ? () => (
     <div style={{ position: 'relative', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-      <Pagination current={page} pageSize={size} total={dataLen} onChange={handlePageChange} showTotal={(t: number, r: [number, number]) => `${r[0]}-${r[1]} / ${t}`} size="small" showSizeChanger={false} />
+      <Pagination current={page} pageSize={size} total={totalForPagination} onChange={handlePageChange} showTotal={(t: number, r: [number, number]) => `${r[0]}-${r[1]} / ${t}`} size="small" showSizeChanger={false} />
       <Select value={size} onChange={handleSizeChange} size="small" variant="borderless" style={{ position: 'absolute', right: 0, width: 100, fontSize: 11, height: 24, lineHeight: '24px' }} popupMatchSelectWidth={false} options={pagSizeOptions} />
     </div>
   ) : undefined;
