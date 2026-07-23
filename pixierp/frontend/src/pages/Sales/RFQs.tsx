@@ -797,6 +797,10 @@ const RFQs: React.FC = () => {
     serverFetchRef.current = ctrl;
     bgLoadCancelRef.current = true; // háttér-betöltés leállítása
 
+    // Azonnal ürítjük a táblázatot — ne mutasson régi/szűretlen adatot a szerver válaszig
+    setRfqs([]);
+    setLoading(true);
+
     const params: Record<string, string> = {};
     if (debouncedQuery?.trim()) params.q = debouncedQuery.trim();
     if (creatorFilter) params.creator = creatorFilter;
@@ -812,7 +816,6 @@ const RFQs: React.FC = () => {
       params.status = Array.from(expanded).join(',');
     }
 
-    setLoading(true);
     salesService.getQuoteRequestsPage(1, 500, params)
       .then(res => {
         if (ctrl.signal.aborted) return;
