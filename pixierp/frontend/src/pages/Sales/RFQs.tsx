@@ -99,10 +99,11 @@ const RFQs: React.FC = () => {
   // (hook call placed after createOpen state is declared — see below)
   const [loading, setLoading] = useState(true);
   const [backgroundLoading, setBackgroundLoading] = useState(false);
+  const [totalCount, setTotalCount] = useState(0); // szerver oldali összes rekord száma
   const [error, setError] = useState<string | null>(null);
   const [rfqs, setRfqs] = useState<any[]>([]);
   const [tablePage, setTablePage] = useState(1);
-  const [tablePageSize, setTablePageSize] = useState(10);
+  const [tablePageSize, setTablePageSize] = useState(50);
   const tablePageRef = React.useRef(1); // mindig az aktuális oldalt tárolja
   const [costStatusOverrides, setCostStatusOverrides] = useState<Record<number, string>>({});
   const [mfgProductReloadTriggers, setMfgProductReloadTriggers] = useState<Record<number, number>>({});
@@ -779,9 +780,11 @@ const RFQs: React.FC = () => {
     return { ...rfq, _searchText: normalizeTextForSearch(parts.filter(Boolean).join(' ')) };
   };
 
-  // Szerver oldali szűrés: ha bármely szűrő aktív → egyetlen API kérés a backend felé
-  // Ez teszi skalázhatóvá 10.000+ sornál is (nem tölt be mindent a böngészőbe)
-  const serverFetchRef = React.useRef<AbortController | null>(null);
+  // ── Szerver oldali lapozás + szűrés ─────────────────────────────────────
+  // Minden fetch (kezdeti, lapváltás, szűrés) ezen az egy útvonalon megy át.
+  // Nincs háttér-betöltés, nincs kliens-oldali szűrés — minden az API-ból jön.
+  const fetchAbortRef = React.useRef<AbortController | null>(null);
+
   const isAnyFilterActive = !!(
     debouncedQuery?.trim() ||
     creatorFilter ||
@@ -789,24 +792,22 @@ const RFQs: React.FC = () => {
     (statusFilter.length > 0 && !statusFilter.includes('mind'))
   );
 
-  useEffect(() => {
-    if (!isAnyFilterActive) return; // üres szűrő → loadData() kezeli
-
-    if (serverFetchRef.current) serverFetchRef.current.abort();
+  const fetchPage = React.useCallback(async (page: number, pageSize: number) => {
+    if (fetchAbortRef.current) fetchAbortRef.current.abort();
     const ctrl = new AbortController();
-    serverFetchRef.current = ctrl;
-    bgLoadCancelRef.current = true; // háttér-betöltés leállítása
+    fetchAbortRef.current = ctrl;
 
-    // Azonnal ürítjük a táblázatot — ne mutasson régi/szűretlen adatot a szerver válaszig
-    setRfqs([]);
     setLoading(true);
+    setRfqs([]);
 
-    const params: Record<string, string> = {};
+    const params: Record<string, string> = {
+      page: String(page),
+      page_size: String(pageSize),
+    };
     if (debouncedQuery?.trim()) params.q = debouncedQuery.trim();
     if (creatorFilter) params.creator = creatorFilter;
     if (projectFilter) params.project_id = String(projectFilter);
     if (statusFilter.length > 0 && !statusFilter.includes('mind')) {
-      // STATUS_COMBOS kibontása → egyedi státuszok listája a backendnek
       const expanded = new Set<string>();
       for (const s of statusFilter) {
         const combo = STATUS_COMBOS[s as keyof typeof STATUS_COMBOS];
@@ -816,81 +817,57 @@ const RFQs: React.FC = () => {
       params.status = Array.from(expanded).join(',');
     }
 
-    salesService.getQuoteRequestsPage(1, 500, params)
-      .then(res => {
-        if (ctrl.signal.aborted) return;
-        startTransition(() => setRfqs((res.results ?? []).map(attachSearchText)));
-        setLoading(false);
-        setBackgroundLoading(false);
-      })
-      .catch(err => {
-        if (ctrl.signal.aborted) return;
-        console.error('Server filter error:', err);
-        setLoading(false);
-      });
-  }, [debouncedQuery, creatorFilter, projectFilter, statusFilter, isAnyFilterActive]); // eslint-disable-line
-
-  // Ha az összes szűrő törlődik, töltsük vissza az összes adatot
-  const wasFilterActiveRef = React.useRef(false);
-  useEffect(() => {
-    if (wasFilterActiveRef.current && !isAnyFilterActive) {
-      loadData();
+    try {
+      const res = await salesService.getQuoteRequestsPage(page, pageSize, params);
+      if (ctrl.signal.aborted) return;
+      setTotalCount(res.count ?? 0);
+      startTransition(() => setRfqs((res.results ?? []).map(attachSearchText)));
+      setLoading(false);
+      setBackgroundLoading(false);
+    } catch (err: any) {
+      if (ctrl.signal.aborted) return;
+      console.error('Fetch error:', err);
+      setLoading(false);
     }
-    wasFilterActiveRef.current = isAnyFilterActive;
-  }, [isAnyFilterActive]); // eslint-disable-line
+  }, [debouncedQuery, creatorFilter, projectFilter, statusFilter]); // eslint-disable-line
 
+  // Lap/szűrő változás → újra fetchel
   useEffect(() => {
-    loadData();
-  }, []);
+    fetchPage(tablePage, tablePageSize);
+  }, [tablePage, tablePageSize, debouncedQuery, creatorFilter, projectFilter, statusFilter]); // eslint-disable-line
 
-  // Háttér-betöltés megszakítójelző: ha szerver oldali szűrés aktív, ne írja felül az eredményeket
-  const bgLoadCancelRef = React.useRef(false);
+  // Lapváltáskor visszaugrik az 1. lapra ha szűrő változott
+  const prevFiltersRef = React.useRef({ debouncedQuery, creatorFilter, projectFilter, statusFilter });
+  useEffect(() => {
+    const prev = prevFiltersRef.current;
+    const filtersChanged =
+      prev.debouncedQuery !== debouncedQuery ||
+      prev.creatorFilter !== creatorFilter ||
+      prev.projectFilter !== projectFilter ||
+      prev.statusFilter !== statusFilter;
+    if (filtersChanged) {
+      setTablePage(1);
+      tablePageRef.current = 1;
+    }
+    prevFiltersRef.current = { debouncedQuery, creatorFilter, projectFilter, statusFilter };
+  }, [debouncedQuery, creatorFilter, projectFilter, statusFilter]); // eslint-disable-line
 
   const loadData = async () => {
-    bgLoadCancelRef.current = false; // új teljes betöltés indul
+    // Visszalap az első oldalra és frissít
+    setTablePage(1);
+    tablePageRef.current = 1;
     try {
-      setLoading(true);
-      setError(null);
-      const PAGE_SIZE = 50;
-      const [firstPageData, projRes] = await Promise.all([
-        salesService.getQuoteRequestsPage(1, PAGE_SIZE),
-        manufacturingService.getProjects(),
-      ]);
-      const firstResults: any[] = firstPageData.results ?? [];
-      const totalCount: number = firstPageData.count ?? firstResults.length;
-      setRfqs(firstResults.map(attachSearchText));
-      setCostStatusOverrides({});  // clear overrides when fresh data loads
+      const projRes = await manufacturingService.getProjects();
       setProjects(projRes as any);
-      setLoading(false);
-
-      // Háttérben betöltjük a maradék oldalakat — gyors szekvenciális fetch,
-      // startTransition: a state-frissítés alacsony prioritású, nem blokkolja a UI-interakciókat
-      if (totalCount > PAGE_SIZE) {
-        setBackgroundLoading(true);
-        const totalPages = Math.ceil(totalCount / PAGE_SIZE);
-        for (let page = 2; page <= totalPages; page++) {
-          // Ha időközben szerver oldali szűrés indult, ne folytassuk a betöltést
-          if (bgLoadCancelRef.current) break;
-          try {
-            const pageData = await salesService.getQuoteRequestsPage(page, PAGE_SIZE);
-            const results: any[] = pageData.results ?? [];
-            if (!bgLoadCancelRef.current) {
-              startTransition(() => {
-                setRfqs(prev => [...prev, ...results.map(attachSearchText)]);
-              });
-            }
-          } catch (e) {
-            console.error(`Hiba a(z) ${page}. oldal betöltésekor:`, e);
-          }
-        }
-        setBackgroundLoading(false);
-      }
-    } catch (e) {
-      console.error(e);
-      setError('Hiba történt az adatok betöltése során');
-      setLoading(false);
-    }
+      setCostStatusOverrides({});
+    } catch {}
+    fetchPage(1, tablePageSize);
   };
+
+  // Projektek betöltése egyszer az elején (fetchPage kezeli az rfqs-t)
+  useEffect(() => {
+    manufacturingService.getProjects().then(res => setProjects(res as any)).catch(() => {});
+  }, []); // eslint-disable-line
 
   const reloadProjects = async () => {
     try {
@@ -966,15 +943,9 @@ const RFQs: React.FC = () => {
   }, [activeComboKey, statusFilter]);
 
   useEffect(() => {
-    // Ha aktív szűrő van: a szerver már szűrt → rfqs = már szűrt adat, egyenesen átadjuk
-    // Ha nincs szűrő: kliens oldali szűrés (creator, project még mindig itt fut, de már gyors)
-    let data = rfqs || [];
-    if (!isAnyFilterActive) {
-      if (creatorFilter) data = data.filter(r => r.created_by_name === creatorFilter);
-      if (projectFilter) data = data.filter(r => r.project === projectFilter || r.project_id === projectFilter);
-    }
-    startTransition(() => setFiltered(data));
-  }, [debouncedQuery, rfqs, statusFilter, creatorFilter, orderStatusFilter, projectFilter, isAnyFilterActive]);
+    // Szerver már szűrte az adatot — csak átadjuk (flattenedItems kezeli a STATUS_COMBOS logikát)
+    startTransition(() => setFiltered(rfqs || []));
+  }, [rfqs]);
 
   const RFQ_STATUS_META: Record<string, { color: string; text: string }> = {
     new: { color: 'blue', text: 'Új' },
@@ -3664,7 +3635,7 @@ const RFQs: React.FC = () => {
           </div>
         )}
 
-        <EnhancedTable key="rfqs-items" tableKey="rfqs-items" searchValue={query} onSearchChange={handleSearchChange} searchPlaceholder="Keresés…" columns={itemsColumns as any} dataSource={flattenedItems} rowKey="uniqueId" pagination={{ pageSize: tablePageSize, current: tablePage, showSizeChanger: true, pageSizeOptions: ['10','25','50','100'], onChange: (pg, sz) => { setTablePage(pg); tablePageRef.current = pg; setTablePageSize(sz); } }} size="small" cardBreakpoint={750} sticky={{ offsetScroll: 0 }} className="rfq-items-table" onRow={(r: any) => {
+        <EnhancedTable key="rfqs-items" tableKey="rfqs-items" searchValue={query} onSearchChange={handleSearchChange} searchPlaceholder="Keresés…" columns={itemsColumns as any} dataSource={flattenedItems} rowKey="uniqueId" pagination={{ pageSize: tablePageSize, current: tablePage, total: totalCount, showSizeChanger: true, pageSizeOptions: ['25','50','100'], onChange: (pg, sz) => { setTablePage(pg); tablePageRef.current = pg; setTablePageSize(sz); } }} size="small" cardBreakpoint={750} sticky={{ offsetScroll: 0 }} className="rfq-items-table" onRow={(r: any) => {
           return { onDoubleClick: () => window.open(`/sales/rfqs/${r.rfq_number || r.rfq_id}`, '_blank'), style: { cursor: 'pointer' } };
         }}
         rowClassName={(r: any) => { const st = getDisplayStatus(r); return st !== 'new' ? `rfq-row-${st}` : ''; }} rowSelection={{ selectedRowKeys: bulkSelectedKeys, onChange: (keys) => setBulkSelectedKeys(keys), columnWidth: 32 }} expandable={{

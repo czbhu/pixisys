@@ -1190,3 +1190,5 @@ WS Token Error: Token is invalid or expired
   paginator = self.django_paginator_class(queryset, page_size)
 /home/ceze/pixisys/pixierp/venv/lib/python3.11/site-packages/rest_framework/pagination.py:200: UnorderedObjectListWarning: Pagination may yield inconsistent results with an unordered object_list: <class 'apps.finance.models.CashRegisterEmployee'> QuerySet.
   paginator = self.django_paginator_class(queryset, page_size)
+/home/ceze/pixisys/pixierp/venv/lib/python3.11/site-packages/rest_framework/pagination.py:200: UnorderedObjectListWarning: Pagination may yield inconsistent results with an unordered object_list: <class 'apps.finance.models.CashRegisterEmployee'> QuerySet.
+  paginator = self.django_paginator_class(queryset, page_size)
