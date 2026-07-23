@@ -1261,9 +1261,15 @@ const RFQs: React.FC = () => {
     return res;
   }, [filtered, statusFilter, costStatusOverrides, query]);
 
-  // Load new IDs from backend whenever displayed items change
+  // Load new IDs from backend — debounced: csak akkor kérdez a háttérből ha 1.5mp-ig nem változott a lista
+  // (háttér-betöltés során sok frissítés jön, ne minden lapnál küldjön kérést)
+  useEffect(() => {
+    const ids = flattenedItems.map((r: any) => r.rfq_pk || r.id).filter(Boolean);
+    if (!ids.length) return;
+    const t = setTimeout(() => loadNewRfqIds(ids), 1500);
+    return () => clearTimeout(t);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { loadNewRfqIds(flattenedItems.map((r: any) => r.rfq_pk || r.id).filter(Boolean)); }, [flattenedItems]);
+  }, [flattenedItems]);
 
   const renderExpandedItemRow = (r: any) => {
     const subItems: any[] = r.sub_items || [];
