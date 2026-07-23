@@ -8,7 +8,7 @@
  * Ügyfélnév helper: renderCustomerName(record) – magánszemély kezelés
  */
 
-import React, { useMemo, useState, useCallback } from 'react';
+import React, { useMemo, useState, useCallback, useEffect, useRef } from 'react';
 import { Table, Button, Dropdown, Tooltip, Space, Input, Pagination, Select, Card } from 'antd';
 import type { TableProps, TableColumnType } from 'antd';
 import {
@@ -291,6 +291,22 @@ function EnhancedTable<T extends object = any>({
   );
   const [liveWidths, setLiveWidths] = useState<Record<string, number>>({});
   const mergedWidths: Record<string, number> = { ...(colWidthsPref || {}), ...liveWidths };
+
+  // Belső kereső állapot: azonnali megjelenítés, szülő csak debounce után értesül
+  // Ezzel a gépelés nem triggeri az egész szülőkomponens újrarenderelését
+  const [localSearch, setLocalSearch] = useState(searchValue ?? '');
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Szinkronizálás ha a szülő kívülről törli/módosítja az értéket
+  useEffect(() => {
+    setLocalSearch(searchValue ?? '');
+  }, [searchValue]);
+  const handleLocalSearchChange = useCallback((val: string) => {
+    setLocalSearch(val);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      onSearchChange?.(val);
+    }, 200);
+  }, [onSearchChange]);
 
   const handleResizeMove = useCallback((key: string, width: number) => {
     setLiveWidths(prev => ({ ...prev, [key]: width }));
@@ -677,8 +693,9 @@ function EnhancedTable<T extends object = any>({
         <Input
           prefix={<SearchOutlined />}
           placeholder={searchPlaceholder}
-          value={searchValue}
-          onChange={(e) => onSearchChange(e.target.value)}
+          value={localSearch}
+          onChange={(e) => handleLocalSearchChange(e.target.value)}
+          onClear={() => handleLocalSearchChange('')}
           allowClear
           style={{ flex: 1 }}
         />

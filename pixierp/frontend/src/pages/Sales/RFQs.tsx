@@ -169,13 +169,14 @@ const RFQs: React.FC = () => {
   const [confirmEmailForm] = Form.useForm();
   const [sendPreview, setSendPreview] = useState<any | null>(null);
   const [query, setQuery] = useState(() => localStorage.getItem('rfqs_search_query') || '');
-  // Debounce: a gépélés azonnal megjelenik, a szűrés csak 200ms szünet után fut le
+  // debouncedQuery: az EnhancedTable belső 200ms debounce-a után kapjuk, startTransition-nel
+  // Így a gépelés nem triggeri az egész RFQs komponens újrarenderelését
   const [debouncedQuery, setDebouncedQuery] = useState(query);
-  useEffect(() => {
-    const t = setTimeout(() => setDebouncedQuery(query), 200);
-    return () => clearTimeout(t);
-  }, [query]);
-  const handleSearchChange = (v: string) => { setQuery(v); localStorage.setItem('rfqs_search_query', v); };
+  const handleSearchChange = (v: string) => {
+    setQuery(v);
+    localStorage.setItem('rfqs_search_query', v);
+    startTransition(() => setDebouncedQuery(v));
+  };
   const [partialOrderOpenId, setPartialOrderOpenId] = useState<number | null>(null);
   const [partialSelection, setPartialSelection] = useState<number[]>([]);
   const [partialLoading, setPartialLoading] = useState(false);
