@@ -795,6 +795,7 @@ const RFQs: React.FC = () => {
     if (serverFetchRef.current) serverFetchRef.current.abort();
     const ctrl = new AbortController();
     serverFetchRef.current = ctrl;
+    bgLoadCancelRef.current = true; // háttér-betöltés leállítása
 
     const params: Record<string, string> = {};
     if (debouncedQuery?.trim()) params.q = debouncedQuery.trim();
@@ -839,7 +840,11 @@ const RFQs: React.FC = () => {
     loadData();
   }, []);
 
+  // Háttér-betöltés megszakítójelző: ha szerver oldali szűrés aktív, ne írja felül az eredményeket
+  const bgLoadCancelRef = React.useRef(false);
+
   const loadData = async () => {
+    bgLoadCancelRef.current = false; // új teljes betöltés indul
     try {
       setLoading(true);
       setError(null);
@@ -861,12 +866,16 @@ const RFQs: React.FC = () => {
         setBackgroundLoading(true);
         const totalPages = Math.ceil(totalCount / PAGE_SIZE);
         for (let page = 2; page <= totalPages; page++) {
+          // Ha időközben szerver oldali szűrés indult, ne folytassuk a betöltést
+          if (bgLoadCancelRef.current) break;
           try {
             const pageData = await salesService.getQuoteRequestsPage(page, PAGE_SIZE);
             const results: any[] = pageData.results ?? [];
-            startTransition(() => {
-              setRfqs(prev => [...prev, ...results.map(attachSearchText)]);
-            });
+            if (!bgLoadCancelRef.current) {
+              startTransition(() => {
+                setRfqs(prev => [...prev, ...results.map(attachSearchText)]);
+              });
+            }
           } catch (e) {
             console.error(`Hiba a(z) ${page}. oldal betöltésekor:`, e);
           }
