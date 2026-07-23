@@ -784,6 +784,8 @@ const RFQs: React.FC = () => {
   // Minden fetch (kezdeti, lapváltás, szűrés) ezen az egy útvonalon megy át.
   // Nincs háttér-betöltés, nincs kliens-oldali szűrés — minden az API-ból jön.
   const fetchAbortRef = React.useRef<AbortController | null>(null);
+  // Prefetch cache: szomszéd oldalak előre töltve → azonnali lapváltás
+  const prefetchCacheRef = React.useRef<Map<string, { results: any[]; count: number }>>(new Map());
 
   const isAnyFilterActive = !!(
     debouncedQuery?.trim() ||
@@ -792,14 +794,7 @@ const RFQs: React.FC = () => {
     (statusFilter.length > 0 && !statusFilter.includes('mind'))
   );
 
-  const fetchPage = React.useCallback(async (page: number, pageSize: number) => {
-    if (fetchAbortRef.current) fetchAbortRef.current.abort();
-    const ctrl = new AbortController();
-    fetchAbortRef.current = ctrl;
-
-    setLoading(true);
-    setRfqs([]);
-
+  const buildParams = React.useCallback((page: number, pageSize: number) => {
     const params: Record<string, string> = {};
     if (debouncedQuery?.trim()) params.q = debouncedQuery.trim();
     if (creatorFilter) params.creator = creatorFilter;
@@ -813,22 +808,85 @@ const RFQs: React.FC = () => {
       }
       params.status = Array.from(expanded).join(',');
     }
-
-    try {
-      const res = await salesService.getQuoteRequestsPage(page, pageSize, params);
-      if (ctrl.signal.aborted) return;
-      setTotalCount(res.count ?? 0);
-      startTransition(() => setRfqs((res.results ?? []).map(attachSearchText)));
-      setLoading(false);
-      setBackgroundLoading(false);
-    } catch (err: any) {
-      if (ctrl.signal.aborted) return;
-      console.error('Fetch error:', err);
-      setLoading(false);
-    }
+    return params;
   }, [debouncedQuery, creatorFilter, projectFilter, statusFilter]); // eslint-disable-line
 
-  // Lap/szűrő változás → újra fetchel
+  const cacheKey = React.useCallback((page: number, pageSize: number) =>
+    `${page}|${pageSize}|${debouncedQuery}|${creatorFilter}|${projectFilter}|${statusFilter.join(',')}`,
+  [debouncedQuery, creatorFilter, projectFilter, statusFilter]); // eslint-disable-line
+
+  // Háttérben prefetchel egy oldalt (nem blokkol, eredményt cache-be rakja)
+  const prefetchPage = React.useCallback((page: number, pageSize: number) => {
+    const key = cacheKey(page, pageSize);
+    if (prefetchCacheRef.current.has(key)) return; // már cache-ben van
+    salesService.getQuoteRequestsPage(page, pageSize, buildParams(page, pageSize))
+      .then(res => {
+        prefetchCacheRef.current.set(key, {
+          results: (res.results ?? []).map(attachSearchText),
+          count: res.count ?? 0,
+        });
+      })
+      .catch(() => {}); // silent — nem kritikus
+  }, [cacheKey, buildParams]); // eslint-disable-line
+
+  const fetchPage = React.useCallback(async (page: number, pageSize: number) => {
+    if (fetchAbortRef.current) fetchAbortRef.current.abort();
+    const ctrl = new AbortController();
+    fetchAbortRef.current = ctrl;
+
+    const key = cacheKey(page, pageSize);
+    const cached = prefetchCacheRef.current.get(key);
+
+    if (cached) {
+      // Azonnali megjelenítés a cache-ből — nincs spinner, nincs várakozás
+      setTotalCount(cached.count);
+      startTransition(() => setRfqs(cached.results));
+      setLoading(false);
+      // Háttérben frissítés (stale-while-revalidate)
+      salesService.getQuoteRequestsPage(page, pageSize, buildParams(page, pageSize))
+        .then(res => {
+          if (ctrl.signal.aborted) return;
+          prefetchCacheRef.current.set(key, {
+            results: (res.results ?? []).map(attachSearchText),
+            count: res.count ?? 0,
+          });
+          setTotalCount(res.count ?? 0);
+          startTransition(() => setRfqs((res.results ?? []).map(attachSearchText)));
+        })
+        .catch(() => {});
+    } else {
+      setLoading(true);
+      setRfqs([]);
+      try {
+        const res = await salesService.getQuoteRequestsPage(page, pageSize, buildParams(page, pageSize));
+        if (ctrl.signal.aborted) return;
+        const mapped = (res.results ?? []).map(attachSearchText);
+        prefetchCacheRef.current.set(key, { results: mapped, count: res.count ?? 0 });
+        setTotalCount(res.count ?? 0);
+        startTransition(() => setRfqs(mapped));
+        setLoading(false);
+        setBackgroundLoading(false);
+      } catch (err: any) {
+        if (ctrl.signal.aborted) return;
+        console.error('Fetch error:', err);
+        setLoading(false);
+      }
+    }
+
+    // Szomszéd oldalak prefetch-elése (next + prev) — alacsony prioritással
+    const totalPages = Math.ceil((totalCount || 1) / pageSize);
+    setTimeout(() => {
+      if (page < totalPages) prefetchPage(page + 1, pageSize);
+      if (page > 1) prefetchPage(page - 1, pageSize);
+    }, 300);
+  }, [cacheKey, buildParams, prefetchPage, totalCount]); // eslint-disable-line
+
+  // Szűrő változásakor cache ürítése (régi adatok érvénytelenek)
+  useEffect(() => {
+    prefetchCacheRef.current.clear();
+  }, [debouncedQuery, creatorFilter, projectFilter, statusFilter]); // eslint-disable-line
+
+  // Lap/szűrő változás → fetchel (cache-ből ha van)
   useEffect(() => {
     fetchPage(tablePage, tablePageSize);
   }, [tablePage, tablePageSize, debouncedQuery, creatorFilter, projectFilter, statusFilter]); // eslint-disable-line
@@ -850,7 +908,7 @@ const RFQs: React.FC = () => {
   }, [debouncedQuery, creatorFilter, projectFilter, statusFilter]); // eslint-disable-line
 
   const loadData = async () => {
-    // Visszalap az első oldalra és frissít
+    prefetchCacheRef.current.clear();
     setTablePage(1);
     tablePageRef.current = 1;
     try {
