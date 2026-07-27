@@ -655,6 +655,7 @@ class Invoice(models.Model):
     order_reference = models.CharField(max_length=200, blank=True, null=True, verbose_name="Order Reference")
     # ERP integration
     erp_order_ids = models.JSONField(blank=True, null=True, verbose_name="ERP Order IDs", help_text="List of ERP order IDs associated with this invoice")
+    erp_rfq_ids = models.JSONField(blank=True, null=True, verbose_name="ERP RFQ IDs", help_text="List of ERP RFQ IDs (QuoteRequest) directly invoiced without CustomerOrder")
     # Chain references for corrections/storno
     original_invoice = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='modifications', verbose_name="Original Invoice")
     original_invoice_number = models.CharField(max_length=50, blank=True, null=True, verbose_name="Original Invoice Number")

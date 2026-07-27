@@ -2293,6 +2293,40 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             )
         except Exception:
             pass
+        # ERP visszajelzés: státusz frissítés CustomerOrder és/vagy RFQ szinten
+        try:
+            import requests as _requests
+            from django.conf import settings as _settings
+            erp_base = getattr(_settings, 'ERP_INTERNAL_URL', 'http://localhost:8003/api/v1')
+            erp_token = getattr(_settings, 'ERP_INTERNAL_TOKEN', '')
+            invoice_number = serializer.instance.invoice_number or ''
+            erp_user_id = request.data.get('erp_user_id')
+            headers = {'Content-Type': 'application/json'}
+            if erp_token:
+                headers['Authorization'] = f'Bearer {erp_token}'
+            payload = {'invoice_number': invoice_number}
+            if erp_user_id:
+                payload['erp_user_id'] = erp_user_id
+            # CustomerOrder státusz frissítés
+            for order_id in (serializer.instance.erp_order_ids or []):
+                try:
+                    _requests.patch(
+                        f'{erp_base}/sales/customer-orders/{order_id}/update_invoice_number/',
+                        json=payload, headers=headers, timeout=5
+                    )
+                except Exception:
+                    pass
+            # RFQ (QuoteRequest) közvetlen státusz frissítés (CO nélküli számlázáshoz)
+            for rfq_id in (serializer.instance.erp_rfq_ids or []):
+                try:
+                    _requests.patch(
+                        f'{erp_base}/sales/quote-requests/{rfq_id}/update_invoice_number/',
+                        json=payload, headers=headers, timeout=5
+                    )
+                except Exception:
+                    pass
+        except Exception:
+            pass
         headers = {}
         # Auto-submit to NAV right after create (best-effort)
         try:

@@ -1308,6 +1308,7 @@ class InvoiceCreateSerializer(serializers.ModelSerializer):
     advance_invoice_ids = serializers.ListField(child=serializers.UUIDField(), required=False)
     # ERP integration
     erp_order_ids = serializers.ListField(child=serializers.IntegerField(), required=False, allow_null=True)
+    erp_rfq_ids = serializers.ListField(child=serializers.IntegerField(), required=False, allow_null=True)
 
     class Meta:
         model = Invoice
@@ -1317,7 +1318,7 @@ class InvoiceCreateSerializer(serializers.ModelSerializer):
             'payment_method', 'invoice_category', 'invoice_appearance', 'payment_date', 'completeness_indicator', 'order_reference',
             'notes', 'invoice_block_id', 'company_id',
             'original_invoice_id', 'original_invoice_number', 'modification_index', 'modify_without_master',
-            'advance_invoice_ids', 'erp_order_ids'
+            'advance_invoice_ids', 'erp_order_ids', 'erp_rfq_ids'
         ]
         extra_kwargs = {
             'invoice_number': {'required': False},
