@@ -1920,7 +1920,7 @@ const InvoiceForm = () => {
             const rfqPromises = erpRfqIdsRef.current.map(async (rfqId) => {
               try {
                 const erpBaseUrl = process.env.REACT_APP_ERP_API_URL || 'https://e.pixisys.eu/api/v1';
-                const resp = await fetch(`${erpBaseUrl}/sales/rfqs/${rfqId}/update_invoice_number/`, {
+                const resp = await fetch(`${erpBaseUrl}/sales/quote-requests/${rfqId}/update_invoice_number/`, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({ invoice_number: rfqInvoiceNum, erp_user_id: erpUserIdRef.current }),
