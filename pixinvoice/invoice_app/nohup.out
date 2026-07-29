@@ -3304,3 +3304,28 @@ WARNING Unauthorized: /api/menu-badges/
 WARNING Unauthorized: /api/menu-badges/
 WARNING Unauthorized: /api/menu-badges/
 WARNING Unauthorized: /api/menu-badges/
+WARNING Not Found: /api/auth/token/refresh/
+WARNING Unauthorized: /api/menu-badges/
+WARNING Not Found: /api/auth/token/refresh/
+WARNING Unauthorized: /api/menu-badges/
+WARNING Not Found: /api/v1/meta/plugins
+WARNING Not Found: /api/v1/meta/plugins/email
+WARNING Not Found: /api/auth/token/refresh/
+WARNING Not Found: /api/auth/token/refresh/
+WARNING Not Found: /api/auth/token/refresh/
+WARNING Unauthorized: /api/menu-badges/
+WARNING Unauthorized: /api/menu-badges/
+WARNING Unauthorized: /api/menu-badges/
+WARNING Unauthorized: /api/menu-badges/
+WARNING Unauthorized: /api/menu-badges/
+WARNING Not Found: /api/contacts/861/
+WARNING Not Found: /api/contacts/861/
+WARNING Not Found: /api/.env
+WARNING Not Found: /api/v1/.env
+WARNING Not Found: /api/v2/.env
+WARNING Not Found: /api/v3/.env
+WARNING Not Found: /api/dev/.env
+WARNING Not Found: /api/staging/.env
+WARNING Forbidden: /api/auth/profile/
+WARNING Not Found: /api/auth/token/refresh/
+WARNING Unauthorized: /api/menu-badges/

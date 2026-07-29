@@ -7993,10 +7993,9 @@ class DeliveryNoteViewSet(viewsets.ModelViewSet):
                 
                 # If remaining > 0 (or some small epsilon), include it
                 if remaining > 0:
-                    # Get item name/desc
-                    # CustomerOrderItem description or QuoteItem product name
+                    # Get item name/desc — tétel neve az elsődleges, leírás csak fallback
                     quote_item = item.quote_item
-                    item_name = item.description
+                    item_name = (quote_item.item_name if quote_item else None) or item.description
                     if not item_name and quote_item:
                          ref = (
                             quote_item.product.name if quote_item.product else (
@@ -8121,7 +8120,7 @@ class DeliveryNoteViewSet(viewsets.ModelViewSet):
                         remaining = float(coi.quantity)
                     if remaining <= 0:
                         continue
-                    item_name = coi.description or quote_item.item_name or '-'
+                    item_name = quote_item.item_name or coi.description or '-'
                     items_data.append({
                         'customer_order_item': coi.id,
                         'quote_item': quote_item.id,

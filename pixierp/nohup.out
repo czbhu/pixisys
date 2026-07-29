@@ -1435,3 +1435,567 @@ WS Token Error: Token is invalid or expired
 [DEBUG] Project cleared (set to None)
 [DEBUG] Project update: project_id from request = None
 [DEBUG] Project cleared (set to None)
+/home/ceze/pixisys/pixierp/venv/lib/python3.11/site-packages/rest_framework/pagination.py:200: UnorderedObjectListWarning: Pagination may yield inconsistent results with an unordered object_list: <class 'apps.finance.models.CashRegisterEmployee'> QuerySet.
+  paginator = self.django_paginator_class(queryset, page_size)
+[DEBUG] Project update: project_id from request = None
+[DEBUG] Project cleared (set to None)
+[DEBUG] Project update: project_id from request = None
+[DEBUG] Project cleared (set to None)
+[DEBUG] No project_id in request data
+[DEBUG] Project update: project_id from request = None
+[DEBUG] Project cleared (set to None)
+[DEBUG] Project update: project_id from request = None
+[DEBUG] Project cleared (set to None)
+[DEBUG] Project update: project_id from request = None
+[DEBUG] Project cleared (set to None)
+[KIOSK_DEBUG] request_qr from roland.radocz (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: roland.radocz (ID: 13)
+[KIOSK_DEBUG] User roland.radocz is Employee. Depts: [<Department: Gyártás - nyomtatás UV>, <Department: Gyártás - Szerelés, kihelyezés>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>, <Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Checking kiosks for user: roland.radocz (ID: 13)
+[KIOSK_DEBUG] User roland.radocz is Employee. Depts: [<Department: Gyártás - nyomtatás UV>, <Department: Gyártás - Szerelés, kihelyezés>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>, <Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Sending stop_qr to kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] request_qr from veronika.poka (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: veronika.poka (ID: 5)
+[KIOSK_DEBUG] User veronika.poka is Employee. Depts: [<Department: Adminisztráció>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Stopping rotation task for veronika.poka
+[KIOSK_DEBUG] request_qr from roland.radocz (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: roland.radocz (ID: 13)
+[KIOSK_DEBUG] User roland.radocz is Employee. Depts: [<Department: Gyártás - nyomtatás UV>, <Department: Gyártás - Szerelés, kihelyezés>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>, <Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] request_qr from roland.radocz (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: roland.radocz (ID: 13)
+[KIOSK_DEBUG] User roland.radocz is Employee. Depts: [<Department: Gyártás - nyomtatás UV>, <Department: Gyártás - Szerelés, kihelyezés>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>, <Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] request_qr from roland.radocz (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: roland.radocz (ID: 13)
+[KIOSK_DEBUG] User roland.radocz is Employee. Depts: [<Department: Gyártás - nyomtatás UV>, <Department: Gyártás - Szerelés, kihelyezés>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>, <Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] request_qr from roland.radocz (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: roland.radocz (ID: 13)
+[KIOSK_DEBUG] User roland.radocz is Employee. Depts: [<Department: Gyártás - nyomtatás UV>, <Department: Gyártás - Szerelés, kihelyezés>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>, <Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Stopping rotation task for roland.radocz
+[KIOSK_DEBUG] Checking kiosks for user: roland.radocz (ID: 13)
+[KIOSK_DEBUG] User roland.radocz is Employee. Depts: [<Department: Gyártás - nyomtatás UV>, <Department: Gyártás - Szerelés, kihelyezés>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>, <Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Sending stop_qr to kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[DEBUG] Project update: project_id from request = 7
+[DEBUG] Project set to: Marnevall autó dekor
+[DEBUG] No project_id in request data
+[DEBUG] No project_id in request data
+[DEBUG] No project_id in request data
+[DEBUG] Project update: project_id from request = 7
+[DEBUG] Project set to: Marnevall autó dekor
+[DEBUG] Project update: project_id from request = 7
+[DEBUG] Project set to: Marnevall autó dekor
+[DEBUG] Project update: project_id from request = 7
+[DEBUG] Project set to: Marnevall autó dekor
+[DEBUG] Project update: project_id from request = 7
+[DEBUG] Project set to: Marnevall autó dekor
+[DEBUG] No project_id in request data
+[DEBUG] No project_id in request data
+[DEBUG] Project update: project_id from request = None
+[DEBUG] Project cleared (set to None)
+[DEBUG] Project update: project_id from request = None
+[DEBUG] Project cleared (set to None)
+[DEBUG] Project update: project_id from request = None
+[DEBUG] Project cleared (set to None)
+[DEBUG] No project_id in request data
+[DEBUG] No project_id in request data
+[KIOSK_DEBUG] request_qr from szabolcs.nemeti (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: szabolcs.nemeti (ID: 14)
+[KIOSK_DEBUG] User szabolcs.nemeti is Employee. Depts: [<Department: Gyártás - Szerelés, kihelyezés>, <Department: Gyártás - Tampon nyomás>, <Department: Gyártás - Szita nyomás>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>, <Zone: Z001 - Nyomda>, <Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Stopping rotation task for szabolcs.nemeti
+[KIOSK_DEBUG] request_qr from dorottya.deak (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: dorottya.deak (ID: 7)
+[KIOSK_DEBUG] User dorottya.deak is Employee. Depts: [<Department: Grafikus>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Stopping rotation task for dorottya.deak
+[KIOSK_DEBUG] Checking kiosks for user: dorottya.deak (ID: 7)
+[KIOSK_DEBUG] User dorottya.deak is Employee. Depts: [<Department: Grafikus>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Sending stop_qr to kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] request_qr from abris.szeman (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: abris.szeman (ID: 9)
+[KIOSK_DEBUG] User abris.szeman is Employee. Depts: [<Department: Grafikus>, <Department: Gyártás - Szerelés, kihelyezés>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>, <Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Stopping rotation task for abris.szeman
+[KIOSK_DEBUG] request_qr from abris.szeman (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: abris.szeman (ID: 9)
+[KIOSK_DEBUG] User abris.szeman is Employee. Depts: [<Department: Grafikus>, <Department: Gyártás - Szerelés, kihelyezés>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>, <Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Stopping rotation task for abris.szeman
+[KIOSK_DEBUG] Checking kiosks for user: abris.szeman (ID: 9)
+[KIOSK_DEBUG] User abris.szeman is Employee. Depts: [<Department: Grafikus>, <Department: Gyártás - Szerelés, kihelyezés>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>, <Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Sending stop_qr to kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] request_qr from veronika.poka (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: veronika.poka (ID: 5)
+[KIOSK_DEBUG] User veronika.poka is Employee. Depts: [<Department: Adminisztráció>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] request_qr from veronika.poka (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: veronika.poka (ID: 5)
+[KIOSK_DEBUG] User veronika.poka is Employee. Depts: [<Department: Adminisztráció>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] request_qr from veronika.poka (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: veronika.poka (ID: 5)
+[KIOSK_DEBUG] User veronika.poka is Employee. Depts: [<Department: Adminisztráció>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] request_qr from veronika.poka (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: veronika.poka (ID: 5)
+[KIOSK_DEBUG] User veronika.poka is Employee. Depts: [<Department: Adminisztráció>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Checking kiosks for user: veronika.poka (ID: 5)
+[KIOSK_DEBUG] User veronika.poka is Employee. Depts: [<Department: Adminisztráció>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Sending stop_qr to kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] request_qr from veronika.poka (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: veronika.poka (ID: 5)
+[KIOSK_DEBUG] User veronika.poka is Employee. Depts: [<Department: Adminisztráció>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Stopping rotation task for veronika.poka
+[KIOSK_DEBUG] request_qr from roland.radocz (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: roland.radocz (ID: 13)
+[KIOSK_DEBUG] User roland.radocz is Employee. Depts: [<Department: Gyártás - nyomtatás UV>, <Department: Gyártás - Szerelés, kihelyezés>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>, <Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] request_qr from roland.radocz (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: roland.radocz (ID: 13)
+[KIOSK_DEBUG] User roland.radocz is Employee. Depts: [<Department: Gyártás - nyomtatás UV>, <Department: Gyártás - Szerelés, kihelyezés>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>, <Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] request_qr from roland.radocz (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: roland.radocz (ID: 13)
+[KIOSK_DEBUG] User roland.radocz is Employee. Depts: [<Department: Gyártás - nyomtatás UV>, <Department: Gyártás - Szerelés, kihelyezés>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>, <Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Stopping rotation task for roland.radocz
+[KIOSK_DEBUG] Checking kiosks for user: roland.radocz (ID: 13)
+[KIOSK_DEBUG] User roland.radocz is Employee. Depts: [<Department: Gyártás - nyomtatás UV>, <Department: Gyártás - Szerelés, kihelyezés>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>, <Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Sending stop_qr to kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] request_qr from szabolcs.nemeti (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: szabolcs.nemeti (ID: 14)
+[KIOSK_DEBUG] User szabolcs.nemeti is Employee. Depts: [<Department: Gyártás - Szerelés, kihelyezés>, <Department: Gyártás - Tampon nyomás>, <Department: Gyártás - Szita nyomás>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>, <Zone: Z001 - Nyomda>, <Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Stopping rotation task for szabolcs.nemeti
+[KIOSK_DEBUG] Checking kiosks for user: szabolcs.nemeti (ID: 14)
+[KIOSK_DEBUG] User szabolcs.nemeti is Employee. Depts: [<Department: Gyártás - Szerelés, kihelyezés>, <Department: Gyártás - Tampon nyomás>, <Department: Gyártás - Szita nyomás>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>, <Zone: Z001 - Nyomda>, <Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Sending stop_qr to kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[DEBUG] No project_id in request data
+[DEBUG] Project update: project_id from request = None
+[DEBUG] Project cleared (set to None)
+[DEBUG] Project update: project_id from request = None
+[DEBUG] Project cleared (set to None)
+[DEBUG] Project update: project_id from request = None
+[DEBUG] Project cleared (set to None)
+WS Token Error: Token is invalid or expired
+[DEBUG] Project update: project_id from request = 7
+[DEBUG] Project set to: Marnevall autó dekor
+[DEBUG] Project update: project_id from request = 7
+[DEBUG] Project set to: Marnevall autó dekor
+[DEBUG] No project_id in request data
+[DEBUG] No project_id in request data
+[DEBUG] Project update: project_id from request = 7
+[DEBUG] Project set to: Marnevall autó dekor
+[DEBUG] No project_id in request data
+[DEBUG] Project update: project_id from request = 7
+[DEBUG] Project set to: Marnevall autó dekor
+[DEBUG] No project_id in request data
+[DEBUG] No project_id in request data
+[DEBUG] Project update: project_id from request = None
+[DEBUG] Project cleared (set to None)
+[DEBUG] Project update: project_id from request = None
+[DEBUG] Project cleared (set to None)
+[DEBUG] Project update: project_id from request = None
+[DEBUG] Project cleared (set to None)
+[KIOSK_DEBUG] request_qr from petra.tothfalusi (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: petra.tothfalusi (ID: 12)
+[KIOSK_DEBUG] User petra.tothfalusi is Employee. Depts: [<Department: Gyártás - kötészet>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] request_qr from petra.tothfalusi (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: petra.tothfalusi (ID: 12)
+[KIOSK_DEBUG] User petra.tothfalusi is Employee. Depts: [<Department: Gyártás - kötészet>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Stopping rotation task for petra.tothfalusi
+[KIOSK_DEBUG] Checking kiosks for user: petra.tothfalusi (ID: 12)
+[KIOSK_DEBUG] User petra.tothfalusi is Employee. Depts: [<Department: Gyártás - kötészet>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Sending stop_qr to kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[DEBUG] Project update: project_id from request = None
+[DEBUG] Project cleared (set to None)
+[KIOSK_DEBUG] request_qr from janos.orosz (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: janos.orosz (ID: 3)
+[KIOSK_DEBUG] User janos.orosz is Employee. Depts: [<Department: Adminisztráció>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] request_qr from janos.orosz (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: janos.orosz (ID: 3)
+[KIOSK_DEBUG] User janos.orosz is Employee. Depts: [<Department: Adminisztráció>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Stopping rotation task for janos.orosz
+[KIOSK_DEBUG] Checking kiosks for user: janos.orosz (ID: 3)
+[KIOSK_DEBUG] User janos.orosz is Employee. Depts: [<Department: Adminisztráció>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Sending stop_qr to kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] request_qr from veronika.poka (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: veronika.poka (ID: 5)
+[KIOSK_DEBUG] User veronika.poka is Employee. Depts: [<Department: Adminisztráció>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] request_qr from veronika.poka (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: veronika.poka (ID: 5)
+[KIOSK_DEBUG] User veronika.poka is Employee. Depts: [<Department: Adminisztráció>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Checking kiosks for user: veronika.poka (ID: 5)
+[KIOSK_DEBUG] User veronika.poka is Employee. Depts: [<Department: Adminisztráció>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Sending stop_qr to kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] request_qr from petra.tothfalusi (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: petra.tothfalusi (ID: 12)
+[KIOSK_DEBUG] User petra.tothfalusi is Employee. Depts: [<Department: Gyártás - kötészet>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] request_qr from petra.tothfalusi (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: petra.tothfalusi (ID: 12)
+[KIOSK_DEBUG] User petra.tothfalusi is Employee. Depts: [<Department: Gyártás - kötészet>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Stopping rotation task for petra.tothfalusi
+[KIOSK_DEBUG] Checking kiosks for user: petra.tothfalusi (ID: 12)
+[KIOSK_DEBUG] User petra.tothfalusi is Employee. Depts: [<Department: Gyártás - kötészet>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Sending stop_qr to kiosks: ['kiosk-s9yivlwfd-1770718612432']
+WS Token Error: Token is invalid or expired
+WS Token Error: Token is invalid or expired
+WS Token Error: Token is invalid or expired
+[DEBUG] No project_id in request data
+[DEBUG] Project update: project_id from request = None
+[DEBUG] Project cleared (set to None)
+[DEBUG] Project update: project_id from request = None
+[DEBUG] Project cleared (set to None)
+[KIOSK_DEBUG] request_qr from dorottya.deak (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: dorottya.deak (ID: 7)
+[KIOSK_DEBUG] User dorottya.deak is Employee. Depts: [<Department: Grafikus>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Stopping rotation task for dorottya.deak
+[KIOSK_DEBUG] Checking kiosks for user: dorottya.deak (ID: 7)
+[KIOSK_DEBUG] User dorottya.deak is Employee. Depts: [<Department: Grafikus>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Sending stop_qr to kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[DEBUG] No project_id in request data
+[DEBUG] Project update: project_id from request = None
+[DEBUG] Project cleared (set to None)
+[DEBUG] No project_id in request data
+[DEBUG] Project update: project_id from request = None
+[DEBUG] Project cleared (set to None)
+[DEBUG] No project_id in request data
+WS Token Error: Token is invalid or expired
+[DEBUG] No project_id in request data
+WS Token Error: Token is invalid or expired
+[DEBUG] Project update: project_id from request = None
+[DEBUG] Project cleared (set to None)
+[DEBUG] Project update: project_id from request = None
+[DEBUG] Project cleared (set to None)
+[KIOSK_DEBUG] request_qr from veronika.poka (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: veronika.poka (ID: 5)
+[KIOSK_DEBUG] User veronika.poka is Employee. Depts: [<Department: Adminisztráció>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] request_qr from veronika.poka (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: veronika.poka (ID: 5)
+[KIOSK_DEBUG] User veronika.poka is Employee. Depts: [<Department: Adminisztráció>]
+[KIOSK_DEBUG] Stopping rotation task for veronika.poka
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] request_qr from petra.tothfalusi (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: petra.tothfalusi (ID: 12)
+[KIOSK_DEBUG] User petra.tothfalusi is Employee. Depts: [<Department: Gyártás - kötészet>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Stopping rotation task for petra.tothfalusi
+[KIOSK_DEBUG] Checking kiosks for user: petra.tothfalusi (ID: 12)
+[KIOSK_DEBUG] User petra.tothfalusi is Employee. Depts: [<Department: Gyártás - kötészet>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Sending stop_qr to kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[DEBUG] No project_id in request data
+[DEBUG] Project update: project_id from request = 7
+[DEBUG] Project set to: Marnevall autó dekor
+[DEBUG] No project_id in request data
+[DEBUG] Project update: project_id from request = 7
+[DEBUG] Project set to: Marnevall autó dekor
+[DEBUG] Project update: project_id from request = None
+[DEBUG] Project cleared (set to None)
+[DEBUG] Project update: project_id from request = None
+[DEBUG] Project cleared (set to None)
+[DEBUG] No project_id in request data
+[DEBUG] No project_id in request data
+[KIOSK_DEBUG] request_qr from dorottya.deak (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: dorottya.deak (ID: 7)
+[KIOSK_DEBUG] User dorottya.deak is Employee. Depts: [<Department: Grafikus>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Stopping rotation task for dorottya.deak
+[KIOSK_DEBUG] request_qr from dorottya.deak (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: dorottya.deak (ID: 7)
+[KIOSK_DEBUG] User dorottya.deak is Employee. Depts: [<Department: Grafikus>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Stopping rotation task for dorottya.deak
+[KIOSK_DEBUG] Checking kiosks for user: dorottya.deak (ID: 7)
+[KIOSK_DEBUG] User dorottya.deak is Employee. Depts: [<Department: Grafikus>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Sending stop_qr to kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[DEBUG] Project update: project_id from request = None
+[DEBUG] Project cleared (set to None)
+[DEBUG] No project_id in request data
+WS Token Error: Token is invalid or expired
+[KIOSK_DEBUG] request_qr from szabolcs.nemeti (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: szabolcs.nemeti (ID: 14)
+[KIOSK_DEBUG] User szabolcs.nemeti is Employee. Depts: [<Department: Gyártás - Szerelés, kihelyezés>, <Department: Gyártás - Tampon nyomás>, <Department: Gyártás - Szita nyomás>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>, <Zone: Z001 - Nyomda>, <Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Checking kiosks for user: szabolcs.nemeti (ID: 14)
+[KIOSK_DEBUG] User szabolcs.nemeti is Employee. Depts: [<Department: Gyártás - Szerelés, kihelyezés>, <Department: Gyártás - Tampon nyomás>, <Department: Gyártás - Szita nyomás>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>, <Zone: Z001 - Nyomda>, <Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Sending stop_qr to kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[DEBUG] Project update: project_id from request = None
+[DEBUG] Project cleared (set to None)
+[DEBUG] Project update: project_id from request = None
+[DEBUG] Project cleared (set to None)
+[DEBUG] No project_id in request data
+[DEBUG] No project_id in request data
+[DEBUG] Project update: project_id from request = None
+[DEBUG] Project cleared (set to None)
+[DEBUG] No project_id in request data
+[DEBUG] Project update: project_id from request = None
+[DEBUG] Project cleared (set to None)
+WS Token Error: Token is invalid or expired
+[DEBUG] Project update: project_id from request = None
+[DEBUG] Project cleared (set to None)
+[DEBUG] Project update: project_id from request = None
+[DEBUG] Project cleared (set to None)
+[KIOSK_DEBUG] request_qr from abris.szeman (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: abris.szeman (ID: 9)
+[KIOSK_DEBUG] User abris.szeman is Employee. Depts: [<Department: Grafikus>, <Department: Gyártás - Szerelés, kihelyezés>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>, <Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Stopping rotation task for abris.szeman
+[KIOSK_DEBUG] Checking kiosks for user: abris.szeman (ID: 9)
+[KIOSK_DEBUG] User abris.szeman is Employee. Depts: [<Department: Grafikus>, <Department: Gyártás - Szerelés, kihelyezés>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>, <Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Sending stop_qr to kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] request_qr from veronika.poka (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: veronika.poka (ID: 5)
+[KIOSK_DEBUG] User veronika.poka is Employee. Depts: [<Department: Adminisztráció>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] request_qr from veronika.poka (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: veronika.poka (ID: 5)
+[KIOSK_DEBUG] User veronika.poka is Employee. Depts: [<Department: Adminisztráció>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Stopping rotation task for veronika.poka
+[KIOSK_DEBUG] request_qr from petra.tothfalusi (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: petra.tothfalusi (ID: 12)
+[KIOSK_DEBUG] User petra.tothfalusi is Employee. Depts: [<Department: Gyártás - kötészet>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] request_qr from petra.tothfalusi (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: petra.tothfalusi (ID: 12)
+[KIOSK_DEBUG] User petra.tothfalusi is Employee. Depts: [<Department: Gyártás - kötészet>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Stopping rotation task for petra.tothfalusi
+[KIOSK_DEBUG] Checking kiosks for user: petra.tothfalusi (ID: 12)
+[KIOSK_DEBUG] User petra.tothfalusi is Employee. Depts: [<Department: Gyártás - kötészet>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Sending stop_qr to kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] request_qr from roland.radocz (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: roland.radocz (ID: 13)
+[KIOSK_DEBUG] User roland.radocz is Employee. Depts: [<Department: Gyártás - nyomtatás UV>, <Department: Gyártás - Szerelés, kihelyezés>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>, <Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] request_qr from roland.radocz (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: roland.radocz (ID: 13)
+[KIOSK_DEBUG] User roland.radocz is Employee. Depts: [<Department: Gyártás - nyomtatás UV>, <Department: Gyártás - Szerelés, kihelyezés>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>, <Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Stopping rotation task for roland.radocz
+[KIOSK_DEBUG] Checking kiosks for user: roland.radocz (ID: 13)
+[KIOSK_DEBUG] User roland.radocz is Employee. Depts: [<Department: Gyártás - nyomtatás UV>, <Department: Gyártás - Szerelés, kihelyezés>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>, <Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Sending stop_qr to kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] request_qr from abris.szeman (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: abris.szeman (ID: 9)
+[KIOSK_DEBUG] User abris.szeman is Employee. Depts: [<Department: Grafikus>, <Department: Gyártás - Szerelés, kihelyezés>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>, <Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] request_qr from abris.szeman (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: abris.szeman (ID: 9)
+[KIOSK_DEBUG] User abris.szeman is Employee. Depts: [<Department: Grafikus>, <Department: Gyártás - Szerelés, kihelyezés>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>, <Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Checking kiosks for user: abris.szeman (ID: 9)
+[KIOSK_DEBUG] User abris.szeman is Employee. Depts: [<Department: Grafikus>, <Department: Gyártás - Szerelés, kihelyezés>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>, <Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Sending stop_qr to kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] request_qr from abris.szeman (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: abris.szeman (ID: 9)
+[KIOSK_DEBUG] User abris.szeman is Employee. Depts: [<Department: Grafikus>, <Department: Gyártás - Szerelés, kihelyezés>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>, <Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Stopping rotation task for abris.szeman
+[KIOSK_DEBUG] Checking kiosks for user: abris.szeman (ID: 9)
+[KIOSK_DEBUG] User abris.szeman is Employee. Depts: [<Department: Grafikus>, <Department: Gyártás - Szerelés, kihelyezés>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>, <Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Sending stop_qr to kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[DEBUG] Project update: project_id from request = None
+[DEBUG] Project cleared (set to None)
+[KIOSK_DEBUG] request_qr from petra.tothfalusi (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: petra.tothfalusi (ID: 12)
+[KIOSK_DEBUG] User petra.tothfalusi is Employee. Depts: [<Department: Gyártás - kötészet>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] request_qr from petra.tothfalusi (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: petra.tothfalusi (ID: 12)
+[KIOSK_DEBUG] User petra.tothfalusi is Employee. Depts: [<Department: Gyártás - kötészet>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Stopping rotation task for petra.tothfalusi
+[DEBUG] Project update: project_id from request = None
+[DEBUG] Project cleared (set to None)
+[KIOSK_DEBUG] request_qr from janos.orosz (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: janos.orosz (ID: 3)
+[KIOSK_DEBUG] User janos.orosz is Employee. Depts: [<Department: Adminisztráció>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Stopping rotation task for janos.orosz
+[KIOSK_DEBUG] Checking kiosks for user: janos.orosz (ID: 3)
+[KIOSK_DEBUG] User janos.orosz is Employee. Depts: [<Department: Adminisztráció>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Sending stop_qr to kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] request_qr from abris.szeman (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: abris.szeman (ID: 9)
+[KIOSK_DEBUG] User abris.szeman is Employee. Depts: [<Department: Grafikus>, <Department: Gyártás - Szerelés, kihelyezés>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>, <Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] request_qr from abris.szeman (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: abris.szeman (ID: 9)
+[KIOSK_DEBUG] User abris.szeman is Employee. Depts: [<Department: Grafikus>, <Department: Gyártás - Szerelés, kihelyezés>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>, <Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Checking kiosks for user: abris.szeman (ID: 9)
+[KIOSK_DEBUG] User abris.szeman is Employee. Depts: [<Department: Grafikus>, <Department: Gyártás - Szerelés, kihelyezés>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>, <Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Sending stop_qr to kiosks: ['kiosk-s9yivlwfd-1770718612432']
+WS Token Error: Token is invalid or expired
+[DEBUG] Project update: project_id from request = None
+[DEBUG] Project cleared (set to None)
+[DEBUG] Project update: project_id from request = None
+[DEBUG] Project cleared (set to None)
+[KIOSK_DEBUG] request_qr from veronika.poka (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: veronika.poka (ID: 5)
+[KIOSK_DEBUG] User veronika.poka is Employee. Depts: [<Department: Adminisztráció>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] request_qr from veronika.poka (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: veronika.poka (ID: 5)
+[KIOSK_DEBUG] User veronika.poka is Employee. Depts: [<Department: Adminisztráció>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] request_qr from veronika.poka (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: veronika.poka (ID: 5)
+[KIOSK_DEBUG] User veronika.poka is Employee. Depts: [<Department: Adminisztráció>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Stopping rotation task for veronika.poka
+[KIOSK_DEBUG] request_qr from roland.radocz (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: roland.radocz (ID: 13)
+[KIOSK_DEBUG] User roland.radocz is Employee. Depts: [<Department: Gyártás - nyomtatás UV>, <Department: Gyártás - Szerelés, kihelyezés>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>, <Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] request_qr from roland.radocz (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: roland.radocz (ID: 13)
+[KIOSK_DEBUG] User roland.radocz is Employee. Depts: [<Department: Gyártás - nyomtatás UV>, <Department: Gyártás - Szerelés, kihelyezés>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>, <Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] request_qr from roland.radocz (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: roland.radocz (ID: 13)
+[KIOSK_DEBUG] User roland.radocz is Employee. Depts: [<Department: Gyártás - nyomtatás UV>, <Department: Gyártás - Szerelés, kihelyezés>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>, <Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] request_qr from roland.radocz (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: roland.radocz (ID: 13)
+[KIOSK_DEBUG] User roland.radocz is Employee. Depts: [<Department: Gyártás - nyomtatás UV>, <Department: Gyártás - Szerelés, kihelyezés>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>, <Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Stopping rotation task for roland.radocz
+[KIOSK_DEBUG] Checking kiosks for user: roland.radocz (ID: 13)
+[KIOSK_DEBUG] User roland.radocz is Employee. Depts: [<Department: Gyártás - nyomtatás UV>, <Department: Gyártás - Szerelés, kihelyezés>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>, <Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Sending stop_qr to kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] request_qr from dorottya.deak (DeviceID: None)
+[KIOSK_DEBUG] Checking kiosks for user: dorottya.deak (ID: 7)
+[KIOSK_DEBUG] User dorottya.deak is Employee. Depts: [<Department: Grafikus>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Stopping rotation task for dorottya.deak
+[KIOSK_DEBUG] Checking kiosks for user: dorottya.deak (ID: 7)
+[KIOSK_DEBUG] User dorottya.deak is Employee. Depts: [<Department: Grafikus>]
+[KIOSK_DEBUG] Zones: [<Zone: Z001 - Nyomda>]
+[KIOSK_DEBUG] Found Kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[KIOSK_DEBUG] Sending stop_qr to kiosks: ['kiosk-s9yivlwfd-1770718612432']
+[DEBUG] No project_id in request data
+WS Token Error: Token is invalid or expired
+WS Token Error: Token is invalid or expired
+[DEBUG] No project_id in request data
