@@ -8012,6 +8012,7 @@ class DeliveryNoteViewSet(viewsets.ModelViewSet):
                         'order_id': order.id,
                         'order_number': order.order_number,
                         'order_item_id': item.id,
+                        'quote_item_id': quote_item.id if quote_item else None,
                         'item_name': item_name,
                         'item_description': quote_item.description if quote_item else '',
                         'unit': item.unit,

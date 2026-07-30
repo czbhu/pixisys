@@ -433,6 +433,7 @@ const DeliveryNotes: React.FC = () => {
         delivery_type: deliveryType,
         items_data: itemsToDeliver.map(i => ({
           customer_order_item: i.order_item_id,
+          quote_item: i.quote_item_id ?? null,
           quantity: i.to_deliver,
           net_unit_price: i.unit_price,
           item_name: i.item_name,
