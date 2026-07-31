@@ -55,6 +55,7 @@ interface OrderItemForDelivery {
   order_id: number;
   order_number: string;
   order_item_id: number;
+  quote_item_id?: number | null;
   item_name: string;
   item_description?: string;
   unit: string;
