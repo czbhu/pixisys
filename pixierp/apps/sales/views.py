@@ -646,6 +646,22 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         if project_param and project_param.isdigit():
             queryset = queryset.filter(project_id=int(project_param))
 
+        # ?ordering=field vagy -field: szerver oldali rendezés
+        ordering_param = (rp.get('ordering', '') or '').strip() if rp else ''
+        if ordering_param:
+            _ALLOWED_ORDERING = {
+                'issue_date': 'issue_date', '-issue_date': '-issue_date',
+                'number': 'number', '-number': '-number',
+                'company_name': 'company__name', '-company_name': '-company__name',
+                'project_name': 'project__name', '-project_name': '-project__name',
+                'deadline': 'deadline', '-deadline': '-deadline',
+                'status': 'status', '-status': '-status',
+                'created_at': '-created_at', '-created_at': 'created_at',
+            }
+            db_order = _ALLOWED_ORDERING.get(ordering_param)
+            if db_order:
+                queryset = queryset.order_by(db_order)
+
         # ?light=1: listanézet gyorsítása — a tételeknél kihagyjuk a csatolmányok prefetch-ét
         # (csak a lista táblázathoz szükséges adatok kerülnek lekérdezésre)
         try:

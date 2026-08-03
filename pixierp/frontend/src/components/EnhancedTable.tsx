@@ -211,6 +211,8 @@ export interface EnhancedTableProps<T = any> extends Omit<TableProps<T>, 'compon
   searchValue?: string;
   /** Beépített kereső: callback */
   onSearchChange?: (value: string) => void;
+  /** Szerver oldali rendezés callback: key=oszlop kulcs, dir=irány vagy null ha törölt */
+  onSortChange?: (key: string | null, dir: 'ascend' | 'descend' | null) => void;
   /** Beépített kereső: placeholder */
   searchPlaceholder?: string;
   /** Ha true, soha nem vált kártyás nézetre (pl. POS) */
@@ -243,6 +245,7 @@ function EnhancedTable<T extends object = any>({
   noColumnManager = false,
   searchValue,
   onSearchChange,
+  onSortChange,
   searchPlaceholder = 'Keresés...',
   disableCardLayout = false,
   cardBreakpoint,
@@ -800,8 +803,10 @@ function EnhancedTable<T extends object = any>({
                     const s = Array.isArray(sorter) ? sorter[0] : sorter;
                     if (s && s.columnKey && s.order) {
                       setSortState({ key: String(s.columnKey), dir: s.order as 'ascend' | 'descend' });
+                      onSortChange?.(String(s.columnKey), s.order as 'ascend' | 'descend');
                     } else {
                       setSortState(null);
+                      onSortChange?.(null, null);
                     }
                     setIntPage(1);
                   }}

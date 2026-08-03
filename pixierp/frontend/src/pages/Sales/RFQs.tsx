@@ -170,9 +170,8 @@ const RFQs: React.FC = () => {
   const [confirmEmailForm] = Form.useForm();
   const [sendPreview, setSendPreview] = useState<any | null>(null);
   const [query, setQuery] = useState(() => localStorage.getItem('rfqs_search_query') || '');
-  // debouncedQuery: az EnhancedTable belső 200ms debounce-a után kapjuk, startTransition-nel
-  // Így a gépelés nem triggeri az egész RFQs komponens újrarenderelését
   const [debouncedQuery, setDebouncedQuery] = useState(query);
+  const [sortOrdering, setSortOrdering] = useState<string | null>(null);
   const handleSearchChange = (v: string) => {
     setQuery(v);
     localStorage.setItem('rfqs_search_query', v);
@@ -799,6 +798,7 @@ const RFQs: React.FC = () => {
     if (debouncedQuery?.trim()) params.q = debouncedQuery.trim();
     if (creatorFilter) params.creator = creatorFilter;
     if (projectFilter) params.project_id = String(projectFilter);
+    if (sortOrdering) params.ordering = sortOrdering;
     if (statusFilter.length > 0 && !statusFilter.includes('mind')) {
       const expanded = new Set<string>();
       for (const s of statusFilter) {
@@ -809,11 +809,11 @@ const RFQs: React.FC = () => {
       params.status = Array.from(expanded).join(',');
     }
     return params;
-  }, [debouncedQuery, creatorFilter, projectFilter, statusFilter]); // eslint-disable-line
+  }, [debouncedQuery, creatorFilter, projectFilter, statusFilter, sortOrdering]); // eslint-disable-line
 
   const cacheKey = React.useCallback((page: number, pageSize: number) =>
-    `${page}|${pageSize}|${debouncedQuery}|${creatorFilter}|${projectFilter}|${statusFilter.join(',')}`,
-  [debouncedQuery, creatorFilter, projectFilter, statusFilter]); // eslint-disable-line
+    `${page}|${pageSize}|${debouncedQuery}|${creatorFilter}|${projectFilter}|${statusFilter.join(',')}|${sortOrdering}`,
+  [debouncedQuery, creatorFilter, projectFilter, statusFilter, sortOrdering]); // eslint-disable-line
 
   // Háttérben prefetchel egy oldalt (nem blokkol, eredményt cache-be rakja)
   const prefetchPage = React.useCallback((page: number, pageSize: number) => {
@@ -889,23 +889,24 @@ const RFQs: React.FC = () => {
   // Lap/szűrő változás → fetchel (cache-ből ha van)
   useEffect(() => {
     fetchPage(tablePage, tablePageSize);
-  }, [tablePage, tablePageSize, debouncedQuery, creatorFilter, projectFilter, statusFilter]); // eslint-disable-line
+  }, [tablePage, tablePageSize, debouncedQuery, creatorFilter, projectFilter, statusFilter, sortOrdering]); // eslint-disable-line
 
   // Lapváltáskor visszaugrik az 1. lapra ha szűrő változott
-  const prevFiltersRef = React.useRef({ debouncedQuery, creatorFilter, projectFilter, statusFilter });
+  const prevFiltersRef = React.useRef({ debouncedQuery, creatorFilter, projectFilter, statusFilter, sortOrdering });
   useEffect(() => {
     const prev = prevFiltersRef.current;
     const filtersChanged =
       prev.debouncedQuery !== debouncedQuery ||
       prev.creatorFilter !== creatorFilter ||
       prev.projectFilter !== projectFilter ||
-      prev.statusFilter !== statusFilter;
+      prev.statusFilter !== statusFilter ||
+      prev.sortOrdering !== sortOrdering;
     if (filtersChanged) {
       setTablePage(1);
       tablePageRef.current = 1;
     }
-    prevFiltersRef.current = { debouncedQuery, creatorFilter, projectFilter, statusFilter };
-  }, [debouncedQuery, creatorFilter, projectFilter, statusFilter]); // eslint-disable-line
+    prevFiltersRef.current = { debouncedQuery, creatorFilter, projectFilter, statusFilter, sortOrdering };
+  }, [debouncedQuery, creatorFilter, projectFilter, statusFilter, sortOrdering]); // eslint-disable-line
 
   const loadData = async () => {
     prefetchCacheRef.current.clear();
@@ -3690,7 +3691,14 @@ const RFQs: React.FC = () => {
           </div>
         )}
 
-        <EnhancedTable key="rfqs-items" tableKey="rfqs-items" loading={loading} searchValue={query} onSearchChange={handleSearchChange} searchPlaceholder="Keresés…" columns={itemsColumns as any} dataSource={flattenedItems} rowKey="uniqueId" pagination={{ pageSize: tablePageSize, current: tablePage, total: totalCount, showSizeChanger: true, pageSizeOptions: ['25','50','100'], onChange: (pg, sz) => { setTablePage(pg); tablePageRef.current = pg; setTablePageSize(sz); } }} size="small" cardBreakpoint={750} sticky={{ offsetScroll: 0 }} className="rfq-items-table" onRow={(r: any) => {
+        <EnhancedTable key="rfqs-items" tableKey="rfqs-items" loading={loading} searchValue={query} onSearchChange={handleSearchChange} onSortChange={(key, dir) => {
+            if (key && dir) {
+              const prefix = dir === 'descend' ? '-' : '';
+              setSortOrdering(`${prefix}${key}`);
+            } else {
+              setSortOrdering(null);
+            }
+          }} searchPlaceholder="Keresés…" columns={itemsColumns as any} dataSource={flattenedItems} rowKey="uniqueId" pagination={{ pageSize: tablePageSize, current: tablePage, total: totalCount, showSizeChanger: true, pageSizeOptions: ['25','50','100'], onChange: (pg, sz) => { setTablePage(pg); tablePageRef.current = pg; setTablePageSize(sz); } }} size="small" cardBreakpoint={750} sticky={{ offsetScroll: 0 }} className="rfq-items-table" onRow={(r: any) => {
           return { onDoubleClick: () => window.open(`/sales/rfqs/${r.rfq_number || r.rfq_id}`, '_blank'), style: { cursor: 'pointer' } };
         }}
         rowClassName={(r: any) => { const st = getDisplayStatus(r); return st !== 'new' ? `rfq-row-${st}` : ''; }} rowSelection={{ selectedRowKeys: bulkSelectedKeys, onChange: (keys) => setBulkSelectedKeys(keys), columnWidth: 32 }} expandable={{
