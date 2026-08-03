@@ -608,6 +608,7 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                     | _Q(contacts__first_name__icontains=term)
                     | _Q(contacts__last_name__icontains=term)
                     | _Q(items__item_name__icontains=term)
+                    | _Q(items__description__icontains=term)
                     | _Q(status__icontains=term)
                     | _Q(project__name__icontains=term)
                     | _Q(owner__first_name__icontains=term)
