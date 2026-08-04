@@ -7842,7 +7842,7 @@ class DeliveryNoteViewSet(viewsets.ModelViewSet):
                 item_text = rfq_number or item_name or 'Tetel'
 
             name_col_start = 2 * cm
-            name_col_end = 10.4 * cm
+            name_col_end = 9.0 * cm  # ~2cm rés a mennyiség oszlop előtt (11cm jobbra zárt)
             name_col_max_width = name_col_end - name_col_start
             wrapped_name_lines = wrap_text_for_width(item_text, name_col_max_width, font_name, 9)
 
