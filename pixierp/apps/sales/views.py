@@ -3832,7 +3832,9 @@ def public_upload_attachment(request, token: str):
                 f'Fájl: {file.name}\n'
                 f'IP: {_att_ip}\n'
             ),
-    )
+        )
+    except Exception:
+        pass
 
     return Response({
         'id': att.id,
