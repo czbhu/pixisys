@@ -3761,6 +3761,24 @@ class QuoteViewSet(viewsets.ModelViewSet):
 @api_view(['POST'])
 @permission_classes([AllowAny])
 @authentication_classes([])
+def _notify_internal_team(qr, subject: str, body: str):
+    """Email értesítés az értékesítési csapatnak (publikus esemény)."""
+    try:
+        from django.core.mail import send_mail
+        from django.conf import settings
+        recipients = getattr(settings, 'INTERNAL_NOTIFICATION_EMAILS', [])
+        if not recipients:
+            company = qr.company if hasattr(qr, 'company') and qr.company else None
+            from apps.core.models import Company as _CoreCompany
+            default_co = _CoreCompany.objects.filter(is_default=True).first()
+            if default_co and default_co.email:
+                recipients = [default_co.email]
+        if recipients:
+            send_mail(subject, body, None, recipients, fail_silently=True)
+    except Exception:
+        pass
+
+
 def public_upload_attachment(request, token: str):
     """Publikus fájlfeltöltés az árajánlathoz"""
     qr = get_object_or_404(QuoteRequest, public_token=token)
@@ -3803,16 +3821,17 @@ def public_upload_attachment(request, token: str):
         action=f'Ügyfél csatolmányt töltött fel: {file.name}',
         ip_address=_att_ip or None,
     )
-    _notify_internal_team(
-        qr,
-        subject=f'Új csatolmány érkezett - {qr.number or qr.request_number}',
-        body=(
-            f'Az ügyfél csatolmányt töltött fel az ajánlathoz.\n\n'
-            f'Árajánlat: {qr.title}\n'
-            f'Szám: {qr.number or qr.request_number}\n'
-            f'Fájl: {file.name}\n'
-            f'IP: {_att_ip}\n'
-        ),
+    try:
+        _notify_internal_team(
+            qr,
+            subject=f'Új csatolmány érkezett - {qr.number or qr.request_number}',
+            body=(
+                f'Az ügyfél csatolmányt töltött fel az ajánlathoz.\n\n'
+                f'Árajánlat: {qr.title}\n'
+                f'Szám: {qr.number or qr.request_number}\n'
+                f'Fájl: {file.name}\n'
+                f'IP: {_att_ip}\n'
+            ),
     )
 
     return Response({
@@ -3904,17 +3923,20 @@ def public_upload_item_attachment(request, token: str, item_id: int):
         action=f'Ügyfél tételhez csatolmányt töltött fel: {file.name}',
         ip_address=_item_ip or None,
     )
-    _notify_internal_team(
-        qr,
-        subject=f'Új tételcsatolmány érkezett - {qr.number or qr.request_number}',
-        body=(
-            f'Az ügyfél egy tételhez csatolmányt töltött fel.\n\n'
-            f'Árajánlat: {qr.title}\n'
-            f'Szám: {qr.number or qr.request_number}\n'
-            f'Fájl: {file.name}\n'
-            f'IP: {_item_ip}\n'
-        ),
-    )
+    try:
+        _notify_internal_team(
+            qr,
+            subject=f'Új tételcsatolmány érkezett - {qr.number or qr.request_number}',
+            body=(
+                f'Az ügyfél egy tételhez csatolmányt töltött fel.\n\n'
+                f'Árajánlat: {qr.title}\n'
+                f'Szám: {qr.number or qr.request_number}\n'
+                f'Fájl: {file.name}\n'
+                f'IP: {_item_ip}\n'
+            ),
+        )
+    except Exception:
+        pass
 
     return Response({
         'id': att.id,
