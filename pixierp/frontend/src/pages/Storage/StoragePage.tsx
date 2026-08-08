@@ -333,15 +333,31 @@ const StoragePage: React.FC = () => {
     {
       title: 'Név',
       dataIndex: 'name',
-      render: (name: string, record: StorageFile) => (
-        <Space>
-          <FileOutlined style={{ color: '#1677ff' }} />
-          <Text>{name}</Text>
-          {record.owner !== (user as any)?.id && (
-            <Tag color="blue" style={{ fontSize: 11 }}>megosztott</Tag>
-          )}
-        </Space>
-      ),
+      render: (name: string, record: StorageFile) => {
+        const isImage = (record.content_type || '').startsWith('image/');
+        const fileLooksLikePdf2 = isPdf(name) || (record.content_type || '').includes('pdf');
+        const tooltipContent = isImage ? (
+          <img src={record.url} alt={name} style={{ maxWidth: 220, maxHeight: 180, borderRadius: 4, display: 'block' }} />
+        ) : fileLooksLikePdf2 ? (
+          <div style={{ padding: '6px 10px', fontSize: 12, color: '#555' }}>
+            <FileOutlined style={{ color: '#ff4d4f', marginRight: 6 }} />PDF fájl
+          </div>
+        ) : null;
+        const inner = (
+          <Space>
+            <FileOutlined style={{ color: isImage ? '#52c41a' : '#1677ff' }} />
+            <Text>{name}</Text>
+            {record.owner !== (user as any)?.id && (
+              <Tag color="blue" style={{ fontSize: 11 }}>megosztott</Tag>
+            )}
+          </Space>
+        );
+        return tooltipContent ? (
+          <Tooltip title={tooltipContent} placement="right" color="#fff" overlayStyle={{ maxWidth: 240 }}>
+            <span style={{ cursor: 'default' }}>{inner}</span>
+          </Tooltip>
+        ) : inner;
+      },
     },
     { title: 'Méret', dataIndex: 'size', width: 100, render: formatBytes },
     {
