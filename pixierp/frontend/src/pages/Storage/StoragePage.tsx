@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Layout, Tree, Button, Upload, Table, Space, Tooltip, Typography,
   Modal, Form, Input, Select, Popconfirm, Breadcrumb, message,
-  Tag, Spin, Empty, Dropdown, Switch, Radio,
+  Tag, Spin, Empty, Dropdown, Switch, Radio, Tabs,
 } from 'antd';
 import type { DataNode } from 'antd/es/tree';
 import type { ColumnsType } from 'antd/es/table';
@@ -16,6 +16,7 @@ import {
 import api from '../../services/api';
 import { useAuth } from '../../contexts/AuthContext';
 import { isPdf, openPdfPreview } from '../../utils/pdfPreview';
+import PrintStoragePage from '../PrintEditor/PrintStoragePage';
 
 const { Sider, Content } = Layout;
 const { Title, Text } = Typography;
@@ -434,6 +435,15 @@ const StoragePage: React.FC = () => {
   ];
 
   return (
+    <Tabs
+      defaultActiveKey="files"
+      style={{ height: 'calc(100vh - 64px)', display: 'flex', flexDirection: 'column' }}
+      tabBarStyle={{ padding: '0 24px', margin: 0, background: '#fff', borderBottom: '1px solid #f0f0f0' }}
+      items={[
+        {
+          key: 'files',
+          label: 'Fájlok',
+          children: (
     <div style={{ height: 'calc(100vh - 64px)', display: 'flex', flexDirection: 'column' }}>
       <div style={{ padding: '16px 24px 8px', borderBottom: '1px solid #f0f0f0', background: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <Space align="center">
@@ -678,6 +688,15 @@ const StoragePage: React.FC = () => {
         </Form>
       </Modal>
     </div>
+          ),
+        },
+        {
+          key: 'print',
+          label: 'Nyomdai előnézetek',
+          children: <PrintStoragePage />,
+        },
+      ]}
+    />
   );
 };
 
