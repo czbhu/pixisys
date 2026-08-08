@@ -35,6 +35,8 @@ const PrintPreviewPage: React.FC = () => {
   const [shareSaving, setShareSaving] = useState(false);
   const [localPdfFile, setLocalPdfFile] = useState<File | null>(null);
   const [localAnnotations, setLocalAnnotations] = useState<any[]>([]);
+  // exportRef: a PrintCommentView beleégetett overlays PDF-et tud exportálni mentéskor
+  const exportRef = React.useRef<(() => Promise<File | null>) | null>(null);
   const [previewShare, setPreviewShare] = useState<PreviewShareSettings>({
     enabled: false,
     editable: false,
@@ -374,15 +376,15 @@ const PrintPreviewPage: React.FC = () => {
   const handleSaveToStorage = async () => {
     setSaving(true);
     try {
+      // Overlays (szöveg/kép) beleégetése a PDF-be mentés előtt
+      const pdfToSave = (await exportRef.current?.()) ?? localPdfFile;
       if (standaloneShareToken) {
-        // Update folder/title metadata first
         await api.patch(`/printshop/shared-preview/${standaloneShareToken}/`, {
           folder: saveFolderId ?? null,
           title: saveTitle || undefined,
         });
-        // Create a new version snapshot
         const fd = new FormData();
-        if (localPdfFile) fd.append('pdf', localPdfFile);
+        if (pdfToSave) fd.append('pdf', pdfToSave);
         fd.append('annotations', JSON.stringify(localAnnotations));
         if (saveVersionNote.trim()) fd.append('note', saveVersionNote.trim());
         const vr = await api.post(
@@ -395,9 +397,9 @@ const PrintPreviewPage: React.FC = () => {
         setCurrentPreviewFolder(saveFolderId ?? null);
         message.success(`Elmentve (v${vr.data?.version_number ?? '?'})`);
       } else {
-        if (!localPdfFile) { message.error('Nincs PDF a mentéshez'); return; }
+        if (!pdfToSave) { message.error('Nincs PDF a mentéshez'); return; }
         const formData = new FormData();
-        formData.append('pdf', localPdfFile);
+        formData.append('pdf', pdfToSave);
         formData.append('enabled', 'false');
         formData.append('editable', String(previewShare.editable));
         formData.append('commentable', String(previewShare.commentable));
@@ -652,6 +654,7 @@ const PrintPreviewPage: React.FC = () => {
           hideUpload={!!publicToken && !shareConfig?.editable}
           onPdfFileChange={setLocalPdfFile}
           onAnnotationsChange={setLocalAnnotations}
+          exportRef={exportRef}
         />
       )}
 
