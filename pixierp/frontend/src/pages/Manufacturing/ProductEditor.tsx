@@ -1309,13 +1309,17 @@ const ProductEditor: React.FC = () => {
                 label: <Text strong style={{ fontSize: 13 }}>Nyomtatási beállítások</Text>,
                 children: (
                   <>
-                    {/* Print-specific fields for sheet_print / click_sheet_print */}
+                    {/* Print-specific fields for sheet_print / click_sheet_print / roll_print */}
                     <Form.Item shouldUpdate={(p, c) => p.calculator_type !== c.calculator_type} noStyle>
                       {({ getFieldValue }) => {
                         const ct = getFieldValue('calculator_type');
                         const isClickSheet = ct === 'click_sheet_print';
                         const isSheetPrint = ct === 'sheet_print';
-                        if (!isSheetPrint && !isClickSheet) return null;
+                        const isRollPrint  = ct === 'roll_print';
+                        if (!isSheetPrint && !isClickSheet && !isRollPrint) return null;
+                        const rollServiceOptions = services
+                          .filter(s => ['UVPR_ROLL_W','UVPR_ROLL_CMYK_W','UVPR_ROLL_PROD_CMYK','UVPR_ROLL_BACKLIT_CMYK','UVPR_ROLL_HR_CMYK'].includes(s.code || ''))
+                          .map(s => ({ value: s.id, label: `${s.name} (${s.code})` }));
                         return (
                           <>
                             <Row gutter={12}>
@@ -1327,7 +1331,7 @@ const ProductEditor: React.FC = () => {
                                   </Select>
                                 </Form.Item>
                               </Col>
-                              {!isClickSheet && !isSheetPrint && (
+                              {!isClickSheet && !isSheetPrint && !isRollPrint && (
                                 <Col span={12}>
                                   <Form.Item
                                     name="print_service"
@@ -1345,10 +1349,10 @@ const ProductEditor: React.FC = () => {
                               )}
                             </Row>
 
-                            {(isClickSheet || isSheetPrint) && (
+                            {(isClickSheet || isSheetPrint || isRollPrint) && (
                               <>
                                 <Form.Item
-                                  label={isSheetPrint ? 'Táblás nyomtatási opciók' : 'Klikkdíjas nyomtatási opciók'}
+                                  label={isSheetPrint ? 'Táblás nyomtatási opciók' : isRollPrint ? 'Tekercses nyomtatási opciók' : 'Klikkdíjas nyomtatási opciók'}
                                   tooltip="A PrintEditorban a felhasználó ezek közül választ nyomtatási szolgáltatást. Az első lesz az alapértelmezett. Sorrendet a nyilakkal állítsd."
                                 >
                                   <Select
@@ -1361,7 +1365,7 @@ const ProductEditor: React.FC = () => {
                                       }
                                     }}
                                     optionFilterProp="label"
-                                    options={printServiceOptions
+                                    options={(isRollPrint ? rollServiceOptions : printServiceOptions)
                                       .filter(o => !selectedPrintServiceOptions.includes(o.value))}
                                   />
                                   <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -1408,7 +1412,7 @@ const ProductEditor: React.FC = () => {
                                   <Checkbox>2 oldalas nyomtatásnál a fix költségeket csak az 1. oldalra számolja</Checkbox>
                                 </Form.Item>
                                 <Form.Item name="multi_sheet_enabled" valuePropName="checked">
-                                  <Checkbox>{isSheetPrint ? 'Tábla hozzáadása — a felhasználó több táblát (oldalt) adhat a megrendeléshez' : 'Ív hozzáadása — a felhasználó több ívet (oldalt) adhat a megrendeléshez'}</Checkbox>
+                                  <Checkbox>{isSheetPrint ? 'Tábla hozzáadása — a felhasználó több táblát (oldalt) adhat a megrendeléshez' : isRollPrint ? 'Tekercs hozzáadása — a felhasználó több tekercset adhat a megrendeléshez' : 'Ív hozzáadása — a felhasználó több ívet (oldalt) adhat a megrendeléshez'}</Checkbox>
                                 </Form.Item>
                               </>
                             )}
