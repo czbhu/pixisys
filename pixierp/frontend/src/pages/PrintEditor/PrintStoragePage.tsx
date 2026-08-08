@@ -1,13 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert, Breadcrumb, Button, Card, Empty, Input, Modal, Popconfirm, Space,
-  Spin, Table, Tag, Tooltip, Typography, message,
+  Spin, Table, Tag, Tabs, Tooltip, Typography, message,
 } from 'antd';
 import {
   ArrowLeftOutlined, DeleteOutlined, EyeOutlined, FolderAddOutlined, FolderOpenOutlined,
   HomeOutlined, LinkOutlined, PlusCircleOutlined, ReloadOutlined, ShareAltOutlined,
 } from '@ant-design/icons';
 import api from '../../services/api';
+const StoragePage = React.lazy(() => import('../Storage/StoragePage'));
 
 const { Text } = Typography;
 
@@ -282,6 +283,14 @@ const PrintStoragePage: React.FC = () => {
   ], [currentFolderId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
+    <Tabs
+      defaultActiveKey="print"
+      tabBarStyle={{ padding: '0 16px', margin: 0, background: '#fff', borderBottom: '1px solid #f0f0f0' }}
+      items={[
+        {
+          key: 'print',
+          label: 'Nyomdai előnézetek',
+          children: (
     <div style={{ padding: 16, maxWidth: 1280, margin: '0 auto' }}>
       <Card
         title={
@@ -412,6 +421,15 @@ const PrintStoragePage: React.FC = () => {
         />
       </Modal>
     </div>
+          ),
+        },
+        {
+          key: 'files',
+          label: 'Fájlok',
+          children: <React.Suspense fallback={<Spin style={{ margin: 32 }} />}><StoragePage /></React.Suspense>,
+        },
+      ]}
+    />
   );
 };
 

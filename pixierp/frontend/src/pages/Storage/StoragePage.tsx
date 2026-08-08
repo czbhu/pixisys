@@ -16,7 +16,7 @@ import {
 import api from '../../services/api';
 import { useAuth } from '../../contexts/AuthContext';
 import { isPdf, openPdfPreview } from '../../utils/pdfPreview';
-import PrintStoragePage from '../PrintEditor/PrintStoragePage';
+const PrintStoragePage = React.lazy(() => import('../PrintEditor/PrintStoragePage'));
 
 const { Sider, Content } = Layout;
 const { Title, Text } = Typography;
@@ -709,7 +709,7 @@ const StoragePage: React.FC = () => {
         {
           key: 'print',
           label: 'Nyomdai előnézetek',
-          children: <PrintStoragePage />,
+          children: <React.Suspense fallback={<Spin style={{ margin: 32 }} />}><PrintStoragePage /></React.Suspense>,
         },
       ]}
     />
