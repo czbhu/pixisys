@@ -932,8 +932,8 @@ const ProductEditor: React.FC = () => {
           onExpand: handleExpand,
           columnWidth: 24,
           rowExpandable: (r: ProductTemplate) =>
-            r.allowed_services.length + r.required_services.length + r.finishing_services.length +
-            r.binding_services.length + r.allowed_materials.length +
+            (r.allowed_services?.length ?? 0) + (r.required_services?.length ?? 0) + (r.finishing_services?.length ?? 0) +
+            (r.binding_services?.length ?? 0) + (r.allowed_materials?.length ?? 0) +
             (r.print_service ? 1 : 0) + (r.print_service_options?.length ?? 0) > 0,
         }}
       />
