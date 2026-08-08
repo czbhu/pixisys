@@ -43,8 +43,13 @@ interface MaterialDetail {
   name: string;
   code?: string | null;
   material_group?: number | null;
+  width?: number | null;
+  length?: number | null;
   width_mm?: number | null;
   length_mm?: number | null;
+  roll_width?: number | null;
+  dimension_unit?: string | null;
+  material_format?: string | null;
   unit_selling_price?: number;
   unit_cost_price?: number;
   markup_percentage?: number;
@@ -788,13 +793,26 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
     }
   }, [selectedProduct?.id, materials]); // eslint-disable-line
 
-  // Anyagváltáskor reset a boardSheetW/H-ra → az auto-méret effect majd a legjobb méretet állítja be
+  // Anyagváltáskor: roll_print esetén az anyag tekercs szélességét alkalmazzuk
   useEffect(() => {
     const isBoardOrRoll = selectedProduct?.calculator_type === 'sheet_print' || selectedProduct?.calculator_type === 'roll_print';
     if (!isBoardOrRoll) return;
+    const isRoll = selectedProduct?.calculator_type === 'roll_print';
+    if (isRoll && params.material_id) {
+      const mat = materials.find((m: any) => m.id === params.material_id);
+      if (mat) {
+        const mult = { mm: 1, cm: 10, m: 1000 }[mat.dimension_unit || 'mm'] ?? 1;
+        const rollW = mat.roll_width ? Math.round(Number(mat.roll_width) * mult) : (mat.width ? Math.round(Number(mat.width) * mult) : 0);
+        if (rollW > 0) {
+          setBoardSheetW(rollW);
+          setBoardSheetH(99999); // tekercs = végtelen hossz
+          return;
+        }
+      }
+    }
     setBoardSheetW(3200);
-    setBoardSheetH(1000);
-  }, [params.material_id]); // eslint-disable-line
+    setBoardSheetH(isRoll ? 99999 : 1000);
+  }, [params.material_id, selectedProduct?.calculator_type]); // eslint-disable-line
 
   // Táblás auto méret: ha size_comparison megérkezik és boardSheetW/H nem egyezik egyik entry-vel sem,
   // automatikusan alkalmazzuk a legjobb méretet (alapból auto mód)
@@ -2015,6 +2033,10 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
             const _boardBest = _boardSc.find((s: SizeComparison) => s.is_best) ?? _boardSc[0];
             if (_boardBest) { sw = _boardBest.size_mm[0]; sh = _boardBest.size_mm[1]; }
           }
+          const isRollMode = isBoardImpositionMode && selectedProduct?.calculator_type === 'roll_print';
+          // Roll: csak a szélesség számít (cols), sorok száma = mennyiség / cols
+          const rollCols = isRollMode ? Math.floor(sw / pw) : 0;
+          const rollSheetsNeeded = isRollMode && rollCols > 0 ? Math.ceil((params.quantity * (params.sheet_count ?? 1)) / rollCols) : 0;
           const fitNormal  = Math.floor(sw / pw) * Math.floor(sh / ph);
           const fitRotated = Math.floor(sw / ph) * Math.floor(sh / pw);
           const autoRotated = fitRotated > fitNormal;
@@ -2023,11 +2045,11 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                         : autoRotated;
           const itemsW = rotated ? Math.floor(sw / ph) : Math.floor(sw / pw);
           const itemsH = rotated ? Math.floor(sh / pw) : Math.floor(sh / ph);
-          const bestFit = itemsW * itemsH;
-          const cols = bestFit > 0 ? itemsW : 0;
-          const rows = bestFit > 0 ? itemsH : 0;
+          const bestFit = isRollMode ? rollCols : itemsW * itemsH;
+          const cols = isRollMode ? rollCols : (bestFit > 0 ? itemsW : 0);
+          const rows = isRollMode ? rollSheetsNeeded : (bestFit > 0 ? itemsH : 0);
           const totalPieces = params.quantity * (params.sheet_count ?? 1);
-          const sheetsNeeded = bestFit > 0 ? Math.ceil(totalPieces / bestFit) : 0;
+          const sheetsNeeded = isRollMode ? rollSheetsNeeded : (bestFit > 0 ? Math.ceil(totalPieces / bestFit) : 0);
           // Klikk: csak a ténylegesen nyomott oldalak számítanak (nyomatlan oldal nem klikk)
           const effectiveSidesModal = (selectedPrintSvcId1 && selectedPrintSvcId1 > 0 ? 1 : 0) +
                                       (clickSides === 2 && selectedPrintSvcId2 && selectedPrintSvcId2 > 0 ? 1 : 0);
@@ -2036,8 +2058,9 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
             <div>
               <Row gutter={16} style={{ marginBottom: 16 }}>
                 <Col span={12}>
-                  <Text strong style={{ display: 'block', marginBottom: 6 }}>{isBoardImpositionMode ? 'Tábla méret (mm)' : 'Ívméret (mm)'}
-                    <label style={{ fontWeight: 400, fontSize: 11, marginLeft: 12, cursor: 'pointer' }}>
+                  <Text strong style={{ display: 'block', marginBottom: 6 }}>
+                    {isRollMode ? 'Tekercs szélesség (mm)' : isBoardImpositionMode ? 'Tábla méret (mm)' : 'Ívméret (mm)'}
+                    {!isRollMode && (<label style={{ fontWeight: 400, fontSize: 11, marginLeft: 12, cursor: 'pointer' }}>
                       <input
                         type="checkbox"
                         checked={modalAutoSheetSize}
@@ -2058,8 +2081,16 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                       />
                       Auto (legjobb anyagköltség)
                     </label>
+                    )}
                   </Text>
-                  {modalAutoSheetSize && (activeClickPricing?.size_comparison?.length || (isBoardImpositionMode && (activePricing as any)?.size_comparison?.length)) ? (() => {
+                  {/* Roll: csak szélesség input */}
+                  {isRollMode && (
+                    <NumInput
+                      style={{ width: '100%' }} placeholder="Tekercs szélessége" min={1}
+                      value={modalSheetW} onChange={v => { setModalSheetW(v ?? boardSheetW); }} addonAfter="mm"
+                    />
+                  )}
+                  {!isRollMode && modalAutoSheetSize && (activeClickPricing?.size_comparison?.length || (isBoardImpositionMode && (activePricing as any)?.size_comparison?.length)) ? (() => {
                     // Táblás mód: activePricing.size_comparison; klikk mód: activeClickPricing.size_comparison
                     if (isBoardImpositionMode) {
                       const sc: SizeComparison[] = (activePricing as any).size_comparison ?? [];
@@ -2206,11 +2237,11 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                   <Row gutter={12}>
                     <Col span={8} style={{ textAlign: 'center', background: '#f6ffed', borderRadius: 8, padding: '12px 8px' }}>
                       <div style={{ fontSize: 28, fontWeight: 700, color: '#52c41a' }}>{bestFit}</div>
-                      <div style={{ fontSize: 11, color: '#666' }}>{isBoardImpositionMode ? 'db / tábla' : 'db / ív'}</div>
+                      <div style={{ fontSize: 11, color: '#666' }}>{isRollMode ? 'db / sor' : isBoardImpositionMode ? 'db / tábla' : 'db / ív'}</div>
                     </Col>
                     <Col span={8} style={{ textAlign: 'center', background: '#e6f4ff', borderRadius: 8, padding: '12px 8px' }}>
                       <div style={{ fontSize: 28, fontWeight: 700, color: '#1677ff' }}>{sheetsNeeded}</div>
-                      <div style={{ fontSize: 11, color: '#666' }}>{isBoardImpositionMode ? 'tábla' : 'ív'} ({totalPieces} nyomat)</div>
+                      <div style={{ fontSize: 11, color: '#666' }}>{isRollMode ? 'sor' : isBoardImpositionMode ? 'tábla' : 'ív'} ({totalPieces} nyomat)</div>
                     </Col>
                     {!isBoardImpositionMode && (
                     <Col span={8} style={{ textAlign: 'center', background: '#fff7e6', borderRadius: 8, padding: '12px 8px' }}>
