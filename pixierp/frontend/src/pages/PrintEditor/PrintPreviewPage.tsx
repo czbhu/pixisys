@@ -405,7 +405,7 @@ const PrintPreviewPage: React.FC = () => {
         formData.append('commentable', String(previewShare.commentable));
         formData.append('exportable', String(previewShare.exportable));
         formData.append('annotations', JSON.stringify(localAnnotations));
-        formData.append('title', saveTitle || localPdfFile.name || 'Preview PDF');
+        formData.append('title', saveTitle || localPdfFile?.name || 'Preview PDF');
         if (saveVersionNote.trim()) formData.append('version_note', saveVersionNote.trim());
         if (saveFolderId != null) formData.append('folder', String(saveFolderId));
         const response = await api.post('/printshop/shared-preview/', formData, {
