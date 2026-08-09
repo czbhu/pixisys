@@ -2021,9 +2021,8 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
           setClickForceRotate(modalForceRotate);
           setCuttingMode(modalCuttingMode);
           if (isBoardImpositionMode) {
-            // Roll módban: boardSheetH = 99999 (végtelen tekercs hossz), csak a szélesség változik
             setBoardSheetW(applyW);
-            setBoardSheetH(isRollMode ? 99999 : applyH);
+            setBoardSheetH(selectedProduct?.calculator_type === 'roll_print' ? 99999 : applyH);
             setBoardBleed(modalBleed);
             setBoardForceRotate(modalForceRotate);
           }
