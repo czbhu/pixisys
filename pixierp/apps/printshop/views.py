@@ -481,7 +481,18 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
                 _chosen = size_comparison[0]  # az optimális az alapértelmezett
                 board_material_cost = Decimal(str(_chosen['material_cost']))
                 board_material_label = _chosen['label']
-                total = ((subtotal + board_material_cost) * margin_mult).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                _chosen_svc_cost = Decimal(str(_chosen['service_cost']))
+                # Felülírjuk a nyomtatási költséget a választott szélességgel (az eredeti sheet_w_mm eltérhet)
+                _chosen_rw = _chosen['roll_width_mm']
+                _chosen_len_fm = _chosen['roll_length_fm']
+                _roll_area = (_chosen_rw / 1000) * _chosen_len_fm
+                for _item in print_service_items:
+                    if _item.get('type') == 'area':
+                        _item['area_m2_per'] = round(_roll_area, 4)
+                        _item['units'] = 1
+                        _item['total'] = round(_item['price_per'] * _roll_area, 2)
+                _corrected_subtotal = paper_cost + _chosen_svc_cost + finishing_cost + service_cost
+                total = ((_corrected_subtotal + board_material_cost) * margin_mult).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
                 unit_price = (total / qty).quantize(Decimal('0.0001'), rounding=ROUND_HALF_UP)
         except Exception:
             pass
