@@ -816,13 +816,15 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
 
   // Táblás auto méret: ha size_comparison megérkezik és boardSheetW/H nem egyezik egyik entry-vel sem,
   // automatikusan alkalmazzuk a legjobb méretet (alapból auto mód)
+  // Roll módban kihagyjuk: a tekercs szélességeket máshogy kezeljük (boardSheetH=99999 végtelen hossz)
   useEffect(() => {
-    const isBoardOrRoll = selectedProduct?.calculator_type === 'sheet_print' || selectedProduct?.calculator_type === 'roll_print';
-    if (!isBoardOrRoll) return;
+    const isRoll = selectedProduct?.calculator_type === 'roll_print';
+    const isBoardOrRoll = selectedProduct?.calculator_type === 'sheet_print' || isRoll;
+    if (!isBoardOrRoll || isRoll) return;
     const sc: any[] = (activePricing as any)?.size_comparison ?? [];
     if (sc.length === 0) return;
     const hasMatch = sc.some((s: any) => Math.abs(s.size_mm[0] - boardSheetW) < 2 && Math.abs(s.size_mm[1] - boardSheetH) < 2);
-    if (hasMatch) return; // már megfelelő méret van beállítva
+    if (hasMatch) return;
     const best = sc.find((s: any) => s.is_best) ?? sc[0];
     if (best) {
       setBoardSheetW(best.size_mm[0]);

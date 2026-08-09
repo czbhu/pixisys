@@ -576,10 +576,13 @@ const Materials: React.FC = () => {
 
   // Ha az árkalkuláció alapján mód aktív, automatikusan frissíti az egységárat, ha a cost itemek változnak
   useEffect(() => {
-    const mode = form.getFieldValue('price_source_mode') || 'manual';
-    if (mode !== 'manual' && modalVisible) {
-      applyCalculatedPriceMode(mode as 'default_version' | 'optimal_version');
-    }
+    const t = setTimeout(() => {
+      const mode = form.getFieldValue('price_source_mode') || 'manual';
+      if (mode !== 'manual' && modalVisible) {
+        applyCalculatedPriceMode(mode as 'default_version' | 'optimal_version');
+      }
+    }, 300);
+    return () => clearTimeout(t);
   }, [allCostItems]); // eslint-disable-line
 
   const calculateSellingPrice = (unitPrice: number, markupPercentage: number): number => {
