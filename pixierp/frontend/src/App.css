@@ -226,3 +226,12 @@
     overflow-x: auto;
   }
 }
+.material-size-inactive td {
+  opacity: 0.45;
+}
+.material-size-inactive .ant-btn {
+  opacity: 0.6;
+}
+
+.material-size-inactive td { opacity: 0.45; }
+.material-size-inactive .ant-btn { opacity: 0.6; }

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Table, Card, Button, Modal, Form, Input, Select, message, Space, Tag, Popconfirm, Tabs, Upload, Checkbox, Row, Col, Radio, Tooltip, TreeSelect } from 'antd';
 import NumInput from '../../components/NumInput';
-import { PlusOutlined, EditOutlined, DeleteOutlined, UploadOutlined, ExclamationCircleOutlined, ThunderboltOutlined, CopyOutlined, DownloadOutlined, ImportOutlined } from '@ant-design/icons';
+import { PlusOutlined, EditOutlined, DeleteOutlined, UploadOutlined, ExclamationCircleOutlined, ThunderboltOutlined, CopyOutlined, DownloadOutlined, ImportOutlined, CheckCircleOutlined, MinusCircleOutlined } from '@ant-design/icons';
 import { useSearchParams } from 'react-router-dom';
 import api from '../../services/api';
 import EnhancedTable from '../../components/EnhancedTable';
@@ -3356,6 +3356,7 @@ const Materials: React.FC = () => {
                   <Table
                     size="small"
                     dataSource={materialSizes}
+                    rowClassName={(r: MaterialSizeItem) => r.is_active === false ? 'material-size-inactive' : ''}
                     rowKey="id"
                     pagination={false}
                     columns={[
@@ -3374,9 +3375,20 @@ const Materials: React.FC = () => {
                             {Number(r.effective_price).toLocaleString('hu-HU')}
                           </span>
                         )},
-                      { title: '', key: 'actions', width: 120,
+                      { title: '', key: 'actions', width: 140,
                         render: (_: any, record: MaterialSizeItem) => (
                           <Space size={4}>
+                            <Button
+                              size="small"
+                              title={record.is_active !== false ? 'Inaktívvá tesz' : 'Aktívvá tesz'}
+                              style={{ color: record.is_active !== false ? '#52c41a' : '#bfbfbf' }}
+                              icon={record.is_active !== false ? <CheckCircleOutlined /> : <MinusCircleOutlined />}
+                              onClick={async () => {
+                                if (!record.id) return;
+                                await api.patch(`/warehouse/material-sizes/${record.id}/`, { is_active: !(record.is_active !== false) });
+                                if (editingMaterial) fetchMaterialSizes(editingMaterial.id);
+                              }}
+                            />
                             <Button size="small" icon={<CopyOutlined />} onClick={() => handleDuplicateSize(record)} />
                             <Button size="small" icon={<EditOutlined />} onClick={() => handleEditSize(record)} />
                             <Popconfirm title="Biztosan törlöd?" onConfirm={() => record.id && handleDeleteSize(record.id)}>
