@@ -100,6 +100,10 @@ class MaterialViewSet(viewsets.ModelViewSet):
         if supplier:
             queryset = queryset.filter(default_supplier_id=supplier)
         
+        is_active = self.request.query_params.get('is_active')
+        if is_active is not None:
+            queryset = queryset.filter(is_active=is_active.lower() == 'true')
+
         if search:
             queryset = queryset.filter(
                 Q(name__icontains=search) | 
