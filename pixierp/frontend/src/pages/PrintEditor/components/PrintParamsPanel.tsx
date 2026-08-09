@@ -2223,7 +2223,8 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                       </div>
                     );
                   })() : (
-                  <>
+                  // Roll módban nincs kézi ívméret input — a szélesség fent kezelt
+                  !isRollMode ? <>
                   <Row gutter={8}>
                     <Col span={12}>
                       <NumInput
@@ -2660,7 +2661,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                     </div>
                     );
                   })()}
-                </>
+                </> : null
               ) : (
                 <div style={{ textAlign: 'center', color: '#8c8c8c', padding: '32px 0' }}>
                   A megadott ívméreten nem fér el a termék. Adj meg nagyobb ívméretet vagy csökkentsd a ráhagyást.
