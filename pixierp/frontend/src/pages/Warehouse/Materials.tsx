@@ -2002,7 +2002,18 @@ const Materials: React.FC = () => {
         const data = res.data;
         const { id, created_at, created_by_name, ...rest } = data;
         const sizes = Array.isArray(sizesRes.data) ? sizesRes.data : (sizesRes.data.results || []);
-        
+
+        // Megnevezésbe (COPY), cikkszám végére _COPY (vagy +1 ha már szám)
+        const origName = rest.name || '';
+        rest.name = origName.includes('(COPY)') ? origName : `${origName} (COPY)`;
+        const origCode = rest.code || '';
+        if (origCode) {
+          const numMatch = origCode.match(/^(.*?)(\d+)$/);
+          rest.code = numMatch
+            ? `${numMatch[1]}${parseInt(numMatch[2], 10) + 1}`
+            : `${origCode}_COPY`;
+        }
+
         setEditingMaterial(null);
         setDuplicateSourceId(record.id);
         setDuplicateSourceSizes(sizes);
