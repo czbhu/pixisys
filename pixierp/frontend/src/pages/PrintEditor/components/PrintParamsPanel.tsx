@@ -2291,7 +2291,14 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                     );
                   })()}
                   <div style={{ marginTop: 12, fontSize: 11, color: '#8c8c8c' }}>
-                    Termék (+ráhagyás): {pw.toFixed(1)} × {ph.toFixed(1)} mm · {isBoardImpositionMode ? 'Tábla' : 'Ív'}: {sw} × {sh} mm{bleed > 0 ? ` · ${bleed} mm ráhagyás` : ''}
+                    {isRollMode ? (() => {
+                      // Nyomtatott méret: szükséges szélesség × szükséges hossz
+                      const printW = rollCols > 0 ? (rollEffRotated ? ph : pw) * rollCols : sw;
+                      const printH = rollSheetsNeeded > 0 ? rollItemLen * rollSheetsNeeded : 0;
+                      return `Termék (+ráhagyás): ${pw.toFixed(1)} × ${ph.toFixed(1)} mm · Nyomtatott méret: ${printW.toFixed(0)} × ${printH.toFixed(0)} mm${bleed > 0 ? ` · ${bleed} mm ráhagyás` : ''}`;
+                    })() : (
+                      `Termék (+ráhagyás): ${pw.toFixed(1)} × ${ph.toFixed(1)} mm · ${isBoardImpositionMode ? 'Tábla' : 'Ív'}: ${sw} × ${sh} mm${bleed > 0 ? ` · ${bleed} mm ráhagyás` : ''}`
+                    )}
                   </div>
 
                   {/* ── Produkciós ívek/táblák vizualizáció ─────────────── */}

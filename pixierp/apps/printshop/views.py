@@ -409,9 +409,14 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
             def _roll_cost_for_width(rw_mm):
                 if rw_mm <= 0:
                     return None
-                _cols = max(1, int(rw_mm / _prod_w))
+                # Forgatott elhelyezés vizsgálata
+                _cols_n = max(1, int(rw_mm / _prod_w))
+                _cols_r = max(1, int(rw_mm / _prod_h)) if _prod_h > 0 else 1
+                _rotated = _cols_r > _cols_n
+                _cols = _cols_r if _rotated else _cols_n
+                _item_len = _prod_w if _rotated else _prod_h  # tekercs mentén egy tétel mérete
                 _rows = _math.ceil(int(qty) * sc / _cols)
-                _len_mm = _rows * _prod_h
+                _len_mm = _rows * _item_len
                 _len_fm = _math.ceil(_len_mm / 100) / 10
                 # Anyagköltség: fm × szélesség(m) × Ft/m² vagy fm × Ft/fm
                 if _rmat.unit == 'm2':
