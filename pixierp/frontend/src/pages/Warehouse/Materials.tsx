@@ -570,11 +570,18 @@ const Materials: React.FC = () => {
     });
     const vat = vatTypes.find(v => v.id === selectedVatTypeId);
     const vatPercentage = vat?.percentage || 0;
-    setCalculatedVat(net * (Number(vatPercentage) / 100));
-    setCalculatedGross(net * (1 + Number(vatPercentage) / 100));
+    setCalculatedVat(Math.round(net * (Number(vatPercentage) / 100) * 100) / 100);
+    setCalculatedGross(Math.round(net * (1 + Number(vatPercentage) / 100) * 100) / 100);
   };
 
-  // Calculate selling price from unit price and markup
+  // Ha az árkalkuláció alapján mód aktív, automatikusan frissíti az egységárat, ha a cost itemek változnak
+  useEffect(() => {
+    const mode = form.getFieldValue('price_source_mode') || 'manual';
+    if (mode !== 'manual' && modalVisible) {
+      applyCalculatedPriceMode(mode as 'default_version' | 'optimal_version');
+    }
+  }, [allCostItems]); // eslint-disable-line
+
   const calculateSellingPrice = (unitPrice: number, markupPercentage: number): number => {
     return unitPrice * (1 + markupPercentage / 100);
   };
@@ -2017,6 +2024,7 @@ const Materials: React.FC = () => {
         setEditingMaterial(null);
         setDuplicateSourceId(record.id);
         setDuplicateSourceSizes(sizes);
+        setSelectedVatTypeId(data.vat_type_id || undefined);
         form.setFieldsValue(rest);
         setModalVisible(true);
     } catch (err) {
