@@ -384,6 +384,7 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
 
     board_material_cost = Decimal('0')
     board_material_label = None
+    size_comparison = []
 
     # ── Tekercs-alapú méret összehasonlítás ─────────────────────────────
     if is_roll_mode and print_service_id and material_id and roll_length_fm and roll_cols:
