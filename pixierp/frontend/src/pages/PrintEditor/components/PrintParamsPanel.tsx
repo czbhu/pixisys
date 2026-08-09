@@ -2426,7 +2426,9 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                         </div>
                       );
                     }
-                    if (sc.length <= 1) return null;
+                    // Roll módban: mindig mutassuk a táblázatot ha van legalább 1 szélesség
+                    if (sc.length === 0) return null;
+                    if (sc.length <= 1 && !isRoll) return null;
                     return (
                     <div style={{ marginTop: 12, padding: '12px', background: '#f0f5ff', borderRadius: 8, border: '1px solid #d6e4ff' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
