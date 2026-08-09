@@ -2021,9 +2021,9 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
           setClickForceRotate(modalForceRotate);
           setCuttingMode(modalCuttingMode);
           if (isBoardImpositionMode) {
-            // Táblás mód: board dimenziókat frissítjük
+            // Roll módban: boardSheetH = 99999 (végtelen tekercs hossz), csak a szélesség változik
             setBoardSheetW(applyW);
-            setBoardSheetH(applyH);
+            setBoardSheetH(isRollMode ? 99999 : applyH);
             setBoardBleed(modalBleed);
             setBoardForceRotate(modalForceRotate);
           }
@@ -2096,13 +2096,50 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                     </label>
                     )}
                   </Text>
-                  {/* Roll: csak szélesség input */}
-                  {isRollMode && (
-                    <NumInput
-                      style={{ width: '100%' }} placeholder="Tekercs szélessége" min={1}
-                      value={modalSheetW} onChange={v => { setModalSheetW(v ?? boardSheetW); }} addonAfter="mm"
-                    />
-                  )}
+                  {/* Roll: szélesség input + összehasonlítás táblázat */}
+                  {isRollMode && (() => {
+                    const rollSc: any[] = (activePricing as any)?.size_comparison ?? [];
+                    const hasRollSc = rollSc.length > 1;
+                    return (
+                      <div>
+                        <NumInput
+                          style={{ width: '100%', marginBottom: hasRollSc ? 8 : 0 }}
+                          placeholder="Tekercs szélessége" min={1}
+                          value={modalSheetW} onChange={v => { setModalSheetW(v ?? boardSheetW); }} addonAfter="mm"
+                        />
+                        {hasRollSc && (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                            {rollSc.map((entry: any, idx: number) => {
+                              const rw = entry.roll_width_mm ?? entry.size_mm?.[0] ?? 0;
+                              const fm = entry.roll_length_fm ?? 0;
+                              const isCurrent = Math.abs(rw - modalSheetW) < 2;
+                              return (
+                                <div
+                                  key={idx}
+                                  onClick={() => setModalSheetW(Math.round(rw))}
+                                  style={{
+                                    padding: '5px 8px', borderRadius: 5, cursor: 'pointer', fontSize: 12,
+                                    background: isCurrent ? '#e6f4ff' : '#fafafa',
+                                    border: `1px solid ${isCurrent ? '#1677ff' : '#d9d9d9'}`,
+                                    display: 'flex', alignItems: 'center', gap: 6,
+                                  }}
+                                >
+                                  {entry.is_best && <Tag color="green" style={{ fontSize: 10, margin: 0 }}>optimális</Tag>}
+                                  <strong>{Math.round(rw)} mm</strong>
+                                  <span style={{ color: '#666' }}>→</span>
+                                  <span>{fm.toFixed(1)} fm</span>
+                                  <span style={{ color: '#666' }}>{entry.roll_cols} db/sor</span>
+                                  {entry.material_cost > 0 && (
+                                    <span style={{ marginLeft: 'auto', color: '#888' }}>{Math.round(entry.material_cost).toLocaleString('hu-HU')} Ft anyag</span>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                   {!isRollMode && modalAutoSheetSize && (activeClickPricing?.size_comparison?.length || (isBoardImpositionMode && (activePricing as any)?.size_comparison?.length)) ? (() => {
                     // Táblás mód: activePricing.size_comparison; klikk mód: activeClickPricing.size_comparison
                     if (isBoardImpositionMode) {
