@@ -1843,13 +1843,24 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                     >
                       <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                         <AppstoreOutlined style={{ color: '#52c41a', fontSize: 11 }} />
-                        <span>Impozíció: <strong>{(activePricing as any).fit_w ?? 1} × {(activePricing as any).fit_h ?? 1}</strong> = <strong>{(activePricing as any).items_per_sheet} db/ív</strong>
-                          {(activePricing as any).rotated && <Tag color="orange" style={{ marginLeft: 6, fontSize: 10 }}>forgatva</Tag>}
-                        </span>
+                        {(activePricing as any).is_roll_mode ? (
+                          <span>Tekercs impozíció: <strong>{(activePricing as any).roll_cols ?? (activePricing as any).fit_w ?? 1} db / sor</strong></span>
+                        ) : (
+                          <span>Impozíció: <strong>{(activePricing as any).fit_w ?? 1} × {(activePricing as any).fit_h ?? 1}</strong> = <strong>{(activePricing as any).items_per_sheet} db/ív</strong>
+                            {(activePricing as any).rotated && <Tag color="orange" style={{ marginLeft: 6, fontSize: 10 }}>forgatva</Tag>}
+                          </span>
+                        )}
                       </div>
-                      <div>Szükséges táblák: <strong>{(activePricing as any).boards_needed}</strong>
-                        {' · '}Ívméret: <strong>{boardSheetW}×{boardSheetH} mm</strong>
-                      </div>
+                      {(activePricing as any).is_roll_mode ? (
+                        <div>Tekercs hossz: <strong>{((activePricing as any).roll_length_fm ?? 0).toFixed(1)} fm</strong>
+                          {' · '}Sorok: <strong>{(activePricing as any).boards_needed}</strong>
+                          {' · '}Szélesség: <strong>{boardSheetW} mm</strong>
+                        </div>
+                      ) : (
+                        <div>Szükséges táblák: <strong>{(activePricing as any).boards_needed}</strong>
+                          {' · '}Ívméret: <strong>{boardSheetW}×{boardSheetH} mm</strong>
+                        </div>
+                      )}
                     </div>
                   )}
                   {activePricing.paper_cost > 0 && <div>Papír: <strong>{fmt(activePricing.paper_cost)}</strong></div>}
@@ -2234,22 +2245,39 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                   </div>
 
                   {/* Eredmények */}
+                  {(() => {
+                    // Roll FM számítás: sorok × tétel magasság / 1000, felfelé kerekítve 0.1m-re
+                    const rollLengthFm = isRollMode && rollSheetsNeeded > 0
+                      ? Math.ceil(rollSheetsNeeded * ph / 100) / 10
+                      : null;
+                    return (
                   <Row gutter={12}>
                     <Col span={8} style={{ textAlign: 'center', background: '#f6ffed', borderRadius: 8, padding: '12px 8px' }}>
                       <div style={{ fontSize: 28, fontWeight: 700, color: '#52c41a' }}>{bestFit}</div>
                       <div style={{ fontSize: 11, color: '#666' }}>{isRollMode ? 'db / sor' : isBoardImpositionMode ? 'db / tábla' : 'db / ív'}</div>
                     </Col>
                     <Col span={8} style={{ textAlign: 'center', background: '#e6f4ff', borderRadius: 8, padding: '12px 8px' }}>
-                      <div style={{ fontSize: 28, fontWeight: 700, color: '#1677ff' }}>{sheetsNeeded}</div>
-                      <div style={{ fontSize: 11, color: '#666' }}>{isRollMode ? 'sor' : isBoardImpositionMode ? 'tábla' : 'ív'} ({totalPieces} nyomat)</div>
+                      {isRollMode && rollLengthFm != null ? (
+                        <>
+                          <div style={{ fontSize: 28, fontWeight: 700, color: '#1677ff' }}>{rollLengthFm.toFixed(1)}</div>
+                          <div style={{ fontSize: 11, color: '#666' }}>fm szükséges ({sheetsNeeded} sor)</div>
+                        </>
+                      ) : (
+                        <>
+                          <div style={{ fontSize: 28, fontWeight: 700, color: '#1677ff' }}>{sheetsNeeded}</div>
+                          <div style={{ fontSize: 11, color: '#666' }}>{isBoardImpositionMode ? 'tábla' : 'ív'} ({totalPieces} nyomat)</div>
+                        </>
+                      )}
                     </Col>
-                    {!isBoardImpositionMode && (
+                    {!isBoardImpositionMode && !isRollMode && (
                     <Col span={8} style={{ textAlign: 'center', background: '#fff7e6', borderRadius: 8, padding: '12px 8px' }}>
                       <div style={{ fontSize: 28, fontWeight: 700, color: '#fa8c16' }}>{clicks}</div>
                       <div style={{ fontSize: 11, color: '#666' }}>klikk ({clickSides} oldal)</div>
                     </Col>
                     )}
                   </Row>
+                    );
+                  })()}
                   <div style={{ marginTop: 12, fontSize: 11, color: '#8c8c8c' }}>
                     Termék (+ráhagyás): {pw.toFixed(1)} × {ph.toFixed(1)} mm · {isBoardImpositionMode ? 'Tábla' : 'Ív'}: {sw} × {sh} mm{bleed > 0 ? ` · ${bleed} mm ráhagyás` : ''}
                   </div>

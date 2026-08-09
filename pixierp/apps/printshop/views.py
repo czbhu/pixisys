@@ -142,30 +142,48 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
     rotated = False
     fit_w = 1
     fit_h = 1
+    is_roll_mode = False
+    roll_length_fm = None
+    roll_cols = None
     if sheet_w_mm and sheet_h_mm and sheet_w_mm > 0 and sheet_h_mm > 0:
         bleed = Decimal(str(bleed_mm or 0))
         prod_w = float(w + 2 * bleed)
         prod_h = float(h + 2 * bleed)
         sw = float(sheet_w_mm)
         sh = float(sheet_h_mm)
-        fw_n = int(sw / prod_w)
-        fh_n = int(sh / prod_h)
-        fw_r = int(sw / prod_h)
-        fh_r = int(sh / prod_w)
-        ips_n = fw_n * fh_n
-        ips_r = fw_r * fh_r
-        if force_rotate is None:
-            rotated = ips_r > ips_n
+        # Tekercs mód: sheet_h_mm >= 99000 jelöli (végtelen tekercs hossz)
+        is_roll_mode = sh >= 99000
+        if is_roll_mode:
+            # Tekercs: csak a szélesség számít (oszlopok), hossz = igény × tétel magasság
+            cols = max(1, int(sw / prod_w))
+            total_pieces = int(qty) * sc
+            rows = _math.ceil(total_pieces / cols)
+            roll_length_mm = rows * prod_h
+            # 0.1 fm pontosság (felfelé kerekítve)
+            roll_length_fm = _math.ceil(roll_length_mm / 100) / 10
+            roll_cols = cols
+            fit_w, fit_h = cols, 1
+            items_per_sheet = cols   # db / sor
+            boards_needed = rows     # sorok száma
         else:
-            rotated = bool(force_rotate)
-        if rotated:
-            fit_w, fit_h = fw_r, fh_r
-            items_per_sheet = max(1, ips_r)
-        else:
-            fit_w, fit_h = fw_n, fh_n
-            items_per_sheet = max(1, ips_n)
-        total_pieces = int(qty) * sc
-        boards_needed = _math.ceil(total_pieces / items_per_sheet)
+            fw_n = int(sw / prod_w)
+            fh_n = int(sh / prod_h)
+            fw_r = int(sw / prod_h)
+            fh_r = int(sh / prod_w)
+            ips_n = fw_n * fh_n
+            ips_r = fw_r * fh_r
+            if force_rotate is None:
+                rotated = ips_r > ips_n
+            else:
+                rotated = bool(force_rotate)
+            if rotated:
+                fit_w, fit_h = fw_r, fh_r
+                items_per_sheet = max(1, ips_r)
+            else:
+                fit_w, fit_h = fw_n, fh_n
+                items_per_sheet = max(1, ips_n)
+            total_pieces = int(qty) * sc
+            boards_needed = _math.ceil(total_pieces / items_per_sheet)
 
     # Papírköltség
     area_m2 = (w / 1000) * (h / 1000)
@@ -367,9 +385,89 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
     board_material_cost = Decimal('0')
     board_material_label = None
 
+    # ── Tekercs-alapú méret összehasonlítás ─────────────────────────────
+    if is_roll_mode and print_service_id and material_id and roll_length_fm and roll_cols:
+        try:
+            from apps.warehouse.models import Material as _RMat
+            from apps.manufacturing.models import Service as _RSvc
+            _rmat = _RMat.objects.get(id=material_id)
+            _rsvc = _RSvc.objects.prefetch_related('cost_items').get(id=print_service_id)
+            _bleed = Decimal(str(bleed_mm or 0))
+            _prod_w = float(w + 2 * _bleed)
+            _prod_h = float(h + 2 * _bleed)
+            _dm = {'mm': 1, 'cm': 10, 'm': 1000}.get(_rmat.dimension_unit or 'mm', 1)
+            _raw_sell = float(_rmat.unit_selling_price or 0)
+            _raw_cost = float(_rmat.unit_cost_price or 0)
+
+            def _roll_cost_for_width(rw_mm):
+                if rw_mm <= 0:
+                    return None
+                _cols = max(1, int(rw_mm / _prod_w))
+                _rows = _math.ceil(int(qty) * sc / _cols)
+                _len_mm = _rows * _prod_h
+                _len_fm = _math.ceil(_len_mm / 100) / 10
+                # Anyagköltség: fm × szélesség(m) × Ft/m² vagy fm × Ft/fm
+                if _rmat.unit == 'm2':
+                    _mat_cost = Decimal(str(_raw_sell)) * Decimal(str(_len_fm)) * Decimal(str(rw_mm / 1000))
+                elif _rmat.unit == 'm':
+                    _mat_cost = Decimal(str(_raw_sell)) * Decimal(str(_len_fm))
+                else:
+                    _mat_cost = Decimal(str(_raw_sell)) * Decimal(str(_len_fm))
+                _prod_area = Decimal(str(_prod_w)) / 1000 * Decimal(str(_prod_h)) / 1000 * Decimal(str(int(qty) * sc))
+                _svc_cost = Decimal('0')
+                for ci in _rsvc.cost_items.filter(is_active=True):
+                    _p = Decimal(str(ci.selling_price or 0))
+                    if ci.calculation_type == 'area':
+                        _svc_cost += _p * _prod_area
+                    elif ci.calculation_type == 'fixed':
+                        _svc_cost += _p
+                    elif ci.calculation_type in ('click', 'unit'):
+                        _svc_cost += _p * Decimal(str(_rows))
+                _total = _svc_cost + _mat_cost
+                return {
+                    'is_roll': True, 'roll_width_mm': rw_mm,
+                    'roll_cols': _cols, 'roll_rows': _rows, 'roll_length_fm': _len_fm,
+                    'size_mm': [rw_mm, 0], 'label': f'Tekercs {int(rw_mm)} mm',
+                    'items_per_sheet': _cols, 'boards_needed': _rows,
+                    'material_cost': float(_mat_cost.quantize(Decimal('0.01'))),
+                    'service_cost': float(_svc_cost.quantize(Decimal('0.01'))),
+                    'total': float(_total.quantize(Decimal('0.01'))),
+                    'price_per_sheet': _raw_sell, 'needs_cutting': False,
+                }
+
+            # Alap tekercs szélességgel
+            _rw_base = float(_rmat.roll_width or 0) * _dm or (float(_rmat.width or 0) * _dm)
+            if _rw_base > 0:
+                _e = _roll_cost_for_width(_rw_base)
+                if _e:
+                    _e['is_default'] = True
+                    size_comparison.append(_e)
+
+            # MaterialSize-ból roll_width változatok
+            from apps.warehouse.models import MaterialSize as _RMS
+            for ms in _RMS.objects.filter(material=_rmat, is_active=True):
+                _rw2 = float(ms.width or 0) * {'mm': 1, 'cm': 10, 'm': 1000}.get(ms.dimension_unit or 'mm', 1)
+                if _rw2 > 0 and abs(_rw2 - _rw_base) > 10:
+                    _e = _roll_cost_for_width(_rw2)
+                    if _e:
+                        _e['label'] = ms.name or f'Tekercs {int(_rw2)} mm'
+                        _e['size_id'] = ms.id
+                        size_comparison.append(_e)
+
+            if size_comparison:
+                size_comparison.sort(key=lambda x: x['total'])
+                size_comparison[0]['is_best'] = True
+                # Anyagköltség a kiválasztott szélességből
+                _chosen = next((e for e in size_comparison if abs(e['roll_width_mm'] - _rw_base) < 2), size_comparison[0])
+                board_material_cost = Decimal(str(_chosen['material_cost']))
+                board_material_label = _chosen['label']
+                total = ((subtotal + board_material_cost) * margin_mult).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                unit_price = (total / qty).quantize(Decimal('0.0001'), rounding=ROUND_HALF_UP)
+        except Exception:
+            pass
+
     # ── Rendelhető méretek összehasonlítása (táblás/area alapú) ──────────
-    size_comparison = []
-    if print_service_id and material_id and bleed_mm is not None:
+    if not is_roll_mode and print_service_id and material_id and bleed_mm is not None:
         try:
             from apps.warehouse.models import Material, MaterialSize
             from apps.manufacturing.models import Service as _Svc
@@ -518,6 +616,9 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
         'fit_w': fit_w,
         'fit_h': fit_h,
         'rotated': rotated,
+        'is_roll_mode': is_roll_mode,
+        'roll_length_fm': roll_length_fm,
+        'roll_cols': roll_cols,
         'sheet_w_mm': float(sheet_w_mm) if sheet_w_mm else None,
         'sheet_h_mm': float(sheet_h_mm) if sheet_h_mm else None,
         'size_comparison': size_comparison,
