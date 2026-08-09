@@ -545,6 +545,22 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
     clickTimerRef.current = setTimeout(() => { calculateClickPriceWith(sw, sh, bl, fr); }, 100);
   }, [modalSheetW, modalSheetH, modalBleed, modalForceRotate, impositionModalOpen]); // eslint-disable-line
 
+  // Táblás/tekercses modal: ráhagyás változásakor live frissítés a méret-összehasonlításhoz
+  const prevBoardBleedRef = React.useRef(boardBleed);
+  useEffect(() => {
+    if (!impositionModalOpen || !isBoardImpositionMode) return;
+    const product = products.find(p => p.id === selectedProductId);
+    if (product?.calculator_type === 'click_sheet_print') return;
+    setBoardBleed(modalBleed);
+  }, [modalBleed]); // eslint-disable-line
+
+  // Modal megnyitásakor menti az eredeti boardBleed-et (cancel esetén visszaállítható)
+  useEffect(() => {
+    if (impositionModalOpen) {
+      prevBoardBleedRef.current = boardBleed;
+    }
+  }, [impositionModalOpen]); // eslint-disable-line
+
   // Load service details whenever the selected product changes
   useEffect(() => {
     const product = products.find(p => p.id === selectedProductId);
@@ -1986,7 +2002,11 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
       <Modal
         title={<span><AppstoreOutlined style={{ marginRight: 8 }} />Impozíció – Produkciózás <span style={{fontSize:10,color:'#aaa'}}>v96</span></span>}
         open={impositionModalOpen}
-        onCancel={() => { setIsBoardImpositionMode(false); setImpositionModalOpen(false); }}
+        onCancel={() => {
+          setBoardBleed(prevBoardBleedRef.current); // cancel: visszaállítjuk az eredeti ráhagyást
+          setIsBoardImpositionMode(false);
+          setImpositionModalOpen(false);
+        }}
         onOk={() => {
           let applyW = modalSheetW;
           let applyH = modalSheetH;

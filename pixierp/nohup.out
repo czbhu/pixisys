@@ -3717,3 +3717,5 @@ Call stack:
     self.error_log.error(msg, *args, **kwargs)
 Message: 'Worker (pid:2419142) was sent SIGTERM!'
 Arguments: ()
+/home/ceze/pixisys/pixierp/venv/lib/python3.11/site-packages/rest_framework/pagination.py:200: UnorderedObjectListWarning: Pagination may yield inconsistent results with an unordered object_list: <class 'apps.manufacturing.models.ServiceGroup'> QuerySet.
+  paginator = self.django_paginator_class(queryset, page_size)
