@@ -53,6 +53,21 @@ class MaterialSerializer(serializers.ModelSerializer):
     vat_rate = serializers.SerializerMethodField()
     current_stock = serializers.SerializerMethodField()
     discount_price = serializers.SerializerMethodField()
+    sizes = serializers.SerializerMethodField()
+
+    def get_sizes(self, obj):
+        _dm = {'mm': 1, 'cm': 10, 'm': 1000}
+        result = []
+        for ms in obj.sizes.filter(is_active=True).order_by('sort_order', 'width'):
+            mult = _dm.get(ms.dimension_unit or 'mm', 1)
+            result.append({
+                'id': ms.id,
+                'name': ms.name,
+                'width_mm': float(ms.width or 0) * mult if ms.width else None,
+                'length_mm': float(ms.length or 0) * mult if ms.length else None,
+                'price': float(ms.effective_price or ms.custom_price or 0),
+            })
+        return result
     
     # Cache for VAT types to avoid repeated API calls
     _vat_types_cache = {}
@@ -131,7 +146,8 @@ class MaterialSerializer(serializers.ModelSerializer):
             'internal_fixed_cost', 'internal_price_per_unit', 'internal_price_per_perimeter',
             'internal_price_per_area', 'internal_price_per_weight', 'internal_price_per_time',
             'available_widths', 'available_lengths', 'available_thicknesses',
-            'is_active', 'created_at', 'updated_at', 'created_by', 'created_by_name'
+            'is_active', 'created_at', 'updated_at', 'created_by', 'created_by_name',
+            'sizes',
         ]
         read_only_fields = ['created_at', 'updated_at', 'created_by']
 

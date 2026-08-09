@@ -436,30 +436,33 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
                     'price_per_sheet': _raw_sell, 'needs_cutting': False,
                 }
 
-            # Alap tekercs szélességgel
-            _rw_base = float(_rmat.roll_width or 0) * _dm or (float(_rmat.width or 0) * _dm)
-            if _rw_base > 0:
-                _e = _roll_cost_for_width(_rw_base)
-                if _e:
-                    _e['is_default'] = True
-                    size_comparison.append(_e)
-
-            # MaterialSize-ból roll_width változatok
+            # Rendelhető méretek (MaterialSize) szélességei → ezek az összehasonlítás alapjai
             from apps.warehouse.models import MaterialSize as _RMS
-            for ms in _RMS.objects.filter(material=_rmat, is_active=True):
-                _rw2 = float(ms.width or 0) * {'mm': 1, 'cm': 10, 'm': 1000}.get(ms.dimension_unit or 'mm', 1)
-                if _rw2 > 0 and abs(_rw2 - _rw_base) > 10:
+            ms_list = list(_RMS.objects.filter(material=_rmat, is_active=True).order_by('sort_order', 'width'))
+            _dm_map = {'mm': 1, 'cm': 10, 'm': 1000}
+            for ms in ms_list:
+                _rw2 = float(ms.width or 0) * _dm_map.get(ms.dimension_unit or 'mm', 1)
+                if _rw2 > 0:
                     _e = _roll_cost_for_width(_rw2)
                     if _e:
-                        _e['label'] = ms.name or f'Tekercs {int(_rw2)} mm'
+                        _e['label'] = ms.name or f'{int(_rw2)} mm'
                         _e['size_id'] = ms.id
+                        size_comparison.append(_e)
+
+            # Ha nincs egyetlen Rendelhető méret sem, fallback: anyag roll_width mezője
+            if not size_comparison:
+                _rw_base = float(_rmat.roll_width or 0) * _dm or (float(_rmat.width or 0) * _dm)
+                if _rw_base > 0:
+                    _e = _roll_cost_for_width(_rw_base)
+                    if _e:
+                        _e['label'] = f'{int(_rw_base)} mm (alap)'
+                        _e['is_default'] = True
                         size_comparison.append(_e)
 
             if size_comparison:
                 size_comparison.sort(key=lambda x: x['total'])
                 size_comparison[0]['is_best'] = True
-                # Anyagköltség a kiválasztott szélességből
-                _chosen = next((e for e in size_comparison if abs(e['roll_width_mm'] - _rw_base) < 2), size_comparison[0])
+                _chosen = size_comparison[0]  # az optimális az alapértelmezett
                 board_material_cost = Decimal(str(_chosen['material_cost']))
                 board_material_label = _chosen['label']
                 total = ((subtotal + board_material_cost) * margin_mult).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)

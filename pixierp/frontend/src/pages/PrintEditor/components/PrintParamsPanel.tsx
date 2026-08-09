@@ -802,10 +802,14 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
       const mat = materials.find((m: any) => m.id === params.material_id);
       if (mat) {
         const mult = { mm: 1, cm: 10, m: 1000 }[mat.dimension_unit || 'mm'] ?? 1;
-        const rollW = mat.roll_width ? Math.round(Number(mat.roll_width) * mult) : (mat.width ? Math.round(Number(mat.width) * mult) : 0);
+        // Rendelhető méretek első szélességét vesszük, különben roll_width
+        const firstSize = (mat.sizes ?? []).find((s: any) => s.width_mm && s.width_mm > 0);
+        const rollW = firstSize
+          ? Math.round(firstSize.width_mm)
+          : (mat.roll_width ? Math.round(Number(mat.roll_width) * mult) : (mat.width ? Math.round(Number(mat.width) * mult) : 0));
         if (rollW > 0) {
           setBoardSheetW(rollW);
-          setBoardSheetH(99999); // tekercs = végtelen hossz
+          setBoardSheetH(99999);
           return;
         }
       }
