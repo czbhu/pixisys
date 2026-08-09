@@ -154,17 +154,23 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
         # Tekercs mód: sheet_h_mm >= 99000 jelöli (végtelen tekercs hossz)
         is_roll_mode = sh >= 99000
         if is_roll_mode:
-            # Tekercs: csak a szélesség számít (oszlopok), hossz = igény × tétel magasság
-            cols = max(1, int(sw / prod_w))
+            # Tekercs: elforgatott elhelyezés is megvizsgálva (mint táblás)
+            cols_normal  = int(sw / prod_w) if prod_w > 0 else 0
+            cols_rotated = int(sw / prod_h) if prod_h > 0 else 0
+            if force_rotate is None:
+                rotated = cols_rotated > cols_normal
+            else:
+                rotated = bool(force_rotate)
+            cols = max(1, cols_rotated if rotated else cols_normal)
+            item_len = prod_w if rotated else prod_h  # a tekercs hossza mentén egy tétel mérete
             total_pieces = int(qty) * sc
             rows = _math.ceil(total_pieces / cols)
-            roll_length_mm = rows * prod_h
-            # 0.1 fm pontosság (felfelé kerekítve)
+            roll_length_mm = rows * item_len
             roll_length_fm = _math.ceil(roll_length_mm / 100) / 10
             roll_cols = cols
             fit_w, fit_h = cols, 1
-            items_per_sheet = cols   # db / sor
-            boards_needed = rows     # sorok száma
+            items_per_sheet = cols
+            boards_needed = rows
         else:
             fw_n = int(sw / prod_w)
             fh_n = int(sh / prod_h)

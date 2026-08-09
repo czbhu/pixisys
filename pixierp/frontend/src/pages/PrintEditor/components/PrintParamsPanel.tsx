@@ -2050,8 +2050,15 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
             if (_boardBest) { sw = _boardBest.size_mm[0]; sh = _boardBest.size_mm[1]; }
           }
           const isRollMode = isBoardImpositionMode && selectedProduct?.calculator_type === 'roll_print';
-          // Roll: csak a szélesség számít (cols), sorok száma = mennyiség / cols
-          const rollCols = isRollMode ? Math.floor(sw / pw) : 0;
+          // Roll: elforgatott elhelyezés is megvizsgálva (mint táblás)
+          const rollColsNormal  = isRollMode ? Math.floor(sw / pw) : 0;
+          const rollColsRotated = isRollMode ? Math.floor(sw / ph) : 0;
+          const rollAutoRotated = rollColsRotated > rollColsNormal;
+          const rollEffRotated  = isRollMode
+            ? (modalForceRotate === 'rotated' ? true : modalForceRotate === 'normal' ? false : rollAutoRotated)
+            : false;
+          const rollCols = isRollMode ? Math.max(1, rollEffRotated ? rollColsRotated : rollColsNormal) : 0;
+          const rollItemLen = rollEffRotated ? pw : ph;
           const rollSheetsNeeded = isRollMode && rollCols > 0 ? Math.ceil((params.quantity * (params.sheet_count ?? 1)) / rollCols) : 0;
           const fitNormal  = Math.floor(sw / pw) * Math.floor(sh / ph);
           const fitRotated = Math.floor(sw / ph) * Math.floor(sh / pw);
@@ -2253,7 +2260,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                   {(() => {
                     // Roll FM számítás: sorok × tétel magasság / 1000, felfelé kerekítve 0.1m-re
                     const rollLengthFm = isRollMode && rollSheetsNeeded > 0
-                      ? Math.ceil(rollSheetsNeeded * ph / 100) / 10
+                      ? Math.ceil(rollSheetsNeeded * rollItemLen / 100) / 10
                       : null;
                     return (
                   <Row gutter={12}>
