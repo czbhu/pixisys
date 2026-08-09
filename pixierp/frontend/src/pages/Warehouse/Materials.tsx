@@ -665,6 +665,7 @@ const Materials: React.FC = () => {
       
       // Load all materials for client-side pagination
       params.append('page_size', '10000');
+      params.append('is_active', 'true');
       
       const queryString = params.toString();
       if (queryString) {
