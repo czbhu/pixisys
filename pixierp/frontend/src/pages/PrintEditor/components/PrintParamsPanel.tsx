@@ -2095,50 +2095,13 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                     </label>
                     )}
                   </Text>
-                  {/* Roll: szélesség input + összehasonlítás táblázat */}
-                  {isRollMode && (() => {
-                    const rollSc: any[] = (activePricing as any)?.size_comparison ?? [];
-                    const hasRollSc = rollSc.length > 1;
-                    return (
-                      <div>
-                        <NumInput
-                          style={{ width: '100%', marginBottom: hasRollSc ? 8 : 0 }}
-                          placeholder="Tekercs szélessége" min={1}
-                          value={modalSheetW} onChange={v => { setModalSheetW(v ?? boardSheetW); }} addonAfter="mm"
-                        />
-                        {hasRollSc && (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                            {rollSc.map((entry: any, idx: number) => {
-                              const rw = entry.roll_width_mm ?? entry.size_mm?.[0] ?? 0;
-                              const fm = entry.roll_length_fm ?? 0;
-                              const isCurrent = Math.abs(rw - modalSheetW) < 2;
-                              return (
-                                <div
-                                  key={idx}
-                                  onClick={() => setModalSheetW(Math.round(rw))}
-                                  style={{
-                                    padding: '5px 8px', borderRadius: 5, cursor: 'pointer', fontSize: 12,
-                                    background: isCurrent ? '#e6f4ff' : '#fafafa',
-                                    border: `1px solid ${isCurrent ? '#1677ff' : '#d9d9d9'}`,
-                                    display: 'flex', alignItems: 'center', gap: 6,
-                                  }}
-                                >
-                                  {entry.is_best && <Tag color="green" style={{ fontSize: 10, margin: 0 }}>optimális</Tag>}
-                                  <strong>{Math.round(rw)} mm</strong>
-                                  <span style={{ color: '#666' }}>→</span>
-                                  <span>{fm.toFixed(1)} fm</span>
-                                  <span style={{ color: '#666' }}>{entry.roll_cols} db/sor</span>
-                                  {entry.material_cost > 0 && (
-                                    <span style={{ marginLeft: 'auto', color: '#888' }}>{Math.round(entry.material_cost).toLocaleString('hu-HU')} Ft anyag</span>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })()}
+                  {/* Roll: csak a szélesség manuális input (a fő összehasonlítás alul) */}
+                  {isRollMode && (
+                    <NumInput
+                      style={{ width: '100%' }} placeholder="Tekercs szélessége" min={1}
+                      value={modalSheetW} onChange={v => { setModalSheetW(v ?? boardSheetW); }} addonAfter="mm"
+                    />
+                  )}
                   {!isRollMode && modalAutoSheetSize && (activeClickPricing?.size_comparison?.length || (isBoardImpositionMode && (activePricing as any)?.size_comparison?.length)) ? (() => {
                     // Táblás mód: activePricing.size_comparison; klikk mód: activeClickPricing.size_comparison
                     if (isBoardImpositionMode) {
@@ -2451,11 +2414,167 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                   {/* ── Méret összehasonlítás ───────────────────────── */}
                   {(() => {
                     const isBoard = isBoardImpositionMode;
+                    const isRoll = isBoardImpositionMode && selectedProduct?.calculator_type === 'roll_print';
                     const sc = isBoard
                       ? ((activePricing as any)?.size_comparison ?? [])
                       : (activeClickPricing?.size_comparison ?? []);
-                    // Táblás módban: ha nincs összehasonlítás, de van basic adat → mutassunk üzenetet
-                    if (sc.length === 0 && isBoard) {
+                    if (sc.length === 0 && isBoard && !isRoll) {
+                      return (
+                        <div style={{ marginTop: 12, padding: '10px 12px', background: '#fff7e6', borderRadius: 6,
+                          border: '1px solid #ffd591', fontSize: 11, color: '#874d00' }}>
+                          Az összehasonlítás megtekintéséhez válassz alapanyagot (pl. Alumínium kompozit, PVC lemez).
+                        </div>
+                      );
+                    }
+                    if (sc.length <= 1) return null;
+                    return (
+                    <div style={{ marginTop: 12, padding: '12px', background: '#f0f5ff', borderRadius: 8, border: '1px solid #d6e4ff' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                        <Text strong style={{ fontSize: 12 }}>
+                          {isRoll ? 'Rendelhető szélességek összehasonlítása' : 'Rendelhető méretek összehasonlítása'}
+                        </Text>
+                        <label style={{ fontSize: 11, display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
+                          <input
+                            type="checkbox"
+                            checked={autoSizeMode}
+                            onChange={e => {
+                              setAutoSizeMode(e.target.checked);
+                              if (e.target.checked) {
+                                setForcedSizeId(null);
+                                // Roll: auto-selektálja a legjobb szélességet
+                                if (isRoll) {
+                                  const best = sc.find((s: any) => s.is_best) ?? sc[0];
+                                  if (best) setModalSheetW(best.roll_width_mm ?? best.size_mm[0]);
+                                }
+                              }
+                            }}
+                          />
+                          Automatikus (legolcsóbb)
+                        </label>
+                      </div>
+                      {isRoll ? (
+                        <table style={{ width: '100%', fontSize: 11, borderCollapse: 'collapse' }}>
+                          <thead>
+                            <tr style={{ borderBottom: '1px solid #d6e4ff', color: '#666' }}>
+                              <th style={{ width: 28, padding: '4px 2px' }} />
+                              <th style={{ textAlign: 'left', padding: '4px 6px' }}>Szélesség</th>
+                              <th style={{ textAlign: 'right', padding: '4px 6px' }}>db / sor</th>
+                              <th style={{ textAlign: 'right', padding: '4px 6px' }}>FM szükséges</th>
+                              <th style={{ textAlign: 'right', padding: '4px 6px' }}>Anyagköltség</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {sc.map((s: any, i: number) => {
+                              const rw = s.roll_width_mm ?? s.size_mm?.[0] ?? 0;
+                              const isEffectivelySelected = autoSizeMode ? s.is_best : (Math.abs(rw - modalSheetW) < 2);
+                              return (
+                                <tr key={i} style={{
+                                  background: isEffectivelySelected ? '#e6f7ff' : (s.is_best ? '#f6ffed' : 'transparent'),
+                                  fontWeight: isEffectivelySelected ? 600 : 400,
+                                  borderBottom: '1px solid #f0f0f0', cursor: autoSizeMode ? 'default' : 'pointer',
+                                }}
+                                onClick={() => {
+                                  if (autoSizeMode) return;
+                                  setModalSheetW(Math.round(rw));
+                                }}
+                                >
+                                  <td style={{ textAlign: 'center', padding: '4px 2px' }}>
+                                    <input type="radio" checked={isEffectivelySelected} disabled={autoSizeMode}
+                                      onChange={() => { setAutoSizeMode(false); setModalSheetW(Math.round(rw)); }}
+                                      onClick={e => e.stopPropagation()}
+                                    />
+                                  </td>
+                                  <td style={{ padding: '4px 6px' }}>
+                                    <strong>{Math.round(rw)} mm</strong>
+                                    {s.is_default && <Tag color="blue" style={{ marginLeft: 4, fontSize: 9, lineHeight: '14px', padding: '0 4px' }}>alap</Tag>}
+                                    {s.is_best && <Tag color="green" style={{ marginLeft: 4, fontSize: 9, lineHeight: '14px', padding: '0 4px' }}>legjobb</Tag>}
+                                  </td>
+                                  <td style={{ textAlign: 'right', padding: '4px 6px' }}>{s.roll_cols ?? s.items_per_sheet}</td>
+                                  <td style={{ textAlign: 'right', padding: '4px 6px', fontWeight: 600 }}>{(s.roll_length_fm ?? 0).toFixed(1)} fm</td>
+                                  <td style={{ textAlign: 'right', padding: '4px 6px', color: s.is_best ? '#52c41a' : undefined }}>
+                                    {(s.material_cost ?? 0).toLocaleString('hu-HU')} Ft
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      ) : (
+                      <table style={{ width: '100%', fontSize: 11, borderCollapse: 'collapse' }}>
+                        <thead>
+                          <tr style={{ borderBottom: '1px solid #d6e4ff', color: '#666' }}>
+                            <th style={{ width: 28, padding: '4px 2px' }} />
+                            <th style={{ textAlign: 'left', padding: '4px 6px' }}>Méret</th>
+                            <th style={{ textAlign: 'right', padding: '4px 6px' }}>Ív méret</th>
+                            <th style={{ textAlign: 'right', padding: '4px 6px' }}>db/ív</th>
+                            <th style={{ textAlign: 'right', padding: '4px 6px' }}>Ívek</th>
+                            <th style={{ textAlign: 'right', padding: '4px 6px' }}>Ár/ív</th>
+                            <th style={{ textAlign: 'right', padding: '4px 6px' }}>Anyagköltség</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {sc.map((s: SizeComparison, i: number) => {
+                            const isEffectivelySelected = autoSizeMode ? s.is_best : (s.size_id != null ? s.size_id === forcedSizeId : !forcedSizeId && s.is_default);
+                            return (
+                              <tr key={i} style={{
+                                background: isEffectivelySelected ? '#e6f7ff' : (s.is_best ? '#f6ffed' : 'transparent'),
+                                fontWeight: isEffectivelySelected ? 600 : 400,
+                                borderBottom: '1px solid #f0f0f0',
+                                cursor: autoSizeMode ? 'default' : 'pointer',
+                              }}
+                              onClick={() => {
+                                if (autoSizeMode) return;
+                                setForcedSizeId(s.size_id ?? null);
+                                if (isBoardImpositionMode) {
+                                  const ew = s.cut_sheet_mm ? s.cut_sheet_mm[0] : s.size_mm[0];
+                                  const eh = s.cut_sheet_mm ? s.cut_sheet_mm[1] : s.size_mm[1];
+                                  setModalSheetW(ew); setModalSheetH(eh);
+                                }
+                              }}
+                              >
+                                <td style={{ textAlign: 'center', padding: '4px 2px' }}>
+                                  <input
+                                    type="radio"
+                                    checked={isEffectivelySelected}
+                                    disabled={autoSizeMode}
+                                    onChange={() => {
+                                      setAutoSizeMode(false); setForcedSizeId(s.size_id ?? null);
+                                      if (isBoardImpositionMode) {
+                                        const ew = s.cut_sheet_mm ? s.cut_sheet_mm[0] : s.size_mm[0];
+                                        const eh = s.cut_sheet_mm ? s.cut_sheet_mm[1] : s.size_mm[1];
+                                        setModalSheetW(ew); setModalSheetH(eh);
+                                      }
+                                    }}
+                                    onClick={e => e.stopPropagation()}
+                                  />
+                                </td>
+                                <td style={{ padding: '4px 6px' }}>
+                                  {s.label}
+                                  {s.is_default && <Tag color="blue" style={{ marginLeft: 4, fontSize: 9, lineHeight: '14px', padding: '0 4px' }}>alap</Tag>}
+                                  {s.is_best && <Tag color="green" style={{ marginLeft: 4, fontSize: 9, lineHeight: '14px', padding: '0 4px' }}>legjobb</Tag>}
+                                  {isEffectivelySelected && !s.is_best && <Tag color="blue" style={{ marginLeft: 4, fontSize: 9, lineHeight: '14px', padding: '0 4px' }}>kiválasztott</Tag>}
+                                  {s.needs_cutting && s.cut_sheet_mm && (
+                                    <div style={{ fontSize: 10, color: '#fa8c16', marginTop: 1 }}>
+                                      ✂ vágva: {s.cut_sheet_mm[0]}×{s.cut_sheet_mm[1]} mm ({s.cuts_per_raw} ív/alap)
+                                    </div>
+                                  )}
+                                </td>
+                                <td style={{ textAlign: 'right', padding: '4px 6px' }}>{s.size_mm[0]}×{s.size_mm[1]}</td>
+                                <td style={{ textAlign: 'right', padding: '4px 6px' }}>{s.items_per_sheet}</td>
+                                <td style={{ textAlign: 'right', padding: '4px 6px' }}>{(s as any).boards_needed ?? (s as any).sheets_needed}{s.needs_cutting && ' ✂'}</td>
+                                <td style={{ textAlign: 'right', padding: '4px 6px' }}>{s.price_per_sheet.toLocaleString('hu-HU')} Ft</td>
+                                <td style={{ textAlign: 'right', padding: '4px 6px', color: s.is_best ? '#52c41a' : undefined }}>
+                                  {s.material_cost.toLocaleString('hu-HU')} Ft
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                      )}
+                    </div>
+                    );
+                  })()}
                       return (
                         <div style={{ marginTop: 12, padding: '10px 12px', background: '#fff7e6', borderRadius: 6,
                           border: '1px solid #ffd591', fontSize: 11, color: '#874d00' }}>
