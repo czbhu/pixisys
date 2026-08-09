@@ -281,6 +281,8 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
   // Imposition modal
   const [impositionModalOpen, setImpositionModalOpen] = useState(false);
   const [modalSheetW, setModalSheetW] = useState(330);
+  const [rollAutoWidth, setRollAutoWidth] = useState(true);  // roll modal: auto szélesség
+  const [rollManualWidth, setRollManualWidth] = useState<number | null>(null); // utoljára megadott kézi szélesség
   const [modalSheetH, setModalSheetH] = useState(487);
   const [modalBleed, setModalBleed] = useState(3);
   const [modalForceRotate, setModalForceRotate] = useState<'auto' | 'normal' | 'rotated'>('auto');
@@ -2003,7 +2005,8 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
         title={<span><AppstoreOutlined style={{ marginRight: 8 }} />Impozíció – Produkciózás <span style={{fontSize:10,color:'#aaa'}}>v96</span></span>}
         open={impositionModalOpen}
         onCancel={() => {
-          setBoardBleed(prevBoardBleedRef.current); // cancel: visszaállítjuk az eredeti ráhagyást
+          setBoardBleed(prevBoardBleedRef.current);
+          setRollAutoWidth(true); setRollManualWidth(null);
           setIsBoardImpositionMode(false);
           setImpositionModalOpen(false);
         }}
@@ -2051,6 +2054,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
             setBoardForceRotate(modalForceRotate);
           }
           setIsBoardImpositionMode(false);
+          setRollAutoWidth(true); setRollManualWidth(null);
           setImpositionModalOpen(false);
         }}
         okText="Alkalmaz"
@@ -2103,6 +2107,31 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                 <Col span={12}>
                   <Text strong style={{ display: 'block', marginBottom: 6 }}>
                     {isRollMode ? 'Tekercs szélesség (mm)' : isBoardImpositionMode ? 'Tábla méret (mm)' : 'Ívméret (mm)'}
+                    {isRollMode && (
+                      <label style={{ fontWeight: 400, fontSize: 11, marginLeft: 12, cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={rollAutoWidth}
+                          onChange={e => {
+                            const checked = e.target.checked;
+                            if (!checked) {
+                              // kikapcsoláskor menti az aktuális (auto) szélességet kéziként
+                              setRollManualWidth(modalSheetW);
+                            } else {
+                              // bekapcsoláskor auto: a legjobb szélességre ugrik
+                              const bestRollEntry = ((activePricing as any)?.size_comparison ?? []).find((s: any) => s.is_best);
+                              if (bestRollEntry) setModalSheetW(Math.round(bestRollEntry.roll_width_mm ?? bestRollEntry.size_mm?.[0] ?? modalSheetW));
+                              else if (rollManualWidth == null) {
+                                // nincs korábbi kézi érték: visszaugrik az auto-ra (ne változtassunk)
+                              }
+                            }
+                            setRollAutoWidth(checked);
+                          }}
+                          style={{ marginRight: 4 }}
+                        />
+                        Auto (legjobb anyagköltség)
+                      </label>
+                    )}
                     {!isRollMode && (<label style={{ fontWeight: 400, fontSize: 11, marginLeft: 12, cursor: 'pointer' }}>
                       <input
                         type="checkbox"
@@ -2126,11 +2155,27 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                     </label>
                     )}
                   </Text>
-                  {/* Roll: csak a szélesség manuális input (a fő összehasonlítás alul) */}
-                  {isRollMode && (
+                  {/* Roll: auto módban az optimális látszik (read-only), manuális módban input */}
+                  {isRollMode && rollAutoWidth && (() => {
+                    const sc: any[] = (activePricing as any)?.size_comparison ?? [];
+                    const best = sc.find((s: any) => s.is_best) ?? sc[0];
+                    return best ? (
+                      <div style={{ padding: '6px 10px', background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 6, fontSize: 12 }}>
+                        <strong>{Math.round(best.roll_width_mm ?? best.size_mm?.[0] ?? 0)} mm</strong>
+                        &nbsp;·&nbsp;{best.label}
+                        &nbsp;·&nbsp;{(best.roll_length_fm ?? 0).toFixed(1)} fm
+                      </div>
+                    ) : (
+                      <NumInput style={{ width: '100%' }} placeholder="Tekercs szélessége" min={1}
+                        value={modalSheetW} onChange={v => setModalSheetW(v ?? boardSheetW)} addonAfter="mm" />
+                    );
+                  })()}
+                  {isRollMode && !rollAutoWidth && (
                     <NumInput
                       style={{ width: '100%' }} placeholder="Tekercs szélessége" min={1}
-                      value={modalSheetW} onChange={v => { setModalSheetW(v ?? boardSheetW); }} addonAfter="mm"
+                      value={rollManualWidth ?? modalSheetW}
+                      onChange={v => { const val = v ?? boardSheetW; setRollManualWidth(val); setModalSheetW(val); }}
+                      addonAfter="mm"
                     />
                   )}
                   {!isRollMode && modalAutoSheetSize && (activeClickPricing?.size_comparison?.length || (isBoardImpositionMode && (activePricing as any)?.size_comparison?.length)) ? (() => {
