@@ -854,6 +854,20 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
     }
   }, [(activePricing as any)?.size_comparison]); // eslint-disable-line
 
+  // Roll auto méret: ha size_comparison megérkezik, automatikusan az optimális tekercsszélességet állítjuk be
+  useEffect(() => {
+    if (selectedProduct?.calculator_type !== 'roll_print') return;
+    const sc: any[] = (activePricing as any)?.size_comparison ?? [];
+    if (sc.length === 0) return;
+    const best = sc.find((s: any) => s.is_best) ?? sc[0];
+    if (!best) return;
+    const bestW = Math.round(best.roll_width_mm ?? best.size_mm?.[0] ?? 0);
+    if (bestW > 0 && Math.abs(boardSheetW - bestW) > 2) {
+      setBoardSheetW(bestW);
+      // boardSheetH marad 99999 (végtelen tekercs)
+    }
+  }, [(activePricing as any)?.size_comparison]); // eslint-disable-line
+
   // Auto ívméret: ha a modalAutoSheetSize be van kapcsolva és új összehasonlítás érkezett,
   // frissítsük a modal ívméretét a legjobb anyag gépi max-ra clampelt natív méretére
   useEffect(() => {

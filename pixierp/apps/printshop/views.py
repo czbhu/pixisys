@@ -494,6 +494,13 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
                 _corrected_subtotal = paper_cost + _chosen_svc_cost + finishing_cost + service_cost
                 total = ((_corrected_subtotal + board_material_cost) * margin_mult).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
                 unit_price = (total / qty).quantize(Decimal('0.0001'), rounding=ROUND_HALF_UP)
+                # Frissítjük a roll statisztikákat és subtotal-t az optimális szélességre
+                subtotal = _corrected_subtotal
+                print_cost_s1 = _chosen_svc_cost
+                roll_length_fm = _chosen_len_fm
+                roll_cols = _chosen['roll_cols']
+                boards_needed = _chosen['roll_rows']
+                items_per_sheet = _chosen['roll_cols']
         except Exception:
             pass
 
