@@ -1183,7 +1183,7 @@ export default function IncomingInvoices({ externalOutgoing = false }) {
       return true;
     }
     // If batch is HUF and invoice has HUF amounts available, include it
-    if (effectiveBatchCurrency === 'HUF' && r.netAmountHUF && r.vatAmountHUF) {
+    if (effectiveBatchCurrency === 'HUF' && r.netAmountHUF != null) {
       return true;
     }
     return false;
@@ -1515,8 +1515,8 @@ export default function IncomingInvoices({ externalOutgoing = false }) {
         // If batch is HUF and invoice has HUF amount, use that; otherwise use original
         let amountToUse = r.grossAmount;
         let currencyToUse = r.currency;
-        if (currency === 'HUF' && r.currency !== 'HUF' && r.netAmountHUF && r.vatAmountHUF) {
-          amountToUse = Number(r.netAmountHUF) + Number(r.vatAmountHUF);
+        if (currency === 'HUF' && r.currency !== 'HUF' && r.netAmountHUF != null) {
+          amountToUse = Number(r.grossAmountHUF ?? (Number(r.netAmountHUF || 0) + Number(r.vatAmountHUF || 0)));
           currencyToUse = 'HUF';
         }
         return {
@@ -1746,8 +1746,8 @@ export default function IncomingInvoices({ externalOutgoing = false }) {
         // If batch is HUF and invoice has HUF amount, use that; otherwise use original
         let amountToUse = r.grossAmount;
         let currencyToUse = r.currency;
-        if (batchCurrency === 'HUF' && r.currency !== 'HUF' && r.netAmountHUF && r.vatAmountHUF) {
-          amountToUse = Number(r.netAmountHUF) + Number(r.vatAmountHUF);
+        if (batchCurrency === 'HUF' && r.currency !== 'HUF' && r.netAmountHUF != null) {
+          amountToUse = Number(r.grossAmountHUF ?? (Number(r.netAmountHUF || 0) + Number(r.vatAmountHUF || 0)));
           currencyToUse = 'HUF';
         }
         return {
@@ -2646,12 +2646,20 @@ export default function IncomingInvoices({ externalOutgoing = false }) {
               </div>
               <div style={{display:'flex', gap:12, alignItems:'center', marginBottom:8}}>
                 <label style={{width:160}}>Pénznem</label>
-                <input value={batchCurrency || selectedCurrencies[0] || 'HUF'} readOnly style={{width:120, padding:6}} />
+                <FilterSelect value={batchCurrency || selectedCurrencies[0] || 'HUF'}
+                  onChange={e => setBatchCurrency(e.target.value)}
+                  style={{width:120}}>
+                  {Array.from(new Set(['HUF', ...selectedCurrencies])).map(c => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </FilterSelect>
+                {selectedCurrencies.some(c => c !== 'HUF') && selectedRows.some(r => r.netAmountHUF != null && r.currency !== 'HUF') && batchCurrency !== 'HUF' && (
+                  <span style={{fontSize:11, color:'#666'}}>← HUF-ra váltva a devizás tételek HUF összegükkel kerülnek be</span>
+                )}
               </div>
               {selectedCount>0 && batchCurrency && selectedRows.some(r => {
                 if (!r.currency || r.currency === batchCurrency) return false;
-                // If batch is HUF and invoice has HUF amount, it's OK
-                if (batchCurrency === 'HUF' && r.netAmountHUF && r.vatAmountHUF) return false;
+                if (batchCurrency === 'HUF' && r.netAmountHUF != null) return false;
                 return true;
               }) && (
                 <div style={{color:'#ad5f00', background:'#fff4e5', padding:8, border:'1px solid #ffd8a8', borderRadius:6, marginTop:4}}>
@@ -2689,8 +2697,8 @@ export default function IncomingInvoices({ externalOutgoing = false }) {
                           // Calculate the amount to use for this item
                           let displayAmount = r.grossAmount;
                           let displayCurrency = r.currency || effectiveBatchCurrency;
-                          if (effectiveBatchCurrency === 'HUF' && r.currency !== 'HUF' && r.netAmountHUF && r.vatAmountHUF) {
-                            displayAmount = Number(r.netAmountHUF) + Number(r.vatAmountHUF);
+                          if (effectiveBatchCurrency === 'HUF' && r.currency !== 'HUF' && r.netAmountHUF != null) {
+                            displayAmount = Number(r.grossAmountHUF ?? (Number(r.netAmountHUF || 0) + Number(r.vatAmountHUF || 0)));
                             displayCurrency = 'HUF';
                           }
                           return (
