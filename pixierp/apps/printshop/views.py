@@ -412,11 +412,13 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
             def _roll_cost_for_width(rw_mm):
                 if rw_mm <= 0:
                     return None
-                # Forgatott elhelyezés vizsgálata
-                _cols_n = max(1, int(rw_mm / _prod_w))
-                _cols_r = max(1, int(rw_mm / _prod_h)) if _prod_h > 0 else 1
+                # Forgatott elhelyezés vizsgálata — ha egyik irányban sem fér el, None
+                _cols_n = int(rw_mm / _prod_w) if _prod_w > 0 else 0
+                _cols_r = int(rw_mm / _prod_h) if _prod_h > 0 else 0
+                if _cols_n == 0 and _cols_r == 0:
+                    return None  # termék nem fér rá erre a szélességre
                 _rotated = _cols_r > _cols_n
-                _cols = _cols_r if _rotated else _cols_n
+                _cols = max(1, _cols_r if _rotated else _cols_n)
                 _item_len = _prod_w if _rotated else _prod_h  # tekercs mentén egy tétel mérete
                 _rows = _math.ceil(int(qty) * sc / _cols)
                 _len_mm = _rows * _item_len
