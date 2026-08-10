@@ -50,12 +50,13 @@ const DEFAULT_PARAMS: PrintParams = {
   sheet_count: 1,
 };
 
-const STORAGE_KEY = 'pixierp_editor_state';
+const STORAGE_KEY_BASE = 'pixierp_editor_state';
 
 const PrintEditorPage: React.FC = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const STORAGE_KEY = STORAGE_KEY_BASE;
   const hasPrintShopPerm = Array.isArray(user?.permissions) && user.permissions.some(
     (p: any) => (p.resource === 'printshop.shop' || p.resource === 'printshop.sheet') && p.allowed !== false
   );
@@ -69,7 +70,12 @@ const PrintEditorPage: React.FC = () => {
   const [params, setParams] = useState<PrintParams>(() => {
     try {
       const s = localStorage.getItem(STORAGE_KEY);
-      if (s) return JSON.parse(s).params ?? DEFAULT_PARAMS;
+      if (s) {
+        const parsed = JSON.parse(s);
+        // Different user's stored state – do not restore
+        if (parsed._userId && user?.id && String(parsed._userId) !== String(user.id)) return DEFAULT_PARAMS;
+        return parsed.params ?? DEFAULT_PARAMS;
+      }
     } catch {}
     return DEFAULT_PARAMS;
   });
@@ -92,9 +98,9 @@ const PrintEditorPage: React.FC = () => {
     try {
       const s = localStorage.getItem(STORAGE_KEY);
       const existing = s ? JSON.parse(s) : {};
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...existing, params }));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...existing, params, _userId: user?.id ?? null }));
     } catch {}
-  }, [params]);
+  }, [params, user?.id]); // eslint-disable-line
 
   const handleDesignChange = useCallback((d1: any, d2: any, sheets?: Array<{ d1: any; d2: any }>) => {
     initialDesignRef.current = { d1, d2, sheets };
