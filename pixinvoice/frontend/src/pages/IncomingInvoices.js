@@ -1189,7 +1189,12 @@ export default function IncomingInvoices({ externalOutgoing = false }) {
     return false;
   });
   const excludedForBatch = selectedRows.length - selectedRowsForBatch.length;
-  const selectedTotal = selectedRowsForBatch.reduce((sum, r) => sum + Number(r.grossAmount || 0), 0);
+  const selectedTotal = selectedRowsForBatch.reduce((sum, r) => {
+    let amt = Number(r.grossAmount || 0);
+    if (effectiveBatchCurrency === 'HUF' && r.currency !== 'HUF' && r.netAmountHUF != null)
+      amt = Number(r.grossAmountHUF ?? (Number(r.netAmountHUF || 0) + Number(r.vatAmountHUF || 0)));
+    return sum + amt;
+  }, 0);
   const selectionSummary = selectedRows.reduce((acc, r) => {
     const cur = r.currency || 'HUF';
     if (!acc[cur]) acc[cur] = { net: 0, vat: 0, gross: 0 };
