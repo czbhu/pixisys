@@ -283,6 +283,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
   const [modalSheetW, setModalSheetW] = useState(330);
   const [rollAutoWidth, setRollAutoWidth] = useState(true);  // roll modal: auto szélesség
   const [rollManualWidth, setRollManualWidth] = useState<number | null>(null); // utoljára megadott kézi szélesség
+  const [rollEqualPieces, setRollEqualPieces] = useState(false); // darabolásnál egyenlő csíkok
   const [modalSheetH, setModalSheetH] = useState(487);
   const [modalBleed, setModalBleed] = useState(3);
   const [modalForceRotate, setModalForceRotate] = useState<'auto' | 'normal' | 'rotated'>('auto');
@@ -460,6 +461,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
             force_rotate: boardForceRotate === 'auto' ? null : boardForceRotate === 'rotated',
             material_id: p.material_id || undefined,
             print_service_id_2: (p.sides === '2' && selectedBoardPrintSvcId2) ? selectedBoardPrintSvcId2 : undefined,
+            roll_equal_pieces: rollEqualPieces,
           } : {}),
         });
         setPricing(res.data);
@@ -471,9 +473,9 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
         setCalcLoading(false);
       }
     }, 400);
-  }, [flatSelectedIds, flatFinishingIds, selectedBoardPrintSvcId, selectedBoardPrintSvcId2, boardSheetW, boardSheetH, boardBleed, boardForceRotate]); // eslint-disable-line
+  }, [flatSelectedIds, flatFinishingIds, selectedBoardPrintSvcId, selectedBoardPrintSvcId2, boardSheetW, boardSheetH, boardBleed, boardForceRotate, rollEqualPieces]); // eslint-disable-line
 
-  useEffect(() => { calculatePrice(params); }, [params, flatSelectedIds, flatFinishingIds, selectedBoardPrintSvcId, selectedBoardPrintSvcId2, boardSheetW, boardSheetH, boardBleed, boardForceRotate]); // eslint-disable-line
+  useEffect(() => { calculatePrice(params); }, [params, flatSelectedIds, flatFinishingIds, selectedBoardPrintSvcId, selectedBoardPrintSvcId2, boardSheetW, boardSheetH, boardBleed, boardForceRotate, rollEqualPieces]); // eslint-disable-line
 
   // ── Click-sheet-print calculation ────────────────────────────────────────
   // Paraméteres kalkuláció: az ívméret értékek paraméterként jönnek be, nem a closure-ból
@@ -1882,7 +1884,9 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                       <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                         <AppstoreOutlined style={{ color: '#52c41a', fontSize: 11 }} />
                         {(activePricing as any).is_roll_mode ? (
-                          <span>Tekercs impozíció: <strong>{(activePricing as any).roll_cols ?? (activePricing as any).fit_w ?? 1} db / sor</strong></span>
+                          <span>Tekercs impozíció: <strong>{(activePricing as any).roll_cols ?? (activePricing as any).fit_w ?? 1} db / sor</strong>
+                            {(() => { const best = (activePricing as any).size_comparison?.find((s: any) => s.is_best); return best?.is_cut ? <Tag color="orange" style={{ marginLeft: 6, fontSize: 10 }}>darabolva · {best.n_strips} csík/db</Tag> : null; })()}
+                          </span>
                         ) : (
                           <span>Impozíció: <strong>{(activePricing as any).fit_w ?? 1} × {(activePricing as any).fit_h ?? 1}</strong> = <strong>{(activePricing as any).items_per_sheet} db/ív</strong>
                             {(activePricing as any).rotated && <Tag color="orange" style={{ marginLeft: 6, fontSize: 10 }}>forgatva</Tag>}
@@ -2552,6 +2556,13 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                           />
                           Automatikus (legolcsóbb)
                         </label>
+                        {isRoll && sc.some((s: any) => s.is_cut) && (
+                          <label style={{ fontSize: 11, display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', marginTop: 4 }}>
+                            <input type="checkbox" checked={rollEqualPieces}
+                              onChange={e => setRollEqualPieces(e.target.checked)} />
+                            Egyenlő széles csíkok (darabolásnál)
+                          </label>
+                        )}
                       </div>
                       {isRoll ? (
                         <table style={{ width: '100%', fontSize: 11, borderCollapse: 'collapse' }}>
@@ -2589,8 +2600,9 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                                     <strong>{Math.round(rw)} mm</strong>
                                     {s.is_default && <Tag color="blue" style={{ marginLeft: 4, fontSize: 9, lineHeight: '14px', padding: '0 4px' }}>alap</Tag>}
                                     {s.is_best && <Tag color="green" style={{ marginLeft: 4, fontSize: 9, lineHeight: '14px', padding: '0 4px' }}>legjobb</Tag>}
+                                    {s.is_cut && <Tag color="orange" style={{ marginLeft: 4, fontSize: 9, lineHeight: '14px', padding: '0 4px' }}>darabolva · {s.n_strips} csík/db</Tag>}
                                   </td>
-                                  <td style={{ textAlign: 'right', padding: '4px 6px' }}>{s.roll_cols ?? s.items_per_sheet}</td>
+                                  <td style={{ textAlign: 'right', padding: '4px 6px' }}>{s.is_cut ? `${s.n_strips} csík` : (s.roll_cols ?? s.items_per_sheet)}</td>
                                   <td style={{ textAlign: 'right', padding: '4px 6px', fontWeight: 600 }}>{(s.roll_length_fm ?? 0).toFixed(1)} fm</td>
                                   <td style={{ textAlign: 'right', padding: '4px 6px', color: s.is_best ? '#52c41a' : undefined }}>
                                     {(s.material_cost ?? 0).toLocaleString('hu-HU')} Ft

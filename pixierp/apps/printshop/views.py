@@ -127,7 +127,7 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
                      binding, folding_count, config, selected_service_ids=None,
                      print_service_id=None, print_service_id_2=None,
                      sheet_w_mm=None, sheet_h_mm=None,
-                     bleed_mm=0, force_rotate=None, sheet_count=1, material_id=None):
+                     bleed_mm=0, force_rotate=None, sheet_count=1, material_id=None, roll_equal_pieces=False):
     """Árkalkuláció — visszaad egy részletes breakdown dict-et."""
     import math as _math
     from apps.manufacturing.models import Service
@@ -408,30 +408,48 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
             _dm = {'mm': 1, 'cm': 10, 'm': 1000}.get(_rmat.dimension_unit or 'mm', 1)
             _raw_sell = float(_rmat.unit_selling_price or 0)
             _raw_cost = float(_rmat.unit_cost_price or 0)
+            _equal_pieces = bool(roll_equal_pieces)
 
             def _roll_cost_for_width(rw_mm):
                 if rw_mm <= 0:
                     return None
-                # Forgatott elhelyezés vizsgálata — ha egyik irányban sem fér el, None
                 _cols_n = int(rw_mm / _prod_w) if _prod_w > 0 else 0
                 _cols_r = int(rw_mm / _prod_h) if _prod_h > 0 else 0
-                if _cols_n == 0 and _cols_r == 0:
-                    return None  # termék nem fér rá erre a szélességre
-                _rotated = _cols_r > _cols_n
-                _cols = max(1, _cols_r if _rotated else _cols_n)
-                _item_len = _prod_w if _rotated else _prod_h  # tekercs mentén egy tétel mérete
-                _rows = _math.ceil(int(qty) * sc / _cols)
-                _len_mm = _rows * _item_len
-                _len_fm = _math.ceil(_len_mm / 100) / 10
-                # Anyagköltség: fm × szélesség(m) × Ft/m² vagy fm × Ft/fm
+                _total_qty = int(qty) * sc
+                _is_cut = (_cols_n == 0 and _cols_r == 0)
+
+                if _is_cut:
+                    # Darabolás: egyik irányban sem fér el – csíkokra vágva nyomtatjuk
+                    n_normal  = _math.ceil(_prod_w / rw_mm)
+                    n_rotated = _math.ceil(_prod_h / rw_mm)
+                    _use_rotated = (n_rotated < n_normal)
+                    _cross = _prod_h if _use_rotated else _prod_w  # vágott dimenzió
+                    _along = _prod_w if _use_rotated else _prod_h  # tekercs hossza mentén
+                    n_strips = _math.ceil(_cross / rw_mm)
+                    if _equal_pieces:
+                        strip_w = _cross / n_strips
+                        spr = max(1, int(rw_mm / strip_w))  # csíkok / sor
+                        _rows = _math.ceil(_total_qty * n_strips / spr)
+                    else:
+                        full_per = int(_cross / rw_mm)
+                        rem_w = _cross - full_per * rw_mm
+                        full_rows = _total_qty * full_per
+                        rem_rows = (_math.ceil(_total_qty / max(1, int(rw_mm / rem_w))) if rem_w > 0 else 0)
+                        _rows = full_rows + rem_rows
+                    _len_fm = _math.ceil(_rows * _along / 100) / 10
+                    _cols = 1
+                else:
+                    _rotated = _cols_r > _cols_n
+                    _cols = max(1, _cols_r if _rotated else _cols_n)
+                    _item_len = _prod_w if _rotated else _prod_h
+                    _rows = _math.ceil(_total_qty / _cols)
+                    _len_fm = _math.ceil(_rows * _item_len / 100) / 10
+                    n_strips = 1
+
                 if _rmat.unit == 'm2':
                     _mat_cost = Decimal(str(_raw_sell)) * Decimal(str(_len_fm)) * Decimal(str(rw_mm / 1000))
-                elif _rmat.unit == 'm':
-                    _mat_cost = Decimal(str(_raw_sell)) * Decimal(str(_len_fm))
                 else:
                     _mat_cost = Decimal(str(_raw_sell)) * Decimal(str(_len_fm))
-                _prod_area = Decimal(str(_prod_w)) / 1000 * Decimal(str(_prod_h)) / 1000 * Decimal(str(int(qty) * sc))
-                # Tekercs: befoglalt nyomtatott terület = tekercs_szélesség × szükséges_hossz
                 _roll_print_area = Decimal(str(rw_mm / 1000)) * Decimal(str(_len_fm))
                 _svc_cost = Decimal('0')
                 for ci in _rsvc.cost_items.filter(is_active=True):
@@ -444,14 +462,15 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
                         _svc_cost += _p * Decimal(str(_rows))
                 _total = _svc_cost + _mat_cost
                 return {
-                    'is_roll': True, 'roll_width_mm': rw_mm,
+                    'is_roll': True, 'is_cut': _is_cut, 'n_strips': n_strips,
+                    'roll_width_mm': rw_mm,
                     'roll_cols': _cols, 'roll_rows': _rows, 'roll_length_fm': _len_fm,
                     'size_mm': [rw_mm, 0], 'label': f'Tekercs {int(rw_mm)} mm',
                     'items_per_sheet': _cols, 'boards_needed': _rows,
                     'material_cost': float(_mat_cost.quantize(Decimal('0.01'))),
                     'service_cost': float(_svc_cost.quantize(Decimal('0.01'))),
                     'total': float(_total.quantize(Decimal('0.01'))),
-                    'price_per_sheet': _raw_sell, 'needs_cutting': False,
+                    'price_per_sheet': _raw_sell, 'needs_cutting': _is_cut,
                 }
 
             # Rendelhető méretek (MaterialSize) szélességei → ezek az összehasonlítás alapjai
@@ -770,6 +789,7 @@ class PrintOrderViewSet(viewsets.ModelViewSet):
                 force_rotate=d.get('force_rotate'),
                 sheet_count=int(d.get('sheet_count', 1) or 1),
                 material_id=d.get('material_id') or None,
+                roll_equal_pieces=bool(d.get('roll_equal_pieces', False)),
             )
             return Response(breakdown)
         except Exception as e:
