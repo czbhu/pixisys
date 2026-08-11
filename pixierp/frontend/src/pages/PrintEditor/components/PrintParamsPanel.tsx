@@ -97,6 +97,7 @@ interface ProductTemplate {
   quantity_discounts?: { id: number; min_amount: number; discount_type: string; discount_value: number }[];
   template_categories?: number[];
   allow_custom_cost?: boolean;
+  screen_print_colors?: number;
 }
 
 export interface PriceBreakdown {
@@ -578,7 +579,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
     }
     // Táblás/tekercses termékek: ha selectedBoardPrintSvcId még nincs beállítva (pl. oldal frissítés),
     // inicializáljuk az első elérhető nyomtatási szolgáltatással
-    if ((product.calculator_type === 'sheet_print' || product.calculator_type === 'roll_print') &&
+    if ((isBoardOrRollOrScreen(product.calculator_type)) &&
         (product.print_service_options_details ?? []).length > 0) {
       setSelectedBoardPrintSvcId(prev => prev ?? (product.print_service_options_details ?? [])[0].id);
     }
@@ -638,7 +639,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
     setCustomCostItems([]);
     try { localStorage.removeItem('pixierp_custom_cost_items'); } catch {}
     // UV táblás/tekercses termék: alapból 1 oldalas nyomtatás, sheet_count reset
-    if (product.calculator_type === 'sheet_print' || product.calculator_type === 'roll_print') {
+    if (isBoardOrRollOrScreen(product.calculator_type)) {
       update({ sides: '1', side2_mode: 'none', sheet_count: 1 });
     }
     // Auto-select material if exactly one is available
@@ -650,7 +651,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
     }
     // Táblás/tekercses UV: alapból az első nyomtatási szolgáltatás kiválasztva
     if (product.print_service_options_details && product.print_service_options_details.length > 0 &&
-        (product.calculator_type === 'sheet_print' || product.calculator_type === 'roll_print')) {
+        (isBoardOrRollOrScreen(product.calculator_type))) {
       setSelectedBoardPrintSvcId(product.print_service_options_details[0].id);
       setSelectedBoardPrintSvcId2(null); // hátoldal alapértelmezés: nincs
     } else if (product.calculator_type !== 'click_sheet_print') {
@@ -716,6 +717,8 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
   const sizeExceeded   = widthExceeded || heightExceeded;
 
   const isClickSheet = selectedProduct?.calculator_type === 'click_sheet_print';
+  const isScreenPrint = selectedProduct?.calculator_type === 'screen_print';
+  const isBoardOrRollOrScreen = (t: string | undefined) => t === 'sheet_print' || t === 'roll_print' || t === 'screen_print';
   const clickSvcOptions: PrintServiceOption[] = selectedProduct?.print_service_options_details ?? [];
 
   // ── Kötészeti mód szerinti lapszám-szabály ──
@@ -805,7 +808,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
 
   // Auto-select first material when board/roll product loads and no material is selected
   useEffect(() => {
-    const isBoardOrRoll = selectedProduct?.calculator_type === 'sheet_print' || selectedProduct?.calculator_type === 'roll_print';
+    const isBoardOrRoll = isBoardOrRollOrScreen(selectedProduct?.calculator_type);
     if (!isBoardOrRoll) return;
     if (params.material_id) return; // already selected
     if (materials.length > 0) {
@@ -815,7 +818,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
 
   // Anyagváltáskor: roll_print esetén az anyag tekercs szélességét alkalmazzuk
   useEffect(() => {
-    const isBoardOrRoll = selectedProduct?.calculator_type === 'sheet_print' || selectedProduct?.calculator_type === 'roll_print';
+    const isBoardOrRoll = isBoardOrRollOrScreen(selectedProduct?.calculator_type);
     if (!isBoardOrRoll) return;
     const isRoll = selectedProduct?.calculator_type === 'roll_print';
     if (isRoll && params.material_id) {
@@ -843,7 +846,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
   // Roll módban kihagyjuk: a tekercs szélességeket máshogy kezeljük (boardSheetH=99999 végtelen hossz)
   useEffect(() => {
     const isRoll = selectedProduct?.calculator_type === 'roll_print';
-    const isBoardOrRoll = selectedProduct?.calculator_type === 'sheet_print' || isRoll;
+    const isBoardOrRoll = isBoardOrRollOrScreen(selectedProduct?.calculator_type);
     if (!isBoardOrRoll || isRoll) return;
     const sc: any[] = (activePricing as any)?.size_comparison ?? [];
     if (sc.length === 0) return;
@@ -1184,7 +1187,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
           {/* Standard nyomtatási mód – nem klikkdíjas termékekhez */}
           {!isClickSheet && (
             <>
-              {(selectedProduct?.calculator_type === 'sheet_print' || selectedProduct?.calculator_type === 'roll_print') && (
+              {(isBoardOrRollOrScreen(selectedProduct?.calculator_type)) && (
                 <>
                   <SectionLabel label="Alapanyag" />
                   <Select
@@ -1203,25 +1206,33 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                   </Select>
                 </>
               )}
-              <SectionLabel label="Nyomtatási mód" />
-              <Radio.Group
-                value={params.sides}
-                onChange={e => update({
-                  sides: e.target.value,
-                  side2_mode: e.target.value === '1' ? 'none' : (params.side2_mode === 'none' ? 'color' : params.side2_mode),
-                  quantity_input: params.quantity_input ?? params.quantity,
-                })}
-                size="small"
-                optionType="button"
-                buttonStyle="solid"
-                style={{ width: '100%', display: 'flex', marginBottom: 4 }}
-              >
-                <Radio.Button value="1" style={{ flex: 1, textAlign: 'center' }}>1 oldalas</Radio.Button>
-                <Radio.Button value="2" style={{ flex: 1, textAlign: 'center' }}>2 oldalas</Radio.Button>
-              </Radio.Group>
+              {isScreenPrint ? (
+                <div style={{ marginBottom: 4, fontSize: 11, color: '#666' }}>
+                  Egyoldalas szitanyomás · <strong>{selectedProduct?.screen_print_colors ?? 1} szín</strong>
+                </div>
+              ) : (
+                <>
+                  <SectionLabel label="Nyomtatási mód" />
+                  <Radio.Group
+                    value={params.sides}
+                    onChange={e => update({
+                      sides: e.target.value,
+                      side2_mode: e.target.value === '1' ? 'none' : (params.side2_mode === 'none' ? 'color' : params.side2_mode),
+                      quantity_input: params.quantity_input ?? params.quantity,
+                    })}
+                    size="small"
+                    optionType="button"
+                    buttonStyle="solid"
+                    style={{ width: '100%', display: 'flex', marginBottom: 4 }}
+                  >
+                    <Radio.Button value="1" style={{ flex: 1, textAlign: 'center' }}>1 oldalas</Radio.Button>
+                    <Radio.Button value="2" style={{ flex: 1, textAlign: 'center' }}>2 oldalas</Radio.Button>
+                  </Radio.Group>
+                </>
+              )}
 
               {/* UV táblás/tekercses: nyomtatás típusa (szolgáltatás-választó) */}
-              {(selectedProduct?.calculator_type === 'sheet_print' || selectedProduct?.calculator_type === 'roll_print') &&
+              {(isBoardOrRollOrScreen(selectedProduct?.calculator_type)) &&
                (selectedProduct?.print_service_options_details ?? []).length > 0 ? (
                 <>
                   <SectionLabel label="Nyomtatás típusa" />
@@ -1233,7 +1244,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                       style={{ width: '100%' }}
                       size="small"
                     >
-                      {(selectedProduct.print_service_options_details ?? []).map(svc => (
+                      {(selectedProduct?.print_service_options_details ?? []).map(svc => (
                         <Option key={svc.id} value={svc.id}>{svc.name}</Option>
                       ))}
                     </Select>
@@ -1249,7 +1260,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                         style={{ width: '100%' }}
                         size="small"
                       >
-                        {(selectedProduct.print_service_options_details ?? []).map(svc => (
+                        {(selectedProduct?.print_service_options_details ?? []).map(svc => (
                           <Option key={svc.id} value={svc.id}>{svc.name}</Option>
                         ))}
                       </Select>
@@ -1287,7 +1298,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                 </>
               )}
 
-              {!(selectedProduct?.calculator_type === 'sheet_print' || selectedProduct?.calculator_type === 'roll_print') && (
+              {!(isBoardOrRollOrScreen(selectedProduct?.calculator_type)) && (
                 <>
                   <SectionLabel label="Kötészet" />
                   <Radio.Group
@@ -1305,7 +1316,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
               )}
 
               {/* Táblák száma — sheet_print termékekre ha multi_sheet_enabled */}
-              {(selectedProduct?.calculator_type === 'sheet_print' || selectedProduct?.calculator_type === 'roll_print') &&
+              {(isBoardOrRollOrScreen(selectedProduct?.calculator_type)) &&
                params.multi_sheet_enabled && (
                 <div style={{ marginBottom: 6 }}>
                   <Text style={{ fontSize: 11, color: '#666', display: 'block', marginBottom: 3 }}>

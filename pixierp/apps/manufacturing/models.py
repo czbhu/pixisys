@@ -1520,6 +1520,11 @@ class ProductTemplate(models.Model):
         verbose_name="Egyedi költség engedélyezése",
         help_text="Engedélyezi, hogy a kalkulátor oldalon egyedi költséget lehessen megadni.",
     )
+    screen_print_colors = models.PositiveSmallIntegerField(
+        default=1,
+        verbose_name="Szitanyomás színek száma",
+        help_text="Szitanyomás kalkulátornál: hány szín kerül nyomtatásra (1-6). Csak screen_print típusnál aktív.",
+    )
 
     template_categories = models.ManyToManyField(
         'printshop.PrintTemplateCategory',

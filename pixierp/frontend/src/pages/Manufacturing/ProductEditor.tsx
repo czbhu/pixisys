@@ -1309,14 +1309,15 @@ const ProductEditor: React.FC = () => {
                 label: <Text strong style={{ fontSize: 13 }}>Nyomtatási beállítások</Text>,
                 children: (
                   <>
-                    {/* Print-specific fields for sheet_print / click_sheet_print / roll_print */}
+                    {/* Print-specific fields for sheet_print / click_sheet_print / roll_print / screen_print */}
                     <Form.Item shouldUpdate={(p, c) => p.calculator_type !== c.calculator_type} noStyle>
                       {({ getFieldValue }) => {
                         const ct = getFieldValue('calculator_type');
                         const isClickSheet = ct === 'click_sheet_print';
                         const isSheetPrint = ct === 'sheet_print';
                         const isRollPrint  = ct === 'roll_print';
-                        if (!isSheetPrint && !isClickSheet && !isRollPrint) return null;
+                        const isScreenPrint = ct === 'screen_print';
+                        if (!isSheetPrint && !isClickSheet && !isRollPrint && !isScreenPrint) return null;
                         const rollServiceOptions = services
                           .filter(s => ['UVPR_ROLL_W','UVPR_ROLL_CMYK_W','UVPR_ROLL_PROD_CMYK','UVPR_ROLL_BACKLIT_CMYK','UVPR_ROLL_HR_CMYK'].includes(s.code || ''))
                           .map(s => ({ value: s.id, label: `${s.name} (${s.code})` }));
@@ -1325,13 +1326,22 @@ const ProductEditor: React.FC = () => {
                             <Row gutter={12}>
                               <Col span={12}>
                                 <Form.Item name="print_sides" label="Nyomtatás oldalai" initialValue={1}>
-                                  <Select>
+                                  <Select disabled={isScreenPrint}>
                                     <Option value={1}>Egyoldalas (simplex)</Option>
-                                    <Option value={2}>Kétoldalas (duplex)</Option>
+                                    {!isScreenPrint && <Option value={2}>Kétoldalas (duplex)</Option>}
                                   </Select>
                                 </Form.Item>
                               </Col>
-                              {!isClickSheet && !isSheetPrint && !isRollPrint && (
+                              {isScreenPrint && (
+                                <Col span={12}>
+                                  <Form.Item name="screen_print_colors" label="Szín (1-6)" initialValue={1}>
+                                    <Select>
+                                      {[1,2,3,4,5,6].map(n => <Option key={n} value={n}>{n} szín</Option>)}
+                                    </Select>
+                                  </Form.Item>
+                                </Col>
+                              )}
+                              {!isClickSheet && !isSheetPrint && !isRollPrint && !isScreenPrint && (
                                 <Col span={12}>
                                   <Form.Item
                                     name="print_service"
@@ -1349,10 +1359,10 @@ const ProductEditor: React.FC = () => {
                               )}
                             </Row>
 
-                            {(isClickSheet || isSheetPrint || isRollPrint) && (
+                            {(isClickSheet || isSheetPrint || isRollPrint || isScreenPrint) && (
                               <>
                                 <Form.Item
-                                  label={isSheetPrint ? 'Táblás nyomtatási opciók' : isRollPrint ? 'Tekercses nyomtatási opciók' : 'Klikkdíjas nyomtatási opciók'}
+                                  label={isSheetPrint ? 'Táblás nyomtatási opciók' : isRollPrint ? 'Tekercses nyomtatási opciók' : isScreenPrint ? 'Szitanyomás nyomtatási opciók' : 'Klikkdíjas nyomtatási opciók'}
                                   tooltip="A PrintEditorban a felhasználó ezek közül választ nyomtatási szolgáltatást. Az első lesz az alapértelmezett. Sorrendet a nyilakkal állítsd."
                                 >
                                   <Select
