@@ -72,13 +72,25 @@ const PrintEditorPage: React.FC = () => {
       const s = localStorage.getItem(STORAGE_KEY);
       if (s) {
         const parsed = JSON.parse(s);
-        // Different user's stored state – do not restore
         if (parsed._userId && user?.id && String(parsed._userId) !== String(user.id)) return DEFAULT_PARAMS;
         return parsed.params ?? DEFAULT_PARAMS;
       }
     } catch {}
     return DEFAULT_PARAMS;
   });
+
+  // Safety-net: reset params if the stored state belongs to a different user (handles async user load)
+  useEffect(() => {
+    if (!user?.id) return;
+    try {
+      const s = localStorage.getItem(STORAGE_KEY);
+      if (!s) return;
+      const parsed = JSON.parse(s);
+      if (parsed._userId && String(parsed._userId) === String(user.id)) return;
+      setParams(DEFAULT_PARAMS);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ params: DEFAULT_PARAMS, _userId: user.id }));
+    } catch {}
+  }, [user?.id]); // eslint-disable-line
 
   const initialDesignRef = useRef<{ d1: any; d2: any; sheets?: Array<{ d1: any; d2: any }> } | null>((() => {
     try {
