@@ -449,7 +449,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
           width_mm: p.width_mm, height_mm: p.height_mm, quantity: p.quantity,
           sides: p.sides, side1_mode: p.side1_mode, side2_mode: p.side2_mode,
           binding: p.binding, folding_count: p.folding_count,
-          sheet_count: p.sheet_count ?? 1,
+          sheet_count: 1,
           selected_service_ids: flatSelectedIds,
           finishing_service_ids: flatFinishingIds,
           print_service_id: selectedBoardPrintSvcId || undefined,
