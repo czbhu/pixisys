@@ -637,9 +637,9 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
     // Egyedi költségek törlése termékváltáskor
     setCustomCostItems([]);
     try { localStorage.removeItem('pixierp_custom_cost_items'); } catch {}
-    // UV táblás/tekercses termék: alapból 1 oldalas nyomtatás
+    // UV táblás/tekercses termék: alapból 1 oldalas nyomtatás, sheet_count reset
     if (product.calculator_type === 'sheet_print' || product.calculator_type === 'roll_print') {
-      update({ sides: '1', side2_mode: 'none' });
+      update({ sides: '1', side2_mode: 'none', sheet_count: 1 });
     }
     // Auto-select material if exactly one is available
     const mats = product.allowed_materials_details ?? [];
