@@ -1332,15 +1332,6 @@ const ProductEditor: React.FC = () => {
                                   </Select>
                                 </Form.Item>
                               </Col>
-                              {isScreenPrint && (
-                                <Col span={12}>
-                                  <Form.Item name="screen_print_colors" label="Szín (1-6)" initialValue={1}>
-                                    <Select>
-                                      {[1,2,3,4,5,6].map(n => <Option key={n} value={n}>{n} szín</Option>)}
-                                    </Select>
-                                  </Form.Item>
-                                </Col>
-                              )}
                               {!isClickSheet && !isSheetPrint && !isRollPrint && !isScreenPrint && (
                                 <Col span={12}>
                                   <Form.Item

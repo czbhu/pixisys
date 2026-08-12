@@ -1206,11 +1206,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                   </Select>
                 </>
               )}
-              {isScreenPrint ? (
-                <div style={{ marginBottom: 4, fontSize: 11, color: '#666' }}>
-                  Egyoldalas szitanyomás · <strong>{selectedProduct?.screen_print_colors ?? 1} szín</strong>
-                </div>
-              ) : (
+              {isScreenPrint ? null : (
                 <>
                   <SectionLabel label="Nyomtatási mód" />
                   <Radio.Group
