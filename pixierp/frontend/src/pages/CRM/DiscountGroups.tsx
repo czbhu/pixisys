@@ -11,7 +11,7 @@ type Member = { id: number; name: string };
 type DiscountGroup = { id: number; name: string; is_active: boolean; created_by_name?: string; member_count: number; member_names: Member[]; rules: DiscountRule[]; created_at: string; };
 type TargetOption = { id: number; name: string };
 type TreeNode = { value: number | string; title: string; children?: TreeNode[] };
-const TARGET_LABELS: Record<string, string> = { product: "Termek", material: "Alapanyag", service: "Szolgaltatas", material_group: "Anyagcsoport", service_group: "Szolgaltatascsoport" };
+const TARGET_LABELS: Record<string, string> = { product: "Termék", material: "Alapanyag", service: "Szolgáltatás", material_group: "Anyagcsoport", service_group: "Szolgáltatáscsoport" };
 const TREE_TYPES = new Set(["material_group", "service_group"]);
 const buildTree = (items: any[], parentId: number | null = null): TreeNode[] =>
   items.filter(i => (i.parent_id ?? null) === parentId).map(i => ({ value: i.id, title: i.name, children: buildTree(items, i.id) }));
@@ -55,7 +55,7 @@ export default function DiscountGroups() {
   const load = useCallback(async () => {
     setLoading(true);
     try { const res = await api.get("/crm/discount-groups/"); setGroups(res.data?.results ?? res.data ?? []); }
-    catch { message.error("Betoltesi hiba"); } finally { setLoading(false); }
+    catch { message.error("Betöltési hiba"); } finally { setLoading(false); }
   }, []);
   useEffect(() => { load(); }, [load]);
 
@@ -101,6 +101,21 @@ export default function DiscountGroups() {
     setMemberModalOpen(false);
   };
 
+  const handleCancel = () => {
+    const hasChanges = rules.length > 0 || members.length > 0 || form.isFieldsTouched();
+    if (hasChanges) {
+      Modal.confirm({
+        title: 'Bezárja a szerkesztőt?',
+        content: 'A nem mentett módosítások elvesznek.',
+        okText: 'Bezárás',
+        cancelText: 'Mégsem',
+        onOk: () => setModalOpen(false),
+      });
+    } else {
+      setModalOpen(false);
+    }
+  };
+
   const openCreate = () => { setEditing(null); form.resetFields(); setMembers([]); setRules([]); setModalOpen(true); };
   const openEdit = (g: DiscountGroup) => { setEditing(g); form.setFieldsValue({ name: g.name, is_active: g.is_active }); setMembers(g.member_names ?? []); setRules(g.rules?.map(r => ({ ...r })) ?? []); setModalOpen(true); };
 
@@ -113,13 +128,13 @@ export default function DiscountGroups() {
       else g = (await api.post("/crm/discount-groups/", { name: vals.name, is_active: vals.is_active ?? true })).data;
       await api.post(`/crm/discount-groups/${g.id}/set-members/`, { member_ids: members.map(m => m.id) });
       await api.post(`/crm/discount-groups/${g.id}/set-rules/`, { rules });
-      message.success(editing ? "Mentve" : "Letrehozva"); setModalOpen(false); load();
+      message.success(editing ? "Mentve" : "Létrehozva"); setModalOpen(false); load();
     } catch (e: any) { if (e?.response?.data) message.error(JSON.stringify(e.response.data)); }
     finally { setSaving(false); }
   };
 
-  const del = async (id: number) => { try { await api.delete(`/crm/discount-groups/${id}/`); message.success("Torolve"); load(); } catch { message.error("Torlesi hiba"); } };
-  const dup = async (id: number) => { try { await api.post(`/crm/discount-groups/${id}/duplicate/`); message.success("Masolva"); load(); } catch { message.error("Masolasi hiba"); } };
+  const del = async (id: number) => { try { await api.delete(`/crm/discount-groups/${id}/`); message.success("Törölve"); load(); } catch { message.error("Törlési hiba"); } };
+  const dup = async (id: number) => { try { await api.post(`/crm/discount-groups/${id}/duplicate/`); message.success("Másolva"); load(); } catch { message.error("Másolási hiba"); } };
   const tog = async (id: number) => { try { await api.post(`/crm/discount-groups/${id}/toggle-active/`); load(); } catch { message.error("Hiba"); } };
 
   const addRule = () => setRules(r => [...r, { name: "", target_type: "product", target_id: null, target_name: "", discount_type: "percent", discount_value: 0, stackable: false }]);
@@ -130,7 +145,7 @@ export default function DiscountGroups() {
   const tooltipContent = (r2: DiscountRule[]) => {
     if (!r2?.length) return '–';
     return (
-      <table style={{ fontSize: 11 }}><thead><tr>{["Nev","Mire","Kedvezmeny","Halmozható"].map(h => <th key={h} style={{ padding:"2px 6px", borderBottom:"1px solid #555", textAlign:"left" }}>{h}</th>)}</tr></thead>
+      <table style={{ fontSize: 11 }}><thead><tr>{["Név","Mire","Kedvezmény","Halmozható"].map(h => <th key={h} style={{ padding:"2px 6px", borderBottom:"1px solid #555", textAlign:"left" }}>{h}</th>)}</tr></thead>
       <tbody>{r2.map((r, i) => <tr key={i}><td style={{padding:"2px 6px"}}>{r.name||"–"}</td><td style={{padding:"2px 6px"}}>{TARGET_LABELS[r.target_type]}{r.target_name ? ': ' + r.target_name : ''}</td><td style={{padding:"2px 6px"}}>{r.discount_type==="percent" ? r.discount_value + '%' : Number(r.discount_value).toLocaleString("hu-HU") + ' Ft'}</td><td style={{padding:"2px 6px"}}>{r.stackable?"Igen":"Nem"}</td></tr>)}</tbody></table>
     );
   };
@@ -139,20 +154,20 @@ export default function DiscountGroups() {
   const hdr = (k: keyof typeof colW) => () => ({ width: colW[k], onResize: mkR(k) });
 
   const columns = [
-    { title:"Nev", dataIndex:"name", key:"name", width:colW.name, sorter:(a:DiscountGroup,b:DiscountGroup)=>a.name.localeCompare(b.name), onHeaderCell:hdr("name"),
-      render:(n:string,r:DiscountGroup)=><Space><Tag color={r.is_active?"green":"default"} style={{fontSize:10}}>{r.is_active?"Aktiv":"Inaktiv"}</Tag><Text strong>{n}</Text></Space> },
-    { title:"Letrehozta", dataIndex:"created_by_name", key:"author", width:colW.author, sorter:(a:DiscountGroup,b:DiscountGroup)=>(a.created_by_name||"").localeCompare(b.created_by_name||""), onHeaderCell:hdr("author") },
+    { title:"Név", dataIndex:"name", key:"name", width:colW.name, sorter:(a:DiscountGroup,b:DiscountGroup)=>a.name.localeCompare(b.name), onHeaderCell:hdr("name"),
+      render:(n:string,r:DiscountGroup)=><Space><Tag color={r.is_active?"green":"default"} style={{fontSize:10}}>{r.is_active?"Aktív":"Inaktív"}</Tag><Text strong>{n}</Text></Space> },
+    { title:"Létrehozta", dataIndex:"created_by_name", key:"author", width:colW.author, sorter:(a:DiscountGroup,b:DiscountGroup)=>(a.created_by_name||"").localeCompare(b.created_by_name||""), onHeaderCell:hdr("author") },
     { title:"Tagok", dataIndex:"member_count", key:"members", width:colW.members, sorter:(a:DiscountGroup,b:DiscountGroup)=>a.member_count-b.member_count, onHeaderCell:hdr("members"),
       render:(cnt:number,r:DiscountGroup)=><Tooltip title={r.member_names?.map(m=>m.name).join(", ")||"Nincs tag"}><Tag>{cnt} tag</Tag></Tooltip> },
-    { title:"Kedvezmenyek", key:"rules", width:colW.rules, onHeaderCell:hdr("rules"),
-      render:(_:any,r:DiscountGroup)=><Tooltip title={<div style={{maxWidth:520}}>{tooltipContent(r.rules)}</div>} color="#222"><Tag color="blue">{r.rules?.length??0} szabaly</Tag></Tooltip> },
-    { title:"Muveletek", key:"actions", width:colW.actions, fixed:"right" as const, onHeaderCell:hdr("actions"),
+    { title:"Kedvezmények", key:"rules", width:colW.rules, onHeaderCell:hdr("rules"),
+      render:(_:any,r:DiscountGroup)=><Tooltip title={<div style={{maxWidth:520}}>{tooltipContent(r.rules)}</div>} color="#222"><Tag color="blue">{r.rules?.length??0} szabály</Tag></Tooltip> },
+    { title:"Műveletek", key:"actions", width:colW.actions, fixed:"right" as const, onHeaderCell:hdr("actions"),
       render:(_:any,r:DiscountGroup)=>(
         <Space size={4}>
-          <Tooltip title="Szerkesztes"><Button size="small" icon={<EditOutlined />} onClick={()=>openEdit(r)} /></Tooltip>
-          <Tooltip title="Masolas"><Button size="small" icon={<CopyOutlined />} onClick={()=>dup(r.id)} /></Tooltip>
-          <Tooltip title={r.is_active?"Inaktiva tesz":"Aktiva tesz"}><Button size="small" icon={r.is_active?<StopOutlined />:<CheckCircleOutlined />} style={{color:r.is_active?"#faad14":"#52c41a"}} onClick={()=>tog(r.id)} /></Tooltip>
-          <Popconfirm title="Biztosan torli?" onConfirm={()=>del(r.id)} okText="Igen" cancelText="Megse"><Tooltip title="Torles"><Button size="small" icon={<DeleteOutlined />} danger /></Tooltip></Popconfirm>
+          <Tooltip title="Szerkesztés"><Button size="small" icon={<EditOutlined />} onClick={()=>openEdit(r)} /></Tooltip>
+          <Tooltip title="Másolás"><Button size="small" icon={<CopyOutlined />} onClick={()=>dup(r.id)} /></Tooltip>
+          <Tooltip title={r.is_active?"Inaktívvá tesz":"Aktívvá tesz"}><Button size="small" icon={r.is_active?<StopOutlined />:<CheckCircleOutlined />} style={{color:r.is_active?"#faad14":"#52c41a"}} onClick={()=>tog(r.id)} /></Tooltip>
+          <Popconfirm title="Biztosan törli?" onConfirm={()=>del(r.id)} okText="Igen" cancelText="Mégsem"><Tooltip title="Törlés"><Button size="small" icon={<DeleteOutlined />} danger /></Tooltip></Popconfirm>
         </Space>
       ) },
   ];
@@ -162,48 +177,48 @@ export default function DiscountGroups() {
   return (
     <div style={{padding:24}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
-        <Text style={{fontSize:20,fontWeight:700}}>Kedvezmeny csoportok</Text>
+        <Text style={{fontSize:20,fontWeight:700}}>Kedvezmény csoportok</Text>
         <Space>
-          <Input prefix={<SearchOutlined />} placeholder="Kereses" value={search} onChange={e=>setSearch(e.target.value)} style={{width:220}} allowClear />
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>Uj csoport</Button>
+          <Input prefix={<SearchOutlined />} placeholder="Keresés…" value={search} onChange={e=>setSearch(e.target.value)} style={{width:220}} allowClear />
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>Új csoport</Button>
         </Space>
       </div>
       <Table rowKey="id" dataSource={filtered} columns={columns} loading={loading} size="small" scroll={{x:"max-content"}}
         components={{header:{cell:ResizableHeaderCell}}} pagination={{pageSize:50,showSizeChanger:true,showTotal:t=>`${t} csoport`}} />
 
-      <Modal open={modalOpen} title={editing?`Szerkesztes: ${editing.name}`:"Uj kedvezmeny csoport"}
-        onCancel={()=>setModalOpen(false)} onOk={save} okText="Mentes" cancelText="Megse" confirmLoading={saving} width={900} destroyOnClose>
+      <Modal open={modalOpen} title={editing?`Szerkesztés: ${editing.name}`:"Új kedvezmény csoport"}
+        onCancel={handleCancel} onOk={save} okText="Mentés" cancelText="Mégsem" confirmLoading={saving} width={900} destroyOnClose>
         <Form form={form} layout="vertical">
-          <Form.Item name="name" label="Nev" rules={[{required:true,message:"Kotelezo"}]}><Input placeholder="Kedvezmeny csoport neve" /></Form.Item>
-          <Form.Item name="is_active" label="Aktiv" valuePropName="checked" initialValue={true}><Switch /></Form.Item>
+          <Form.Item name="name" label="Név" rules={[{required:true,message:"Kötelező"}]}><Input placeholder="Kedvezmény csoport neve" /></Form.Item>
+          <Form.Item name="is_active" label="Aktív" valuePropName="checked" initialValue={true}><Switch /></Form.Item>
         </Form>
         <Divider orientation="left" style={{marginTop:0}}>Tagok</Divider>
         <Space style={{marginBottom:8}}>
-          <Button icon={<TeamOutlined />} onClick={openMemberModal}>{members.length} tag kivalasztasa / szerkesztese</Button>
+          <Button icon={<TeamOutlined />} onClick={openMemberModal}>{members.length} tag kiválasztása / szerkesztése</Button>
           {members.length > 0 && <Text type="secondary" style={{fontSize:12}}>{members.map(m=>m.name).join(", ")}</Text>}
         </Space>
-        <Divider orientation="left">Kedvezmeny szabalyok</Divider>
-        <Button size="small" icon={<PlusOutlined />} onClick={addRule} style={{marginBottom:8}}>Sor hozzaadasa</Button>
+        <Divider orientation="left">Kedvezmény szabályok</Divider>
+        <Button size="small" icon={<PlusOutlined />} onClick={addRule} style={{marginBottom:8}}>Sor hozzáadása</Button>
         {rules.length>0&&(
           <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
             <thead><tr style={{background:"#fafafa"}}>
-              {["Nev","Mire","Elem","Kedvezmeny","Halmozható",""].map((h,i)=><th key={i} style={{padding:"6px 8px",border:"1px solid #f0f0f0",fontWeight:600,textAlign:"left"}}>{h}</th>)}
+              {["Név","Mire","Elem","Kedvezmény","Halmozható",""].map((h,i)=><th key={i} style={{padding:"6px 8px",border:"1px solid #f0f0f0",fontWeight:600,textAlign:"left"}}>{h}</th>)}
             </tr></thead>
             <tbody>{rules.map((rule,i)=>(
               <tr key={i}>
                 <td style={{padding:4,border:"1px solid #f0f0f0",width:130}}><Input size="small" value={rule.name} onChange={e=>upd(i,"name",e.target.value)} /></td>
                 <td style={{padding:4,border:"1px solid #f0f0f0",width:120}}>
                   <Select size="small" style={{width:"100%"}} value={rule.target_type} onChange={v=>{updType(i,v);loadTargets(v);}}>
-                    <Option value="product">Termek</Option>
+                    <Option value="product">Termék</Option>
                     <Option value="material">Alapanyag</Option>
-                    <Option value="service">Szolgaltatas</Option>
+                    <Option value="service">Szolgáltatás</Option>
                     <Option value="material_group">Anyagcsoport</Option>
-                    <Option value="service_group">Szolgaltatascsoport</Option>
+                    <Option value="service_group">Szolgáltatáscsoport</Option>
                   </Select>
                 </td>
                 <td style={{padding:4,border:"1px solid #f0f0f0",minWidth:200}}>
                   {TREE_TYPES.has(rule.target_type) ? (
-                    <TreeSelect size="small" style={{width:"100%"}} placeholder="Valassz"
+                    <TreeSelect size="small" style={{width:"100%"}} placeholder="Válassz…"
                       value={rule.target_id ?? undefined} allowClear
                       showSearch treeNodeFilterProp="title"
                       onFocus={()=>loadTargets(rule.target_type)}
@@ -214,7 +229,7 @@ export default function DiscountGroups() {
                       treeData={[{ value:"__mind__" as any, title:"MIND (osszes)" }, ...treeData]}
                     />
                   ) : (
-                    <Select size="small" style={{width:"100%"}} showSearch filterOption={false} placeholder="Valassz" value={rule.target_id??undefined}
+                    <Select size="small" style={{width:"100%"}} showSearch filterOption={false} placeholder="Válassz…" value={rule.target_id??undefined}
                       onSearch={q=>loadTargets(rule.target_type,q)} onFocus={()=>loadTargets(rule.target_type)}
                       onChange={(val:any,opt:any)=>{upd(i,"target_id",val??null);upd(i,"target_name",opt?.children||"");}}
                       allowClear onClear={()=>{upd(i,"target_id",null);upd(i,"target_name","");}}>
@@ -241,13 +256,13 @@ export default function DiscountGroups() {
         {rules.length===0&&<Text type="secondary" style={{fontSize:12}}>Nincs kedvezmeny szabaly</Text>}
       </Modal>
 
-      <Modal open={memberModalOpen} title="Tagok kivalasztasa"
+      <Modal open={memberModalOpen} title="Tagok kiválasztása"
         onCancel={()=>setMemberModalOpen(false)} onOk={saveMemberModal}
-        okText="Ment" cancelText="Megse" width={520} destroyOnClose>
-        <Input prefix={<SearchOutlined />} placeholder="Gyorskeres cégekre…" allowClear
+        okText="Mentés" cancelText="Mégsem" width={520} destroyOnClose>
+        <Input prefix={<SearchOutlined />} placeholder="Gyorskeresés cégekre…" allowClear
           onChange={e=>searchCompaniesInModal(e.target.value)} style={{marginBottom:8}} />
         <Segmented value={memberFilter} onChange={v=>setMemberFilter(v as any)}
-          options={[{label:"Osszes",value:"all"},{label:`Tag (${pendingMemberIds.length})`,value:"member"},{label:"Nem tag",value:"nonmember"}]}
+          options={[{label:"Összes",value:"all"},{label:`Tag (${pendingMemberIds.length})`,value:"member"},{label:"Nem tag",value:"nonmember"}]}
           style={{marginBottom:12}} />
         <div style={{maxHeight:380,overflowY:"auto"}}>
           <Table size="small" loading={memberModalLoading}
@@ -259,10 +274,10 @@ export default function DiscountGroups() {
             })}
             rowKey="id" pagination={false}
             rowSelection={{selectedRowKeys:pendingMemberIds,onChange:keys=>setPendingMemberIds(keys as number[])}}
-            columns={[{title:"Nev",dataIndex:"name",key:"name"}]}
+            columns={[{title:"Név",dataIndex:"name",key:"name"}]}
           />
         </div>
-        <div style={{marginTop:8,fontSize:12,color:"#888"}}>{pendingMemberIds.length} kivalasztva</div>
+        <div style={{marginTop:8,fontSize:12,color:"#888"}}>{pendingMemberIds.length} kiválasztva</div>
       </Modal>
     </div>
   );
