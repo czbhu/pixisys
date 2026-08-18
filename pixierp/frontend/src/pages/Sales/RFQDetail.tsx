@@ -107,7 +107,7 @@ const RFQDetail: React.FC = () => {
   const [currencyList, setCurrencyList] = useState<any[]>([]);
   const [detailDiscountGroupList, setDetailDiscountGroupList] = useState<any[]>([]);
   const [detailDiscountMode, setDetailDiscountMode] = useState<string>('none');
-  const [companyDiscountGroupId, setCompanyDiscountGroupId] = useState<number | null>(null);
+  const [companyDiscountGroupId, setCompanyDiscountGroupId] = useState<number | null | undefined>(undefined);
 
   // Preload discount mode from item discount_percent or from company's assigned group
   useEffect(() => {
@@ -119,6 +119,8 @@ const RFQDetail: React.FC = () => {
         if (r.data?.discount_group_id) {
           setCompanyDiscountGroupId(r.data.discount_group_id);
           setDetailDiscountMode('company');
+        } else {
+          setCompanyDiscountGroupId(null); // explicitly no group
         }
       }).catch(() => {});
     }
@@ -1713,7 +1715,7 @@ const RFQDetail: React.FC = () => {
               {detailDiscountMode === 'company' && detailEffectiveGroup && (
                 <span style={{ fontSize: 12, color: '#52c41a', fontWeight: 500 }}>→ {detailEffectiveGroup.name}</span>
               )}
-              {detailDiscountMode === 'company' && !detailEffectiveGroup && companyDiscountGroupId === null && rfq?.company?.id && (
+              {detailDiscountMode === 'company' && !detailEffectiveGroup && companyDiscountGroupId === null && (
                 <span style={{ fontSize: 12, color: '#999' }}>→ nincs beállítva</span>
               )}
             </span>
