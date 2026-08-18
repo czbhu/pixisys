@@ -107,40 +107,72 @@ const RFQDetail: React.FC = () => {
   const [currencyList, setCurrencyList] = useState<any[]>([]);
   const [detailDiscountGroupList, setDetailDiscountGroupList] = useState<any[]>([]);
   const [detailDiscountMode, setDetailDiscountMode] = useState<string>('none');
+  const [companyDiscountGroupId, setCompanyDiscountGroupId] = useState<number | null>(null);
 
-  // Preload discount mode: from item discount_percent OR from company's assigned group
+  // Preload discount mode from item discount_percent or from company's assigned group
   useEffect(() => {
     if (detailDiscountMode !== 'none') return;
-    // Check items first (new RFQs with saved discount)
     const hasDiscount = (rfq?.items || []).some((it: any) => Number(it.discount_percent || 0) > 0);
     if (hasDiscount) { setDetailDiscountMode('company'); return; }
-    // Fallback: check company's discount group via API
     if (rfq?.company?.id) {
       api.get(`/crm/companies/${rfq.company.id}/discount-group/`).then(r => {
-        if (r.data?.discount_group_id) setDetailDiscountMode('company');
+        if (r.data?.discount_group_id) {
+          setCompanyDiscountGroupId(r.data.discount_group_id);
+          setDetailDiscountMode('company');
+        }
       }).catch(() => {});
     }
   }, [rfq?.items, rfq?.company?.id]); // eslint-disable-line
 
-  // Effective discount rules + per-item discount application for visual display
-  const detailEffectiveRules = useMemo(() => {
-    if (detailDiscountMode === 'none') return [];
-    const gid = detailDiscountMode === 'company'
-      ? (rfq?.company?.id ? detailDiscountGroupList.find((g: any) => g.company_assignments?.some((c: any) => c.id === rfq.company.id) || false)?.id ?? null : null)
-      : Number(detailDiscountMode) || null;
-    const group = gid ? detailDiscountGroupList.find((g: any) => g.id === gid) : null;
-    return (group?.rules ?? []) as any[];
-  }, [detailDiscountMode, detailDiscountGroupList, rfq?.company?.id]);
+  // Resolve effective discount group ID
+  const detailEffectiveGroupId = useMemo(() => {
+    if (detailDiscountMode === 'none') return null;
+    if (detailDiscountMode === 'company') return companyDiscountGroupId;
+    return Number(detailDiscountMode) || null;
+  }, [detailDiscountMode, companyDiscountGroupId]);
+
+  const detailEffectiveGroup = useMemo(() =>
+    detailEffectiveGroupId ? detailDiscountGroupList.find((g: any) => g.id === detailEffectiveGroupId) ?? null : null,
+    [detailEffectiveGroupId, detailDiscountGroupList]);
+
+  const detailEffectiveRules = useMemo(() =>
+    (detailEffectiveGroup?.rules ?? []) as any[],
+    [detailEffectiveGroup]);
+
+  // Compute group discount for a single item (same logic as create form)
+  const computeDetailItemDiscount = (item: any) => {
+    if (!detailEffectiveRules.length) return 0;
+    const primaryType = item.item_type === 'service' ? 'service' : (item.item_type === 'material' ? 'material' : 'product');
+    const accepted = primaryType === 'product' ? ['product', 'material'] : [primaryType];
+    for (const rule of detailEffectiveRules) {
+      const { target_type, target_id, discount_type, discount_value } = rule;
+      if (!accepted.includes(target_type) && target_type !== 'material_group' && target_type !== 'service_group') continue;
+      const isAll = !target_id || String(target_id) === '__mind__';
+      const idMatches = isAll || Number(target_id) === Number(item.ref_id) || Number(target_id) === Number(item.product) || Number(target_id) === Number(item.service);
+      if (!idMatches) continue;
+      return discount_type === 'percent' ? Number(discount_value) : 0;
+    }
+    // Fallback: all-MIND rules
+    const mindRules = detailEffectiveRules.filter((r: any) => !r.target_id || String(r.target_id) === '__mind__');
+    if (mindRules.length === detailEffectiveRules.length && mindRules.length > 0) return Number(mindRules[0].discount_value || 0);
+    return 0;
+  };
 
   const applyDetailDiscount = (items: any[]) => {
     if (!items?.length) return items;
     return items.map(item => {
       const existingDiscPct = Number(item.discount_percent || 0);
       if (existingDiscPct > 0) {
-        // Existing discount from saved item — show as-is with _appliedDiscountPct
         const origTotal = Number(item.net_unit_price || 0) * Number(item.quantity || 1);
         const discTotal = Number(item.discounted_net_total || 0) || origTotal * (1 - existingDiscPct / 100);
         return { ...item, _appliedDiscountPct: existingDiscPct, _originalNetTotal: origTotal, discounted_net_total: discTotal };
+      }
+      // Apply group discount for items without saved discount (old RFQs)
+      const groupPct = computeDetailItemDiscount(item);
+      if (groupPct > 0) {
+        const origTotal = Number(item.net_unit_price || 0) * Number(item.quantity || 1);
+        const discTotal = origTotal * (1 - groupPct / 100);
+        return { ...item, _appliedDiscountPct: groupPct, _originalNetTotal: origTotal, discounted_net_total: discTotal, _appliedDiscountLabel: detailEffectiveGroup?.name || '' };
       }
       return item;
     });
@@ -1669,15 +1701,21 @@ const RFQDetail: React.FC = () => {
           {/* ── Tételek ──────────────────────────────────────────────── */}
           <div style={{ background: '#e6f4ff', border: '1px solid #91caff', borderRadius: '8px 8px 0 0', padding: '6px 12px 6px', marginBottom: 0, display: 'flex', alignItems: 'center', gap: 16 }}>
             <span style={{ fontSize: 11, fontWeight: 600, color: '#0958d9', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Tételek</span>
-            <span style={{ display: 'flex', alignItems: 'center', gap: 6, textTransform: 'none', letterSpacing: 0 }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', textTransform: 'none', letterSpacing: 0 }}>
               <span style={{ fontWeight: 500, fontSize: 12, color: '#444' }}>Kedvezmény:</span>
-              <Select value={detailDiscountMode} onChange={setDetailDiscountMode} style={{ width: 180 }} size="small">
+              <Select value={detailDiscountMode} onChange={v => { setDetailDiscountMode(v); if (v === 'company' && !companyDiscountGroupId && rfq?.company?.id) { api.get(`/crm/companies/${rfq.company.id}/discount-group/`).then(r => { if (r.data?.discount_group_id) setCompanyDiscountGroupId(r.data.discount_group_id); }).catch(()=>{}); } }} style={{ width: 180 }} size="small">
                 <Select.Option value="none">Nincs</Select.Option>
                 <Select.Option value="company">Cég alapú</Select.Option>
                 {detailDiscountGroupList.map((g: any) => (
                   <Select.Option key={g.id} value={String(g.id)}>{g.name}</Select.Option>
                 ))}
               </Select>
+              {detailDiscountMode === 'company' && detailEffectiveGroup && (
+                <span style={{ fontSize: 12, color: '#52c41a', fontWeight: 500 }}>→ {detailEffectiveGroup.name}</span>
+              )}
+              {detailDiscountMode === 'company' && !detailEffectiveGroup && companyDiscountGroupId === null && rfq?.company?.id && (
+                <span style={{ fontSize: 12, color: '#999' }}>→ nincs beállítva</span>
+              )}
             </span>
           </div>
           {!editContext && (
