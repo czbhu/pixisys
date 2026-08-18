@@ -652,3 +652,79 @@ class ContactViewSet(viewsets.ViewSet):
             return Response(items)
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_502_BAD_GATEWAY)
+
+
+from rest_framework import viewsets, status, filters
+from rest_framework.decorators import action
+from rest_framework.response import Response as DRFResponse
+from .models import DiscountGroup, DiscountRule
+from .serializers import DiscountGroupSerializer, DiscountRuleSerializer
+
+class DiscountGroupViewSet(viewsets.ModelViewSet):
+    serializer_class = DiscountGroupSerializer
+    queryset = DiscountGroup.objects.prefetch_related('members', 'rules').all()
+
+    def get_queryset(self):
+        qs = DiscountGroup.objects.prefetch_related('members', 'rules').all()
+        search = self.request.query_params.get('search')
+        is_active = self.request.query_params.get('is_active')
+        if search:
+            qs = qs.filter(name__icontains=search)
+        if is_active is not None:
+            qs = qs.filter(is_active=is_active.lower() == 'true')
+        return qs.order_by('name')
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user if self.request.user.is_authenticated else None)
+
+    @action(detail=True, methods=['post'], url_path='set-members')
+    def set_members(self, request, pk=None):
+        group = self.get_object()
+        member_ids = request.data.get('member_ids', [])
+        group.members.set(member_ids)
+        return DRFResponse(DiscountGroupSerializer(group).data)
+
+    @action(detail=True, methods=['post'], url_path='set-rules')
+    def set_rules(self, request, pk=None):
+        group = self.get_object()
+        rules_data = request.data.get('rules', [])
+        group.rules.all().delete()
+        for i, r in enumerate(rules_data):
+            DiscountRule.objects.create(
+                discount_group=group,
+                name=r.get('name', ''),
+                target_type=r.get('target_type', 'product'),
+                target_id=r.get('target_id') or None,
+                target_name=r.get('target_name', ''),
+                discount_type=r.get('discount_type', 'percent'),
+                discount_value=r.get('discount_value', 0),
+                stackable=bool(r.get('stackable', False)),
+                sort_order=i,
+            )
+        return DRFResponse(DiscountGroupSerializer(group).data)
+
+    @action(detail=True, methods=['post'], url_path='toggle-active')
+    def toggle_active(self, request, pk=None):
+        group = self.get_object()
+        group.is_active = not group.is_active
+        group.save()
+        return DRFResponse({'id': group.id, 'is_active': group.is_active})
+
+    @action(detail=True, methods=['post'], url_path='duplicate')
+    def duplicate(self, request, pk=None):
+        group = self.get_object()
+        new_group = DiscountGroup.objects.create(
+            name=f"{group.name} (másolat)",
+            is_active=group.is_active,
+            created_by=request.user if request.user.is_authenticated else None,
+        )
+        new_group.members.set(group.members.all())
+        for rule in group.rules.all():
+            DiscountRule.objects.create(
+                discount_group=new_group,
+                name=rule.name, target_type=rule.target_type,
+                target_id=rule.target_id, target_name=rule.target_name,
+                discount_type=rule.discount_type, discount_value=rule.discount_value,
+                stackable=rule.stackable, sort_order=rule.sort_order,
+            )
+        return DRFResponse(DiscountGroupSerializer(new_group).data, status=status.HTTP_201_CREATED)

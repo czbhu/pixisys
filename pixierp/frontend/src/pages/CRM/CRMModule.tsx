@@ -4,7 +4,8 @@ import {
     ShopOutlined,
     TeamOutlined,
     PhoneOutlined,
-    BellOutlined
+    BellOutlined,
+    PercentageOutlined,
 } from '@ant-design/icons';
 import Companies from './Companies';
 import CompanyForm from './CompanyForm';
@@ -12,6 +13,7 @@ import Contacts from './Contacts';
 import ContactForm from './ContactForm';
 import Activities from './Activities';
 import Campaigns from './Campaigns';
+import DiscountGroups from './DiscountGroups';
 import ModuleDashboard from '../../components/ModuleDashboard';
 
 const CRMModule = () => {
@@ -20,6 +22,7 @@ const CRMModule = () => {
          { key: '/crm/contacts', label: 'Kapcsolatok', icon: <TeamOutlined /> },
          { key: '/crm/activities', label: 'Tevékenységek', icon: <PhoneOutlined /> },
          { key: '/crm/campaigns', label: 'Kampányok', icon: <BellOutlined /> },
+         { key: '/crm/discount-groups', label: 'Kedvezmények', icon: <PercentageOutlined /> },
     ];
 
     return (
@@ -31,6 +34,7 @@ const CRMModule = () => {
             <Route path="/contacts/new" element={<ContactForm />} />
             <Route path="/activities" element={<Activities />} />
             <Route path="/campaigns" element={<Campaigns />} />
+            <Route path="/discount-groups" element={<DiscountGroups />} />
         </Routes>
     );
 };

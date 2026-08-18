@@ -100,3 +100,39 @@ class ContactCreateSerializer(serializers.ModelSerializer):
         fields = [
             'first_name', 'last_name', 'phone', 'email', 'company', 'position', 'is_receipt', 'notes'
         ]
+
+
+from .models import DiscountGroup, DiscountRule
+
+class DiscountRuleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DiscountRule
+        fields = ['id', 'name', 'target_type', 'target_id', 'target_name',
+                  'discount_type', 'discount_value', 'stackable', 'sort_order']
+
+class DiscountGroupSerializer(serializers.ModelSerializer):
+    rules = DiscountRuleSerializer(many=True, read_only=True)
+    member_ids = serializers.SerializerMethodField()
+    member_names = serializers.SerializerMethodField()
+    member_count = serializers.SerializerMethodField()
+    created_by_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = DiscountGroup
+        fields = ['id', 'name', 'is_active', 'created_by', 'created_by_name',
+                  'created_at', 'updated_at', 'member_ids', 'member_names',
+                  'member_count', 'rules']
+
+    def get_member_ids(self, obj):
+        return list(obj.members.values_list('id', flat=True))
+
+    def get_member_names(self, obj):
+        return [{'id': c.id, 'name': c.name} for c in obj.members.all()]
+
+    def get_member_count(self, obj):
+        return obj.members.count()
+
+    def get_created_by_name(self, obj):
+        if obj.created_by:
+            return obj.created_by.get_full_name() or obj.created_by.username
+        return None

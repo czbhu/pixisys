@@ -204,3 +204,49 @@ class Contact(models.Model):
     def __str__(self):
         company_name = f" ({self.company.name})" if self.company else ""
         return f"{self.name}{company_name}"
+
+
+class DiscountGroup(models.Model):
+    name = models.CharField(max_length=200, verbose_name="Név")
+    is_active = models.BooleanField(default=True, verbose_name="Aktív")
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, verbose_name="Létrehozta")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    members = models.ManyToManyField(Company, blank=True, related_name='discount_groups', verbose_name="Tagok")
+
+    class Meta:
+        verbose_name = "Kedvezmény csoport"
+        verbose_name_plural = "Kedvezmény csoportok"
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+
+class DiscountRule(models.Model):
+    TARGET_TYPE_CHOICES = [
+        ('product', 'Termék'),
+        ('material', 'Alapanyag'),
+        ('service', 'Szolgáltatás'),
+        ('category', 'Kategória'),
+    ]
+    DISCOUNT_TYPE_CHOICES = [
+        ('percent', 'Százalékos'),
+        ('fixed', 'Fix összeg'),
+    ]
+
+    discount_group = models.ForeignKey(DiscountGroup, on_delete=models.CASCADE, related_name='rules', verbose_name="Kedvezmény csoport")
+    name = models.CharField(max_length=200, verbose_name="Név")
+    target_type = models.CharField(max_length=20, choices=TARGET_TYPE_CHOICES, verbose_name="Mire")
+    target_id = models.IntegerField(null=True, blank=True, verbose_name="Cél azonosító")
+    target_name = models.CharField(max_length=300, blank=True, verbose_name="Cél neve")
+    discount_type = models.CharField(max_length=10, choices=DISCOUNT_TYPE_CHOICES, default='percent', verbose_name="Típus")
+    discount_value = models.DecimalField(max_digits=10, decimal_places=2, verbose_name="Értéke")
+    stackable = models.BooleanField(default=False, verbose_name="Halmozható")
+    sort_order = models.IntegerField(default=0)
+
+    class Meta:
+        ordering = ['sort_order', 'id']
+
+    def __str__(self):
+        return f"{self.name} ({self.discount_group.name})"
