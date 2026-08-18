@@ -108,12 +108,19 @@ const RFQDetail: React.FC = () => {
   const [detailDiscountGroupList, setDetailDiscountGroupList] = useState<any[]>([]);
   const [detailDiscountMode, setDetailDiscountMode] = useState<string>('none');
 
-  // Preload discount mode from items once rfq.items are available
+  // Preload discount mode: from item discount_percent OR from company's assigned group
   useEffect(() => {
-    if (!rfq?.items?.length || detailDiscountMode !== 'none') return;
-    const hasDiscount = rfq.items.some((it: any) => Number(it.discount_percent || 0) > 0);
-    if (hasDiscount) setDetailDiscountMode('company');
-  }, [rfq?.items]); // eslint-disable-line
+    if (detailDiscountMode !== 'none') return;
+    // Check items first (new RFQs with saved discount)
+    const hasDiscount = (rfq?.items || []).some((it: any) => Number(it.discount_percent || 0) > 0);
+    if (hasDiscount) { setDetailDiscountMode('company'); return; }
+    // Fallback: check company's discount group via API
+    if (rfq?.company?.id) {
+      api.get(`/crm/companies/${rfq.company.id}/discount-group/`).then(r => {
+        if (r.data?.discount_group_id) setDetailDiscountMode('company');
+      }).catch(() => {});
+    }
+  }, [rfq?.items, rfq?.company?.id]); // eslint-disable-line
 
   // Effective discount rules + per-item discount application for visual display
   const detailEffectiveRules = useMemo(() => {
