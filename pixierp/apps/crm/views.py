@@ -369,6 +369,20 @@ class CompanyViewSet(viewsets.ViewSet):
                     pass
             return Response({'error': str(e)}, status=code)
         except Exception as e:
+            # PixInvoice unavailable – fall back to local DB
+            try:
+                local_id = int(pk)
+                from .models import Company as LocalCompany
+                local = LocalCompany.objects.filter(id=local_id).first()
+                if local:
+                    from .serializers import CompanySerializer
+                    data = dict(CompanySerializer(local).data)
+                    data['_fallback'] = True
+                    data['discount_group_id'] = local.discount_group_id
+                    data['discount_group_name'] = local.discount_group.name if local.discount_group_id else None
+                    return Response(data)
+            except Exception:
+                pass
             return Response({'error': str(e)}, status=status.HTTP_502_BAD_GATEWAY)
 
     @action(detail=False, methods=['post'])
