@@ -460,6 +460,26 @@ class CompanyViewSet(viewsets.ViewSet):
             _sync_to_local_db(data)
             return Response(data)
         except Exception as e:
+            # PixInvoice unavailable – save editable fields locally and signal the frontend
+            try:
+                from .models import Company as LocalCompany
+                local = LocalCompany.objects.filter(id=int(pk)).first()
+                if local:
+                    d = request.data
+                    _LOCAL_UPDATABLE = ['name', 'short_name', 'email', 'phone', 'tax_number', 'eu_tax_number',
+                                        'postal_code', 'city', 'country', 'address',
+                                        'payment_method', 'payment_due_days', 'is_customer', 'is_supplier', 'is_active']
+                    for f in _LOCAL_UPDATABLE:
+                        if f in d:
+                            setattr(local, f, d[f])
+                    local.save()
+                    from .serializers import CompanySerializer
+                    resp_data = dict(CompanySerializer(local).data)
+                    resp_data['_local_only'] = True
+                    resp_data['_error'] = str(e)
+                    return Response(resp_data)
+            except Exception:
+                pass
             return Response({'error': str(e)}, status=status.HTTP_502_BAD_GATEWAY)
 
     def partial_update(self, request, pk=None):

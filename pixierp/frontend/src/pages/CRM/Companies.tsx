@@ -386,10 +386,13 @@ const Companies: React.FC = () => {
             };
             delete payload.discount_group_id;
             if (editingCompany) {
-                await crmService.updateCompany(editingCompany.id, payload);
-                // Use local integer id (stored in editingCompany as overridden by showEditModal)
+                const res = await crmService.updateCompany(editingCompany.id, payload);
                 await api.patch(`/crm/companies/${editingCompany.id}/discount-group/`, { discount_group_id: discountGroupId });
-                message.success('Cég frissítve');
+                if ((res as any)?._local_only) {
+                    message.warning('Helyi mentés sikeres – PixInvoice jelenleg nem érhető el, az adatok csak helyben frissültek');
+                } else {
+                    message.success('Cég frissítve');
+                }
             } else {
                 await crmService.createCompany(payload);
                 message.success('Cég létrehozva');
