@@ -367,6 +367,14 @@ def _build_items_table_html(items_qs, currency_symbol=''):
         unit = item.unit or ''
         net_unit = item.net_unit_price or 0
         net_total = item.net_total or (qty * net_unit)
+        # Use discounted totals when discount is applied
+        disc_pct = float(item.discount_percent or 0)
+        if disc_pct > 0:
+            effective_total = float(item.discounted_net_total or 0) or (float(net_total) * (1 - disc_pct / 100))
+            effective_unit = effective_total / float(qty) if float(qty) else float(net_unit)
+        else:
+            effective_total = float(net_total)
+            effective_unit = float(net_unit)
         cur = currency_symbol
 
         def fmt(val):
@@ -382,8 +390,8 @@ def _build_items_table_html(items_qs, currency_symbol=''):
             f'<td style="border:1px solid #ddd;padding:6px 10px;">{description}</td>'
             f'<td style="border:1px solid #ddd;padding:6px 10px;text-align:right;">{fmt(qty)}</td>'
             f'<td style="border:1px solid #ddd;padding:6px 10px;">{unit}</td>'
-            f'<td style="border:1px solid #ddd;padding:6px 10px;text-align:right;">{fmt(net_unit)}{(" " + cur) if cur else ""}</td>'
-            f'<td style="border:1px solid #ddd;padding:6px 10px;text-align:right;">{fmt(net_total)}{(" " + cur) if cur else ""}</td>'
+            f'<td style="border:1px solid #ddd;padding:6px 10px;text-align:right;">{fmt(effective_unit)}{(" " + cur) if cur else ""}</td>'
+            f'<td style="border:1px solid #ddd;padding:6px 10px;text-align:right;">{fmt(effective_total)}{(" " + cur) if cur else ""}</td>'
             f'</tr>'
         )
     rows_html = ''.join(rows)

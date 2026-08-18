@@ -1623,7 +1623,17 @@ const RFQs: React.FC = () => {
       sorter: (a: any, b: any) => Number(a.net_unit_price || a.manufacturing_product_net_unit_price || 0) - Number(b.net_unit_price || b.manufacturing_product_net_unit_price || 0),
       render: (_: any, r: any) => {
         const p = Number(r.net_unit_price || r.manufacturing_product_net_unit_price || 0);
-        return p ? `${p.toLocaleString('hu-HU', { maximumFractionDigits: 2 })} ${r.currency_symbol || 'Ft'}` : '—';
+        if (!p) return '—';
+        const discPct = Number(r.discount_percent || 0);
+        const effP = discPct > 0 ? p * (1 - discPct / 100) : p;
+        const sym = r.currency_symbol || 'Ft';
+        if (discPct > 0) return (
+          <span>
+            <span style={{ color: '#52c41a', fontWeight: 600 }}>{effP.toLocaleString('hu-HU', { maximumFractionDigits: 2 })} {sym}</span>
+            <br/><span style={{ fontSize: 11, color: '#aaa', textDecoration: 'line-through' }}>{p.toLocaleString('hu-HU', { maximumFractionDigits: 2 })} {sym}</span>
+          </span>
+        );
+        return `${p.toLocaleString('hu-HU', { maximumFractionDigits: 2 })} ${sym}`;
       },
     },
     {
