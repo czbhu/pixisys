@@ -5075,7 +5075,13 @@ const RFQs: React.FC = () => {
             <div style={{ fontSize: 11, fontWeight: 600, color: '#c41d7f', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Költség kalkuláció</div>
           <div style={{ marginBottom: 8 }}>
              <RFQCostsTable
-                totalRevenue={newItems.reduce((sum, item) => sum + (Number(item.quantity || 0) * Number(item.net_unit_price || 0)), 0)}
+                totalRevenue={newItems.reduce((sum, item, idx) => {
+                  const base = (Number(item.quantity || 0) * Number(item.net_unit_price || 0));
+                  const groupDisc = computeItemDiscount(item);
+                  const discounted = groupDisc.pct > 0 ? base * (1 - groupDisc.pct / 100)
+                    : groupDisc.fixed > 0 ? Math.max(0, base - groupDisc.fixed) : base;
+                  return sum + discounted;
+                }, 0)}
                 currency={currency}
                 rfqItems={newItems.map(it => {
                   // For manufacturing items still pending (not yet API-saved),
