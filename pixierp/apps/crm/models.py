@@ -228,7 +228,8 @@ class DiscountRule(models.Model):
         ('product', 'Termék'),
         ('material', 'Alapanyag'),
         ('service', 'Szolgáltatás'),
-        ('category', 'Kategória'),
+        ('material_group', 'Anyagcsoport'),
+        ('service_group', 'Szolgáltatáscsoport'),
     ]
     DISCOUNT_TYPE_CHOICES = [
         ('percent', 'Százalékos'),

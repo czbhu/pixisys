@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Button, Input, Modal, Form, Select, Switch, Table, Tag, Tooltip, Space, Popconfirm, message, InputNumber, Typography, Divider } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined, CopyOutlined, CheckCircleOutlined, StopOutlined, SearchOutlined, PercentageOutlined, DollarOutlined } from '@ant-design/icons';
+import { Button, Input, Modal, Form, Select, Switch, Table, Tag, Tooltip, Space, Popconfirm, message, InputNumber, Typography, Divider, Checkbox } from 'antd';
+import { PlusOutlined, EditOutlined, DeleteOutlined, CopyOutlined, CheckCircleOutlined, StopOutlined, SearchOutlined, PercentageOutlined, DollarOutlined, TeamOutlined } from '@ant-design/icons';
 import api from '../../services/api';
 
 const { Text } = Typography;
@@ -10,7 +10,7 @@ type DiscountRule = { id?: number; name: string; target_type: string; target_id?
 type Member = { id: number; name: string };
 type DiscountGroup = { id: number; name: string; is_active: boolean; created_by_name?: string; member_count: number; member_names: Member[]; rules: DiscountRule[]; created_at: string; };
 type TargetOption = { id: number; name: string };
-const TARGET_LABELS: Record<string, string> = { product: 'Termék', material: 'Alapanyag', service: 'Szolgáltatás', category: 'Kategória' };
+const TARGET_LABELS: Record<string, string> = { product: 'Termék', material: 'Alapanyag', service: 'Szolgáltatás', material_group: 'Anyagcsoport', service_group: 'Szolgáltatáscsoport' };
 
 const ResizableHeaderCell: React.FC<any> = ({ width, onResize, children, ...rest }) => {
   const handlePointerDown = (e: React.PointerEvent) => {
@@ -40,8 +40,13 @@ export default function DiscountGroups() {
   const [saving, setSaving] = useState(false);
   const [members, setMembers] = useState<Member[]>([]);
   const [rules, setRules] = useState<DiscountRule[]>([]);
-  const [memberOptions, setMemberOptions] = useState<Member[]>([]);
   const [targetOptions, setTargetOptions] = useState<TargetOption[]>([]);
+  // Member selection modal
+  const [memberModalOpen, setMemberModalOpen] = useState(false);
+  const [allCompanies, setAllCompanies] = useState<Member[]>([]);
+  const [memberModalSearch, setMemberModalSearch] = useState('');
+  const [memberModalLoading, setMemberModalLoading] = useState(false);
+  const [pendingMemberIds, setPendingMemberIds] = useState<number[]>([]);
   const [colW, setColW] = useState({ name: 280, author: 160, members: 110, rules: 110, actions: 170 });
 
   const load = useCallback(async () => {
@@ -51,16 +56,46 @@ export default function DiscountGroups() {
   }, []);
   useEffect(() => { load(); }, [load]);
 
-  const searchMembers = async (q: string) => {
-    if (q.length < 1) return;
-    try { const res = await api.get('/crm/companies/', { params: { q, page_size: 30 } }); setMemberOptions((res.data?.results ?? res.data ?? []).map((c: any) => ({ id: c.id, name: c.name }))); } catch {}
-  };
+  // searchMembers removed – replaced by member selection modal
   const loadTargets = async (type: string, q = '') => {
     try {
-      const ep: Record<string, string> = { product: '/manufacturing/product-templates/', material: '/warehouse/materials/', service: '/manufacturing/services/', category: '/printshop/template-categories/' };
+      const ep: Record<string, string> = {
+        product: '/manufacturing/product-templates/',
+        material: '/warehouse/materials/',
+        service: '/manufacturing/services/',
+        material_group: '/warehouse/material-groups/',
+        service_group: '/manufacturing/service-groups/',
+      };
       const res = await api.get(ep[type] || ep.product, { params: { search: q, page_size: 50 } });
       setTargetOptions((res.data?.results ?? res.data ?? []).map((x: any) => ({ id: x.id, name: x.name })));
     } catch {}
+  };
+
+  const openMemberModal = async () => {
+    setMemberModalSearch('');
+    setPendingMemberIds(members.map(m => m.id));
+    setMemberModalLoading(true);
+    setMemberModalOpen(true);
+    try {
+      const res = await api.get('/crm/companies/', { params: { page_size: 200 } });
+      setAllCompanies((res.data?.results ?? res.data ?? []).map((c: any) => ({ id: c.id, name: c.name })));
+    } catch {} finally { setMemberModalLoading(false); }
+  };
+
+  const searchCompaniesInModal = async (q: string) => {
+    setMemberModalLoading(true);
+    try {
+      const res = await api.get('/crm/companies/', { params: { q: q || undefined, page_size: 200 } });
+      setAllCompanies((res.data?.results ?? res.data ?? []).map((c: any) => ({ id: c.id, name: c.name })));
+    } catch {} finally { setMemberModalLoading(false); }
+  };
+
+  const saveMemberModal = () => {
+    const selectedCompanies = allCompanies.filter(c => pendingMemberIds.includes(c.id));
+    // keep members not in allCompanies (they were already set but not loaded in current search)
+    const notLoaded = members.filter(m => !allCompanies.find(c => c.id === m.id) && pendingMemberIds.includes(m.id));
+    setMembers([...selectedCompanies, ...notLoaded]);
+    setMemberModalOpen(false);
   };
 
   const openCreate = () => { setEditing(null); form.resetFields(); setMembers([]); setRules([]); setModalOpen(true); };
@@ -137,15 +172,12 @@ export default function DiscountGroups() {
         </Form>
 
         <Divider orientation="left" style={{marginTop:0}}>Tagok</Divider>
-        <div style={{marginBottom:8}}>
-          <Select showSearch style={{width:'100%'}} placeholder="Cég keresése és hozzáadás…" filterOption={false} onSearch={searchMembers} value={undefined}
-            onSelect={(val: any, opt:any)=>{if(!members.find(m=>m.id===val))setMembers(m=>[...m,{id:val,name:opt.children}]);}}>
-            {memberOptions.filter(o=>!members.find(m=>m.id===o.id)).map(o=><Option key={o.id} value={o.id}>{o.name}</Option>)}
-          </Select>
-        </div>
-        {members.length>0
-          ? <div style={{border:'1px solid #f0f0f0',borderRadius:6,padding:8,maxHeight:130,overflowY:'auto',marginBottom:8}}>{members.map(m=><Tag key={m.id} closable onClose={()=>setMembers(mm=>mm.filter(x=>x.id!==m.id))} style={{marginBottom:4}}>{m.name}</Tag>)}</div>
-          : <Text type="secondary" style={{fontSize:12,display:'block',marginBottom:8}}>Nincs tag</Text>}
+        <Space style={{marginBottom:8}}>
+          <Button icon={<TeamOutlined />} onClick={openMemberModal}>
+            {members.length} tag kiválasztása / szerkesztése
+          </Button>
+          {members.length > 0 && <Text type="secondary" style={{fontSize:12}}>{members.map(m=>m.name).join(', ')}</Text>}
+        </Space>
 
         <Divider orientation="left">Kedvezmény szabályok</Divider>
         <Button size="small" icon={<PlusOutlined />} onClick={addRule} style={{marginBottom:8}}>Sor hozzáadása</Button>
@@ -159,7 +191,7 @@ export default function DiscountGroups() {
                 <td style={{padding:4,border:'1px solid #f0f0f0',width:130}}><Input size="small" value={rule.name} onChange={e=>upd(i,'name',e.target.value)} /></td>
                 <td style={{padding:4,border:'1px solid #f0f0f0',width:108}}>
                   <Select size="small" style={{width:'100%'}} value={rule.target_type} onChange={v=>{upd(i,'target_type',v);upd(i,'target_id',null);upd(i,'target_name','');loadTargets(v);}}>
-                    <Option value="product">Termék</Option><Option value="material">Alapanyag</Option><Option value="service">Szolgáltatás</Option><Option value="category">Kategória</Option>
+                    <Option value="product">Termék</Option><Option value="material">Alapanyag</Option><Option value="service">Szolgáltatás</Option><Option value="material_group">Anyagcsoport</Option><Option value="service_group">Szolgáltatáscsoport</Option>
                   </Select>
                 </td>
                 <td style={{padding:4,border:'1px solid #f0f0f0',minWidth:170}}>
@@ -186,6 +218,43 @@ export default function DiscountGroups() {
           </table>
         )}
         {rules.length===0&&<Text type="secondary" style={{fontSize:12}}>Nincs kedvezmény szabály</Text>}
+      </Modal>
+
+      {/* Tag kiválasztó modal */}
+      <Modal open={memberModalOpen} title="Tagok kiválasztása"
+        onCancel={()=>setMemberModalOpen(false)}
+        onOk={saveMemberModal} okText="Ment" cancelText="Mégse"
+        width={520} destroyOnClose>
+        <Input prefix={<SearchOutlined />} placeholder="Gyorskeresés cégnkei…" allowClear
+          onChange={e => searchCompaniesInModal(e.target.value)}
+          style={{marginBottom:12}} />
+        <div style={{maxHeight:400, overflowY:'auto'}}>
+          <Table
+            size="small" loading={memberModalLoading}
+            dataSource={allCompanies.filter(c =>
+              !memberModalSearch || c.name.toLowerCase().includes(memberModalSearch.toLowerCase())
+            )}
+            rowKey="id"
+            pagination={false}
+            columns={[
+              { title: '', key:'chk', width:40,
+                render: (_:any, c: Member) => (
+                  <Checkbox checked={pendingMemberIds.includes(c.id)}
+                    onChange={e => setPendingMemberIds(ids =>
+                      e.target.checked ? [...ids, c.id] : ids.filter(x => x !== c.id)
+                    )} />
+                )},
+              { title:'Név', dataIndex:'name', key:'name' },
+            ]}
+            onRow={(c: Member) => ({
+              onClick: () => setPendingMemberIds(ids =>
+                ids.includes(c.id) ? ids.filter(x => x !== c.id) : [...ids, c.id]
+              ),
+              style: { cursor: 'pointer', background: pendingMemberIds.includes(c.id) ? '#f0f7ff' : undefined },
+            })}
+          />
+        </div>
+        <div style={{marginTop:8,fontSize:12,color:'#888'}}>{pendingMemberIds.length} kiválasztva</div>
       </Modal>
     </div>
   );
