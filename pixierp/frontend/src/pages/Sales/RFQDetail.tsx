@@ -105,6 +105,8 @@ const RFQDetail: React.FC = () => {
   const [companies, setCompanies] = useState<any[]>([]);
   const [contacts, setContacts] = useState<any[]>([]);
   const [currencyList, setCurrencyList] = useState<any[]>([]);
+  const [detailDiscountGroupList, setDetailDiscountGroupList] = useState<any[]>([]);
+  const [detailDiscountMode, setDetailDiscountMode] = useState<string>('none');
   const [filePreviewOpen, setFilePreviewOpen] = useState(false);
   const [filePreviewTitle, setFilePreviewTitle] = useState('');
   const [filePreviewUrl, setFilePreviewUrl] = useState<string | null>(null);
@@ -240,6 +242,15 @@ const RFQDetail: React.FC = () => {
       }
 
       setCurrencyList(currRes as any);
+      // Load discount groups and preload discount mode from item discount_percent
+      try {
+        const dgRes = await api.get('/crm/discount-groups/', { params: { is_active: true, page_size: 200 } });
+        setDetailDiscountGroupList(dgRes.data?.results ?? dgRes.data ?? []);
+      } catch {}
+      const itemsWithDiscount = (rfqRes?.items || []).filter((it: any) => Number(it.discount_percent || 0) > 0);
+      if (itemsWithDiscount.length > 0) {
+        setDetailDiscountMode('company');
+      }
       const assignedContacts = Array.isArray(rfqRes?.contacts) ? [...rfqRes.contacts] : [];
       setContacts(assignedContacts);
 
@@ -1641,13 +1652,25 @@ const RFQDetail: React.FC = () => {
                 finally { setWorkHoursLoading(false); }
               }}
               currencySelector={
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ fontWeight: 500, whiteSpace: 'nowrap', fontSize: 13 }}>Pénznem:</span>
-                  <Form.Item name="currency_code" noStyle>
-                    <Select showSearch optionFilterProp="label" placeholder="Válassz pénznemet" style={{ width: 200 }} size="small">
-                      {(currencyList || []).map((c: any) => <Select.Option key={c.id} value={c.code} label={`${c.code} – ${c.name}`}>{c.code} – {c.name} {c.symbol ? `(${c.symbol})` : ''}</Select.Option>)}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ fontWeight: 500, whiteSpace: 'nowrap', fontSize: 13 }}>Pénznem:</span>
+                    <Form.Item name="currency_code" noStyle>
+                      <Select showSearch optionFilterProp="label" placeholder="Válassz pénznemet" style={{ width: 200 }} size="small">
+                        {(currencyList || []).map((c: any) => <Select.Option key={c.id} value={c.code} label={`${c.code} – ${c.name}`}>{c.code} – {c.name} {c.symbol ? `(${c.symbol})` : ''}</Select.Option>)}
+                      </Select>
+                    </Form.Item>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ fontWeight: 500, whiteSpace: 'nowrap', fontSize: 13 }}>Kedvezmény:</span>
+                    <Select value={detailDiscountMode} onChange={setDetailDiscountMode} style={{ width: 180 }} size="small">
+                      <Select.Option value="none">Nincs</Select.Option>
+                      <Select.Option value="company">Cég alapú</Select.Option>
+                      {detailDiscountGroupList.map((g: any) => (
+                        <Select.Option key={g.id} value={String(g.id)}>{g.name}</Select.Option>
+                      ))}
                     </Select>
-                  </Form.Item>
+                  </div>
                 </div>
               }
             />

@@ -538,22 +538,24 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
         const netTotal = Number(r.net_total || 0);
         const originalPerUnit = qty > 0 ? netTotal / qty : 0;
         const unit = r.unit || 'db';
-        const hasGroupDiscount = (r._appliedDiscountPct > 0 || r._appliedDiscountFixed > 0);
-        if (!hasGroupDiscount) return `${Math.round(netTotal)} (${Math.round(originalPerUnit)}/${unit})`;
-        const discounted = Number(r.discounted_net_total ?? netTotal);
+        const discPct = r._appliedDiscountPct > 0 ? r._appliedDiscountPct : Number(r.discount_percent || 0);
+        const discFixed = r._appliedDiscountFixed || 0;
+        const hasGroupDiscount = discPct > 0 || discFixed > 0;
+        if (!hasGroupDiscount) return `${originalPerUnit.toFixed(2)} (${Math.round(netTotal)}/${unit})`;
+        const discounted = r.discounted_net_total != null ? Number(r.discounted_net_total) : (discPct > 0 ? netTotal * (1 - discPct / 100) : Math.max(0, netTotal - discFixed));
         const discountedPerUnit = qty > 0 ? discounted / qty : 0;
-        const pctLabel = r._appliedDiscountPct > 0 ? `${r._appliedDiscountPct}%` : `${r._appliedDiscountFixed} Ft`;
+        const pctLabel = discPct > 0 ? `${discPct}%` : `${discFixed} Ft`;
         const cell = (
           <div>
-            <div style={{ color: '#52c41a', fontWeight: 'bold' }}>{Math.round(discounted)} ({Math.round(discountedPerUnit)}/{unit})</div>
-            <div style={{ color: '#888', fontSize: 11, textDecoration: 'line-through' }}>{Math.round(netTotal)} ({Math.round(originalPerUnit)}/{unit})</div>
+            <div style={{ color: '#52c41a', fontWeight: 'bold' }}>{discountedPerUnit.toFixed(2)} ({Math.round(discounted)}/{unit})</div>
+            <div style={{ color: '#888', fontSize: 11, textDecoration: 'line-through' }}>{originalPerUnit.toFixed(2)} ({Math.round(netTotal)}/{unit})</div>
           </div>
         );
         return (
           <Tooltip title={
             <div style={{fontSize:12}}>
-              <div>Eredeti: {Math.round(netTotal).toLocaleString('hu-HU')} {currency} ({Math.round(originalPerUnit).toLocaleString('hu-HU')}/{unit})</div>
-              <div style={{color:'#95de64'}}>Kedvezményes: {Math.round(discounted).toLocaleString('hu-HU')} {currency} ({Math.round(discountedPerUnit).toLocaleString('hu-HU')}/{unit})</div>
+              <div>Eredeti: {Math.round(netTotal).toLocaleString('hu-HU')} {currency} ({originalPerUnit.toFixed(2)}/{unit})</div>
+              <div style={{color:'#95de64'}}>Kedvezményes: {Math.round(discounted).toLocaleString('hu-HU')} {currency} ({discountedPerUnit.toFixed(2)}/{unit})</div>
               <div style={{color:'#faad14'}}>Kedvezmény: -{pctLabel} ({r._appliedDiscountLabel || ''})</div>
             </div>
           }>
@@ -571,17 +573,20 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
       render: (r: any) => {
         const qty = Number(r.quantity || 1);
         const original = Number(r._originalNetTotal ?? r.net_total ?? 0);
-        const discounted = r.discounted_net_total != null ? Number(r.discounted_net_total) : Number(r.net_total || 0);
+        const discPct = r._appliedDiscountPct > 0 ? r._appliedDiscountPct : Number(r.discount_percent || 0);
+        const discFixed = r._appliedDiscountFixed || 0;
+        const discounted = r.discounted_net_total != null ? Number(r.discounted_net_total)
+          : (discPct > 0 ? original * (1 - discPct / 100) : (discFixed > 0 ? Math.max(0, original - discFixed) : original));
         const perUnit = qty > 0 ? discounted / qty : 0;
         const unit = r.unit || 'db';
-        const hasGroupDiscount = (r._appliedDiscountPct > 0 || r._appliedDiscountFixed > 0) && original !== discounted;
-        if (!hasGroupDiscount) return <span style={{ whiteSpace: 'nowrap', fontWeight: 'bold' }}>{Math.round(discounted)} ({Math.round(perUnit)}/{unit})</span>;
+        const hasGroupDiscount = (discPct > 0 || discFixed > 0) && Math.abs(original - discounted) > 0.01;
+        if (!hasGroupDiscount) return <span style={{ whiteSpace: 'nowrap', fontWeight: 'bold' }}>{Math.round(discounted)} ({perUnit.toFixed(2)}/{unit})</span>;
         const origPerUnit = qty > 0 ? original / qty : 0;
-        const pctLabel = r._appliedDiscountPct > 0 ? `${r._appliedDiscountPct}%` : `${r._appliedDiscountFixed} Ft`;
+        const pctLabel = discPct > 0 ? `${discPct}%` : `${discFixed} Ft`;
         const cell = (
           <div style={{ textAlign: 'right' }}>
-            <div style={{ color: '#52c41a', fontWeight: 'bold' }}>{Math.round(discounted)} ({Math.round(perUnit)}/{unit})</div>
-            <div style={{ color: '#888', fontSize: 11, textDecoration: 'line-through' }}>{Math.round(original)} ({Math.round(origPerUnit)}/{unit})</div>
+            <div style={{ color: '#52c41a', fontWeight: 'bold' }}>{Math.round(discounted)} ({perUnit.toFixed(2)}/{unit})</div>
+            <div style={{ color: '#888', fontSize: 11, textDecoration: 'line-through' }}>{Math.round(original)} ({origPerUnit.toFixed(2)}/{unit})</div>
           </div>
         );
         return (
@@ -589,7 +594,7 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
             <div style={{fontSize:12}}>
               <div>Eredeti: {Math.round(original).toLocaleString('hu-HU')} {currency}</div>
               <div style={{color:'#95de64'}}>Kedvezményes: {Math.round(discounted).toLocaleString('hu-HU')} {currency}</div>
-              <div style={{color:'#faad14'}}>Kedvezmény: -{pctLabel} ({r._appliedDiscountLabel || ''})</div>
+              <div style={{color:'#faad14'}}>Kedvezmény: -{pctLabel}</div>
             </div>
           }>
             {cell}

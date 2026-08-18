@@ -372,9 +372,14 @@ def _build_items_table_html(items_qs, currency_symbol=''):
         if disc_pct > 0:
             effective_total = float(item.discounted_net_total or 0) or (float(net_total) * (1 - disc_pct / 100))
             effective_unit = effective_total / float(qty) if float(qty) else float(net_unit)
+            unit_cell = (f'<span style="color:#2d8a00;font-weight:bold">{fmt(effective_unit)}</span>'
+                         f'<br/><span style="color:#999;text-decoration:line-through;font-size:11px">{fmt(float(net_unit))}</span>')
+            total_cell = (f'<span style="color:#2d8a00;font-weight:bold">{fmt(effective_total)}{(" " + cur) if cur else ""}</span>'
+                          f'<br/><span style="color:#999;text-decoration:line-through;font-size:11px">{fmt(float(net_total))}{(" " + cur) if cur else ""}</span>')
         else:
-            effective_total = float(net_total)
             effective_unit = float(net_unit)
+            unit_cell = f'{fmt(effective_unit)}{(" " + cur) if cur else ""}'
+            total_cell = f'{fmt(float(net_total))}{(" " + cur) if cur else ""}'
         cur = currency_symbol
 
         def fmt(val):
@@ -390,8 +395,8 @@ def _build_items_table_html(items_qs, currency_symbol=''):
             f'<td style="border:1px solid #ddd;padding:6px 10px;">{description}</td>'
             f'<td style="border:1px solid #ddd;padding:6px 10px;text-align:right;">{fmt(qty)}</td>'
             f'<td style="border:1px solid #ddd;padding:6px 10px;">{unit}</td>'
-            f'<td style="border:1px solid #ddd;padding:6px 10px;text-align:right;">{fmt(effective_unit)}{(" " + cur) if cur else ""}</td>'
-            f'<td style="border:1px solid #ddd;padding:6px 10px;text-align:right;">{fmt(effective_total)}{(" " + cur) if cur else ""}</td>'
+            f'<td style="border:1px solid #ddd;padding:6px 10px;text-align:right;">{unit_cell}</td>'
+            f'<td style="border:1px solid #ddd;padding:6px 10px;text-align:right;">{total_cell}</td>'
             f'</tr>'
         )
     rows_html = ''.join(rows)
