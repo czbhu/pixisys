@@ -197,6 +197,8 @@ class CompanyViewSet(viewsets.ViewSet):
                         'full_tax_number': item.get('full_tax_number') or item.get('fullTaxNumber') or '',
                         'is_customer': _is_truthy_flag(item.get('is_customer')) is not False,
                         'is_supplier': _is_truthy_flag(item.get('is_supplier')) is True,
+                        'discount_group_id': item.get('discount_group_id'),
+                        'discount_group_name': item.get('discount_group_name'),
                     }
                     for item in items
                 ]
