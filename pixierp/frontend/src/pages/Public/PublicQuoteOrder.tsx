@@ -534,7 +534,18 @@ const PublicQuoteOrder: React.FC = () => {
       key: 'net_unit_price',
       width: 130,
       align: 'right' as const,
-      render: (price: number) => `${price?.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} ${currencySymbol}`
+      render: (price: number, record: QuoteItem) => {
+        if (!price) return '—';
+        const discPct = Number(record.discount_percent || 0);
+        const effP = discPct > 0 ? price * (1 - discPct / 100) : price;
+        if (discPct > 0) return (
+          <span>
+            <span style={{ color: '#52c41a', fontWeight: 600 }}>{effP.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} {currencySymbol}</span>
+            <br/><span style={{ fontSize: 11, color: '#aaa', textDecoration: 'line-through' }}>{price.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} {currencySymbol}</span>
+          </span>
+        );
+        return `${price.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} ${currencySymbol}`;
+      }
     },
     {
       title: 'ÁFA', dataIndex: 'vat_rate', key: 'vat_rate',
@@ -550,8 +561,15 @@ const PublicQuoteOrder: React.FC = () => {
       title: 'Összesen (nettó)', dataIndex: 'net_total', key: 'net_total',
       width: 150, align: 'right' as const,
       render: (_: any, record: QuoteItem) => {
-        const total = record.discount_percent > 0 ? record.discounted_net_total : record.net_total;
-        return <strong>{total?.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} {currencySymbol}</strong>;
+        const discPct = Number(record.discount_percent || 0);
+        const discTotal = record.discount_percent > 0 ? record.discounted_net_total : record.net_total;
+        if (discPct > 0 && record.net_total && discTotal !== record.net_total) return (
+          <span>
+            <strong style={{ color: '#52c41a' }}>{discTotal?.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} {currencySymbol}</strong>
+            <br/><span style={{ fontSize: 11, color: '#aaa', textDecoration: 'line-through' }}>{record.net_total?.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} {currencySymbol}</span>
+          </span>
+        );
+        return <strong>{discTotal?.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} {currencySymbol}</strong>;
       }
     },
     {
