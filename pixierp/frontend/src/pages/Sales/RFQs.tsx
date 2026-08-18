@@ -4972,27 +4972,30 @@ const RFQs: React.FC = () => {
                 </div>
               }
               discountSelector={
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                   <span style={{ fontWeight: 500, whiteSpace: 'nowrap', fontSize: 13 }}>Kedvezmény:</span>
                   <Select
                     value={rfqDiscountMode}
                     onChange={setRfqDiscountMode}
-                    style={{ width: 220 }}
+                    style={{ width: 180 }}
                     size="small"
                   >
                     <Select.Option value="none">Nincs</Select.Option>
-                    <Select.Option value="company">
-                      Cég alapú{(() => {
-                        const co = companies.find((c: any) => String(c.id) === String(watchedCompanyId) || c.id === watchedCompanyId);
-                        const gid = (co as any)?.discount_group_id;
-                        const gname = gid ? discountGroupList.find((g: any) => g.id === gid)?.name : null;
-                        return gname ? ` (${gname})` : '';
-                      })()}
-                    </Select.Option>
+                    <Select.Option value="company">Cég alapú</Select.Option>
                     {discountGroupList.map((g: any) => (
                       <Select.Option key={g.id} value={String(g.id)}>{g.name}</Select.Option>
                     ))}
                   </Select>
+                  {rfqDiscountMode === 'company' && (() => {
+                    const co = companies.find((c: any) => String(c.id) === String(watchedCompanyId) || c.id === watchedCompanyId);
+                    const gid = (co as any)?.discount_group_id;
+                    const gname = gid ? discountGroupList.find((g: any) => g.id === gid)?.name : null;
+                    return gname
+                      ? <span style={{ fontSize: 12, color: '#52c41a', fontWeight: 500 }}>→ {gname}</span>
+                      : watchedCompanyId
+                        ? <span style={{ fontSize: 12, color: '#999' }}>→ nincs beállítva</span>
+                        : null;
+                  })()}
                 </div>
               }
               onDeleteItem={(rec) => {
