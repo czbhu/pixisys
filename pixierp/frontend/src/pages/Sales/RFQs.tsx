@@ -1781,8 +1781,23 @@ const RFQs: React.FC = () => {
         baseUpdateData.company_id = values.company_id;
       }
 
+      // Merge group discount into item-level discount before persisting
+      const withGroupDiscount = (it: any) => {
+        const gd = computeItemDiscount(it);
+        if (gd.pct <= 0 && gd.fixed <= 0) return it;
+        const existingPct = Number(it.discount_percent || 0);
+        const existingAmt = Number(it.discount_amount || 0);
+        // Stack multiplicatively: combined = 1 - (1-d1/100)*(1-d2/100)
+        const combinedPct = gd.pct > 0
+          ? (1 - (1 - existingPct / 100) * (1 - gd.pct / 100)) * 100
+          : existingPct;
+        const combinedAmt = gd.fixed > 0 ? existingAmt + gd.fixed : existingAmt;
+        return { ...it, discount_percent: parseFloat(combinedPct.toFixed(4)), discount_amount: combinedAmt };
+      };
+
       // Helper: add one item to a given RFQ id
-      const addItemToRfq = async (rfqId: number, it: any) => {
+      const addItemToRfq = async (rfqId: number, itRaw: any) => {
+        const it = withGroupDiscount(itRaw);
         if (it.item_type === 'product') {
           const createdItem = await salesService.addRfqProductItem(rfqId, it.ref_id, it.name || '', it.quantity, it.description || '', it.unit, it.net_unit_price, it.vat_rate, (it as any).discount_percent, (it as any).discount_amount, it.ref_id);
           if (createdItem?.id && it.files?.length) {
