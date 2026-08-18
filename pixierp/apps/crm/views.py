@@ -182,6 +182,9 @@ class CompanyViewSet(viewsets.ViewSet):
                 if local_comp:
                     item['external_id'] = item['id']
                     item['id'] = local_comp.id
+                    # Overlay local-only fields
+                    item['discount_group_id'] = local_comp.discount_group_id
+                    item['discount_group_name'] = local_comp.discount_group.name if local_comp.discount_group_id else None
                 synced_items.append(item)
             items = synced_items
 
@@ -214,6 +217,27 @@ class CompanyViewSet(viewsets.ViewSet):
             return Response(data)
         except Exception as e:
             return Response({'results': [], 'error': str(e)})
+
+    @action(detail=True, methods=['get', 'patch'], url_path='discount-group')
+    def discount_group(self, request, pk=None):
+        from .models import Company as LocalCompany
+        from .models import DiscountGroup
+        local = LocalCompany.objects.filter(id=pk).first()
+        if not local:
+            return Response({'error': 'Cég nem található'}, status=status.HTTP_404_NOT_FOUND)
+        if request.method == 'PATCH':
+            gid = request.data.get('discount_group_id')
+            if gid:
+                if not DiscountGroup.objects.filter(id=gid).exists():
+                    return Response({'error': 'Kedvezmény csoport nem található'}, status=status.HTTP_400_BAD_REQUEST)
+                local.discount_group_id = gid
+            else:
+                local.discount_group_id = None
+            local.save(update_fields=['discount_group_id'])
+        return Response({
+            'discount_group_id': local.discount_group_id,
+            'discount_group_name': local.discount_group.name if local.discount_group_id else None,
+        })
 
     def retrieve(self, request, pk=None):
         try:
@@ -266,6 +290,16 @@ class CompanyViewSet(viewsets.ViewSet):
                 tax_digits = ''.join(filter(str.isdigit, str(item.get('tax_number') or '')[:8]))
                 if tax_digits:
                     item['eu_tax_number'] = f"HU{tax_digits}"
+            # Overlay local-only fields
+            if item is not None:
+                try:
+                    from .models import Company as _LC
+                    _local = _LC.objects.filter(id=pk).first()
+                    if _local:
+                        item['discount_group_id'] = _local.discount_group_id
+                        item['discount_group_name'] = _local.discount_group.name if _local.discount_group_id else None
+                except Exception:
+                    pass
             return Response(item)
         except requests.HTTPError as e:
             code = e.response.status_code if e.response is not None else status.HTTP_502_BAD_GATEWAY

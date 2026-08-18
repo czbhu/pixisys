@@ -6,7 +6,8 @@ class CompanySerializer(serializers.ModelSerializer):
     full_address = serializers.ReadOnlyField()
     created_by_name = serializers.CharField(source='created_by.get_full_name', read_only=True)
     company_type_display = serializers.SerializerMethodField()
-    
+    discount_group_name = serializers.SerializerMethodField()
+
     def get_company_type_display(self, obj):
         """Megjelenítési szöveg a cég típusához"""
         types = []
@@ -16,6 +17,9 @@ class CompanySerializer(serializers.ModelSerializer):
             types.append('Beszállító')
         return ', '.join(types) if types else 'Nincs szerepkör'
     
+    def get_discount_group_name(self, obj):
+        return obj.discount_group.name if obj.discount_group_id else None
+
     class Meta:
         model = Company
         fields = [
@@ -25,7 +29,8 @@ class CompanySerializer(serializers.ModelSerializer):
             'house_number', 'street_number', 'building', 'staircase', 'floor', 'door',
             'address', 'email', 'phone', 'full_address', 'is_active',
             'created_at', 'updated_at', 'created_by', 'created_by_name',
-            'vat_status', 'is_hungarian_taxpayer'
+            'vat_status', 'is_hungarian_taxpayer',
+            'discount_group', 'discount_group_name',
         ]
         read_only_fields = ['created_at', 'updated_at', 'created_by']
 

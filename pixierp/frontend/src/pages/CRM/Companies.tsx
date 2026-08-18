@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import api from '../../services/api';
 import {
     Card,
     Button,
@@ -77,6 +78,8 @@ type Company = {
     is_hungarian_taxpayer?: boolean;
     external_id?: string | null;
     bank_accounts?: BankAccount[];
+    discount_group_id?: number | null;
+    discount_group_name?: string | null;
 };
 
 type ContactSummary = {
@@ -160,6 +163,7 @@ const Companies: React.FC = () => {
     const location = useLocation();
     const navigate = useNavigate();
     const [loading, setLoading] = useState(false);
+    const [discountGroups, setDiscountGroups] = useState<{id:number;name:string}[]>([]);
     const [companies, setCompanies] = useState<Company[]>([]);
     const [searchQuery, setSearchQuery] = useState('');
     const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
@@ -224,6 +228,10 @@ const Companies: React.FC = () => {
     useEffect(() => {
         loadCompanies();
     }, [loadCompanies]);
+
+    useEffect(() => {
+        api.get('/crm/discount-groups/').then(r => setDiscountGroups((r.data?.results ?? r.data ?? []).map((g:any)=>({id:g.id,name:g.name})))).catch(()=>{});
+    }, []);
 
     useEffect(() => {
         if (!isModalVisible) return;
@@ -316,6 +324,7 @@ const Companies: React.FC = () => {
                 vat_status: vatStatus,
                 is_hungarian_taxpayer: vatStatus === 'DOMESTIC',
                 bank_accounts: bankAccounts.length ? bankAccounts : [{ currency: 'HUF', is_primary: true }],
+                discount_group_id: (detail as any).discount_group_id ?? null,
             });
             setIsModalVisible(true);
         } catch (err) {
@@ -366,13 +375,17 @@ const Companies: React.FC = () => {
     const handleSubmit = async () => {
         try {
             const values = await form.validateFields();
+            const discountGroupId = values.discount_group_id ?? null;
             const payload = {
                 ...values,
                 street_number: values.house_number || values.street_number,
                 public_place_category: values.street_type,
             };
+            delete payload.discount_group_id;
             if (editingCompany) {
                 await crmService.updateCompany(editingCompany.id, payload);
+                // Save discount group separately (local-only field)
+                await api.patch(`/crm/companies/${editingCompany.id}/discount-group/`, { discount_group_id: discountGroupId });
                 message.success('Cég frissítve');
             } else {
                 await crmService.createCompany(payload);
@@ -984,8 +997,16 @@ const Companies: React.FC = () => {
                             </Form.Item>
                         </Col>
                     </Row>
-                    
-                     <Row gutter={16}>
+                    <Row gutter={16}>
+                        <Col xs={24} md={12}>
+                            <Form.Item name="discount_group_id" label="Kedvezmény csoport">
+                                <Select allowClear placeholder="-- nincs --">
+                                    {discountGroups.map(g => <Option key={g.id} value={g.id}>{g.name}</Option>)}
+                                </Select>
+                            </Form.Item>
+                        </Col>
+                    </Row>
+                    <Row gutter={16}>
                         <Col xs={24} md={24}>
                             <Form.Item label="Szerepkörök">
                                 <Space>

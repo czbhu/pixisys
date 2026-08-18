@@ -110,7 +110,12 @@ class Company(models.Model):
     updated_at = models.DateTimeField(auto_now=True, verbose_name="Módosítva")
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, verbose_name="Létrehozta")
     is_active = models.BooleanField(default=True, verbose_name="Aktív")
-    
+    # Helyi kedvezmény csoport – nem szinkronizált a PixInvoice-szal
+    discount_group = models.ForeignKey(
+        'DiscountGroup', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='company_assignments', verbose_name="Kedvezmény csoport",
+    )
+
     class Meta:
         verbose_name = "Cég"
         verbose_name_plural = "Cégek"
