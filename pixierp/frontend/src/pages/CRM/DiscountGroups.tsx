@@ -13,6 +13,9 @@ type TargetOption = { id: number; name: string };
 type TreeNode = { value: number | string; title: string; children?: TreeNode[] };
 const TARGET_LABELS: Record<string, string> = { product: "Termék", material: "Alapanyag", service: "Szolgáltatás", material_group: "Anyagcsoport", service_group: "Szolgáltatáscsoport" };
 const TREE_TYPES = new Set(["material_group", "service_group"]);
+const MIND_VAL = "__mind__";
+const toDisplayVal = (id: number | null | undefined) => id === null ? MIND_VAL : id ?? undefined;
+const fromDisplayVal = (val: any) => val === MIND_VAL ? null : (val ?? null);
 const buildTree = (items: any[], parentId: number | null = null): TreeNode[] =>
   items.filter(i => (i.parent_id ?? null) === parentId).map(i => ({ value: i.id, title: i.name, children: buildTree(items, i.id) }));
 
@@ -117,7 +120,17 @@ export default function DiscountGroups() {
   };
 
   const openCreate = () => { setEditing(null); form.resetFields(); setMembers([]); setRules([]); setModalOpen(true); };
-  const openEdit = (g: DiscountGroup) => { setEditing(g); form.setFieldsValue({ name: g.name, is_active: g.is_active }); setMembers(g.member_names ?? []); setRules(g.rules?.map(r => ({ ...r })) ?? []); setModalOpen(true); };
+  const openEdit = (g: DiscountGroup) => {
+    setEditing(g);
+    form.setFieldsValue({ name: g.name, is_active: g.is_active });
+    setMembers(g.member_names ?? []);
+    const r = g.rules?.map(r => ({ ...r })) ?? [];
+    setRules(r);
+    // Preload targets for tree-type rules
+    const treeType = r.find(x => TREE_TYPES.has(x.target_type))?.target_type;
+    if (treeType) loadTargets(treeType);
+    setModalOpen(true);
+  };
 
   const save = async () => {
     try {
@@ -219,21 +232,36 @@ export default function DiscountGroups() {
                 <td style={{padding:4,border:"1px solid #f0f0f0",minWidth:200}}>
                   {TREE_TYPES.has(rule.target_type) ? (
                     <TreeSelect size="small" style={{width:"100%"}} placeholder="Válassz…"
-                      value={rule.target_id ?? undefined} allowClear
+                      value={toDisplayVal(rule.target_id)} allowClear
                       showSearch treeNodeFilterProp="title"
                       onFocus={()=>loadTargets(rule.target_type)}
                       onChange={(val:any, labelList:any) => {
-                        upd(i,"target_id", val ?? null);
-                        upd(i,"target_name", String(labelList?.[0] || ""));
+                        const id = fromDisplayVal(val);
+                        upd(i,"target_id", id);
+                        upd(i,"target_name", id === null ? "MIND" : String(labelList?.[0] || ""));
                       }}
-                      treeData={[{ value:"__mind__" as any, title:"MIND (osszes)" }, ...treeData]}
+                      treeData={[
+                        { value: MIND_VAL, title: "MIND (összes)" },
+                        ...treeData,
+                        // fallback: ha a mentett elem nincs a fában, mégis megjelenítjük
+                        ...(rule.target_id !== null && rule.target_id !== undefined && rule.target_name && rule.target_name !== "MIND" && !treeData.some(n => n.value === rule.target_id)
+                          ? [{ value: rule.target_id, title: rule.target_name }] : []),
+                      ]}
                     />
                   ) : (
-                    <Select size="small" style={{width:"100%"}} showSearch filterOption={false} placeholder="Válassz…" value={rule.target_id??undefined}
+                    <Select size="small" style={{width:"100%"}} showSearch filterOption={false} placeholder="Válassz…"
+                      value={toDisplayVal(rule.target_id)}
                       onSearch={q=>loadTargets(rule.target_type,q)} onFocus={()=>loadTargets(rule.target_type)}
-                      onChange={(val:any,opt:any)=>{upd(i,"target_id",val??null);upd(i,"target_name",opt?.children||"");}}
+                      onChange={(val:any,opt:any)=>{
+                        const id = fromDisplayVal(val);
+                        upd(i,"target_id", id);
+                        upd(i,"target_name", id === null ? "MIND" : (opt?.children || ""));
+                      }}
                       allowClear onClear={()=>{upd(i,"target_id",null);upd(i,"target_name","");}}>
-                      <Option value={undefined as any}>MIND (osszes)</Option>
+                      <Option value={MIND_VAL}>MIND (összes)</Option>
+                      {rule.target_id !== null && rule.target_id !== undefined && rule.target_name && rule.target_name !== "MIND" && !targetOptions.find(o=>o.id===rule.target_id) && (
+                        <Option key={rule.target_id} value={rule.target_id}>{rule.target_name}</Option>
+                      )}
                       {targetOptions.map(o=><Option key={o.id} value={o.id}>{o.name}</Option>)}
                     </Select>
                   )}
