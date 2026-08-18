@@ -99,6 +99,24 @@ const DragHandle = () => {
   );
 };
 
+const ResizableHeaderCell: React.FC<any> = ({ width, onResize, children, ...rest }) => {
+  const handlePointerDown = (e: React.PointerEvent) => {
+    if (!onResize) return;
+    e.stopPropagation();
+    const startX = e.clientX, startW = width || 100;
+    const move = (ev: PointerEvent) => onResize(Math.max(40, startW + ev.clientX - startX));
+    const up = (ev: PointerEvent) => { onResize(Math.max(40, startW + ev.clientX - startX)); document.removeEventListener('pointermove', move); document.removeEventListener('pointerup', up); };
+    document.addEventListener('pointermove', move);
+    document.addEventListener('pointerup', up);
+  };
+  return (
+    <th {...rest} style={{ ...rest.style, ...(width ? { width, minWidth: width } : {}), position: 'relative', overflow: 'visible' }}>
+      {children}
+      {onResize && <div onPointerDown={handlePointerDown} style={{ position: 'absolute', top: 0, right: -3, width: 6, height: '100%', cursor: 'col-resize', zIndex: 10 }} />}
+    </th>
+  );
+};
+
 const DraggableRow = ({ children, ...props }: any) => {
   const {
     attributes,
@@ -131,15 +149,19 @@ const DraggableRow = ({ children, ...props }: any) => {
 export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEditItem, quoteRequestId, onDeleteItem, onCopyItem, currency = 'HUF', hidePrices, currencySelector, discountSelector, showSubItemsTooltip = false, hideDetailLink = false, hideCopyButton = false, showInlineSubItems = false, inlineEditItemId, inlineEditContent, onWorkHours }) => {
   const [attachmentsModalOpen, setAttachmentsModalOpen] = useState(false);
   const [selectedAttachments, setSelectedAttachments] = useState<any[]>([]);
-  // Per-tétel impozíció editor cél tétel
   const [impositionItem, setImpositionItem] = useState<any | null>(null);
   const [dataSource, setDataSource] = useState<Item[]>([]);
   const [subItemsCache, setSubItemsCache] = useState<Record<number, any[]>>({});
   const [subItemsLoading, setSubItemsLoading] = useState<Record<number, boolean>>({});
-  // Inline expand: item-level remark state (coiId -> remark)
-  const [itemRemarks, setItemRemarks] = useState<Record<number, string>>({});
+  const [colWidths, setColWidths] = useState<Record<string, number>>({});
+  const mkResize = (key: string) => (w: number) => setColWidths(c => ({ ...c, [key]: w }));
+  const resizableHeader = (key: string) => (col: any) => ({
+    width: colWidths[key] ?? col.width,
+    onResize: mkResize(key),
+  });
   const [editingItemRemark, setEditingItemRemark] = useState<number | null>(null);
   const [editingItemRemarkVal, setEditingItemRemarkVal] = useState('');
+  const [itemRemarks, setItemRemarks] = useState<Record<number, string>>({});
   // Controlled expanded row keys (for auto-expand on inline edit)
   const [expandedRowKeys, setExpandedRowKeys] = useState<number[]>([]);
   // Inline expand: item-level attachments (coiId -> att[])
@@ -399,7 +421,9 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
     },
     { 
       title: 'Tétel', 
-      key: 'item_info', 
+      key: 'item_info',
+      width: colWidths['item_info'],
+      onHeaderCell: resizableHeader('item_info'),
       render: (r: any) => {
         const meta = treeMeta.get(r.id);
         const manufacturingProductId = Number(r.manufacturing_product || r.quote_item?.manufacturing_product || 0);
@@ -440,6 +464,8 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
         dataIndex: 'description', 
         key: 'description', 
         responsive: ['md'],
+        width: colWidths['description'],
+        onHeaderCell: resizableHeader('description'),
         render: (text: string, record: any) => {
             const finalDescription = text || record.product_description || record.manufacturing_product_description || '';
             // Ha HTML van benne (pl. ReactQuill kimenet), HTML-ként rendereljük; egyébként sima szöveg pre-wrap-pel.
@@ -483,7 +509,8 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
     { 
       title: 'Státusz',
       key: 'status',
-      width: 120,
+      width: colWidths['status'] ?? 90,
+      onHeaderCell: resizableHeader('status'),
       render: (r: any) => {
         const s = r.status || 'new';
         const cfg = ITEM_STATUS_MAP[s] || { label: s, color: 'default' };
@@ -492,7 +519,9 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
     },
     { 
       title: 'Menny.', 
-      key: 'quantity', 
+      key: 'quantity',
+      width: colWidths['quantity'] ?? 80,
+      onHeaderCell: resizableHeader('quantity'), 
       render: (r: any) => <span style={{ whiteSpace: 'nowrap' }}>{Number(r.quantity)} {r.unit || 'db'}</span>
     },
   ];
@@ -502,6 +531,8 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
       title: 'Nettó ár', 
       key: 'net_price', 
       responsive: ['lg'],
+      width: colWidths['net_price'] ?? 160,
+      onHeaderCell: resizableHeader('net_price'),
       render: (r: any) => {
         const qty = Number(r.quantity || 1);
         const netTotal = Number(r.net_total || 0);
@@ -512,7 +543,12 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
         const discounted = Number(r.discounted_net_total ?? netTotal);
         const discountedPerUnit = qty > 0 ? discounted / qty : 0;
         const pctLabel = r._appliedDiscountPct > 0 ? `${r._appliedDiscountPct}%` : `${r._appliedDiscountFixed} Ft`;
-        const cell = <span style={{ whiteSpace: 'nowrap', fontWeight: 'bold', color: '#52c41a' }}>{Math.round(discounted)} ({Math.round(discountedPerUnit)}/{unit})</span>;
+        const cell = (
+          <div>
+            <div style={{ color: '#52c41a', fontWeight: 'bold' }}>{Math.round(discounted)} ({Math.round(discountedPerUnit)}/{unit})</div>
+            <div style={{ color: '#888', fontSize: 11, textDecoration: 'line-through' }}>{Math.round(netTotal)} ({Math.round(originalPerUnit)}/{unit})</div>
+          </div>
+        );
         return (
           <Tooltip title={
             <div style={{fontSize:12}}>
@@ -530,6 +566,8 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
       title: 'Nettó összesen', 
       key: 'net_total', 
       align: 'right',
+      width: colWidths['net_total'] ?? 160,
+      onHeaderCell: resizableHeader('net_total'),
       render: (r: any) => {
         const qty = Number(r.quantity || 1);
         const original = Number(r._originalNetTotal ?? r.net_total ?? 0);
@@ -537,9 +575,15 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
         const perUnit = qty > 0 ? discounted / qty : 0;
         const unit = r.unit || 'db';
         const hasGroupDiscount = (r._appliedDiscountPct > 0 || r._appliedDiscountFixed > 0) && original !== discounted;
-        const cell = <span style={{ whiteSpace: 'nowrap', fontWeight: 'bold', color: hasGroupDiscount ? '#52c41a' : undefined }}>{Math.round(discounted)} ({Math.round(perUnit)}/{unit})</span>;
-        if (!hasGroupDiscount) return cell;
+        if (!hasGroupDiscount) return <span style={{ whiteSpace: 'nowrap', fontWeight: 'bold' }}>{Math.round(discounted)} ({Math.round(perUnit)}/{unit})</span>;
+        const origPerUnit = qty > 0 ? original / qty : 0;
         const pctLabel = r._appliedDiscountPct > 0 ? `${r._appliedDiscountPct}%` : `${r._appliedDiscountFixed} Ft`;
+        const cell = (
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ color: '#52c41a', fontWeight: 'bold' }}>{Math.round(discounted)} ({Math.round(perUnit)}/{unit})</div>
+            <div style={{ color: '#888', fontSize: 11, textDecoration: 'line-through' }}>{Math.round(original)} ({Math.round(origPerUnit)}/{unit})</div>
+          </div>
+        );
         return (
           <Tooltip title={
             <div style={{fontSize:12}}>
@@ -829,9 +873,8 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
             >
                 <Table 
                     components={{
-                        body: {
-                            row: DraggableRow,
-                        },
+                        body: { row: DraggableRow },
+                        header: { cell: ResizableHeaderCell },
                     }}
                     columns={columns} 
                     dataSource={dataSource} 
