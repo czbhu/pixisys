@@ -107,6 +107,37 @@ const RFQDetail: React.FC = () => {
   const [currencyList, setCurrencyList] = useState<any[]>([]);
   const [detailDiscountGroupList, setDetailDiscountGroupList] = useState<any[]>([]);
   const [detailDiscountMode, setDetailDiscountMode] = useState<string>('none');
+
+  // Preload discount mode from items once rfq.items are available
+  useEffect(() => {
+    if (!rfq?.items?.length || detailDiscountMode !== 'none') return;
+    const hasDiscount = rfq.items.some((it: any) => Number(it.discount_percent || 0) > 0);
+    if (hasDiscount) setDetailDiscountMode('company');
+  }, [rfq?.items]); // eslint-disable-line
+
+  // Effective discount rules + per-item discount application for visual display
+  const detailEffectiveRules = useMemo(() => {
+    if (detailDiscountMode === 'none') return [];
+    const gid = detailDiscountMode === 'company'
+      ? (rfq?.company?.id ? detailDiscountGroupList.find((g: any) => g.company_assignments?.some((c: any) => c.id === rfq.company.id) || false)?.id ?? null : null)
+      : Number(detailDiscountMode) || null;
+    const group = gid ? detailDiscountGroupList.find((g: any) => g.id === gid) : null;
+    return (group?.rules ?? []) as any[];
+  }, [detailDiscountMode, detailDiscountGroupList, rfq?.company?.id]);
+
+  const applyDetailDiscount = (items: any[]) => {
+    if (!items?.length) return items;
+    return items.map(item => {
+      const existingDiscPct = Number(item.discount_percent || 0);
+      if (existingDiscPct > 0) {
+        // Existing discount from saved item — show as-is with _appliedDiscountPct
+        const origTotal = Number(item.net_unit_price || 0) * Number(item.quantity || 1);
+        const discTotal = Number(item.discounted_net_total || 0) || origTotal * (1 - existingDiscPct / 100);
+        return { ...item, _appliedDiscountPct: existingDiscPct, _originalNetTotal: origTotal, discounted_net_total: discTotal };
+      }
+      return item;
+    });
+  };
   const [filePreviewOpen, setFilePreviewOpen] = useState(false);
   const [filePreviewTitle, setFilePreviewTitle] = useState('');
   const [filePreviewUrl, setFilePreviewUrl] = useState<string | null>(null);
@@ -1645,7 +1676,7 @@ const RFQDetail: React.FC = () => {
           {!editContext && (
           <div style={{ background: '#e6f4ff', border: '1px solid #91caff', borderTop: 'none', borderRadius: '0 0 8px 8px', padding: '4px 12px 4px', marginBottom: 8 }}>
             <ItemsTable
-              items={rfq.items || []}
+              items={applyDetailDiscount(rfq.items || [])}
               onRefresh={refreshItems}
               quoteRequestId={id as any}
               currency={activeCurrency}
