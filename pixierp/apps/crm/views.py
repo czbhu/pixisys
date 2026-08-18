@@ -456,7 +456,16 @@ class CompanyViewSet(viewsets.ViewSet):
                 company_id = _ensure_company_id(client)
             if not company_id:
                 return Response({'error': 'PixInvoice company_id hiányzik'}, status=status.HTTP_400_BAD_REQUEST)
-            data = client.upsert_customer(request.data, customer_id=pk, company_id=company_id)
+            # Resolve local integer ID → PixInvoice UUID
+            pixinvoice_pk = pk
+            try:
+                from .models import Company as LocalCompany
+                local = LocalCompany.objects.filter(id=int(pk)).first()
+                if local and local.external_id:
+                    pixinvoice_pk = local.external_id
+            except (ValueError, TypeError):
+                pass
+            data = client.upsert_customer(request.data, customer_id=pixinvoice_pk, company_id=company_id)
             _sync_to_local_db(data)
             return Response(data)
         except Exception as e:
