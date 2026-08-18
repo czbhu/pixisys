@@ -1629,9 +1629,21 @@ const RFQDetail: React.FC = () => {
           </Row>
 
           {/* ── Tételek ──────────────────────────────────────────────── */}
+          <div style={{ background: '#e6f4ff', border: '1px solid #91caff', borderRadius: '8px 8px 0 0', padding: '6px 12px 6px', marginBottom: 0, display: 'flex', alignItems: 'center', gap: 16 }}>
+            <span style={{ fontSize: 11, fontWeight: 600, color: '#0958d9', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Tételek</span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 6, textTransform: 'none', letterSpacing: 0 }}>
+              <span style={{ fontWeight: 500, fontSize: 12, color: '#444' }}>Kedvezmény:</span>
+              <Select value={detailDiscountMode} onChange={setDetailDiscountMode} style={{ width: 180 }} size="small">
+                <Select.Option value="none">Nincs</Select.Option>
+                <Select.Option value="company">Cég alapú</Select.Option>
+                {detailDiscountGroupList.map((g: any) => (
+                  <Select.Option key={g.id} value={String(g.id)}>{g.name}</Select.Option>
+                ))}
+              </Select>
+            </span>
+          </div>
           {!editContext && (
-          <div style={{ background: '#e6f4ff', border: '1px solid #91caff', borderRadius: 8, padding: '6px 12px 4px', marginBottom: 8 }}>
-            <div style={{ fontSize: 11, fontWeight: 600, color: '#0958d9', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Tételek</div>
+          <div style={{ background: '#e6f4ff', border: '1px solid #91caff', borderTop: 'none', borderRadius: '0 0 8px 8px', padding: '4px 12px 4px', marginBottom: 8 }}>
             <ItemsTable
               items={rfq.items || []}
               onRefresh={refreshItems}
@@ -1652,25 +1664,13 @@ const RFQDetail: React.FC = () => {
                 finally { setWorkHoursLoading(false); }
               }}
               currencySelector={
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span style={{ fontWeight: 500, whiteSpace: 'nowrap', fontSize: 13 }}>Pénznem:</span>
-                    <Form.Item name="currency_code" noStyle>
-                      <Select showSearch optionFilterProp="label" placeholder="Válassz pénznemet" style={{ width: 200 }} size="small">
-                        {(currencyList || []).map((c: any) => <Select.Option key={c.id} value={c.code} label={`${c.code} – ${c.name}`}>{c.code} – {c.name} {c.symbol ? `(${c.symbol})` : ''}</Select.Option>)}
-                      </Select>
-                    </Form.Item>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span style={{ fontWeight: 500, whiteSpace: 'nowrap', fontSize: 13 }}>Kedvezmény:</span>
-                    <Select value={detailDiscountMode} onChange={setDetailDiscountMode} style={{ width: 180 }} size="small">
-                      <Select.Option value="none">Nincs</Select.Option>
-                      <Select.Option value="company">Cég alapú</Select.Option>
-                      {detailDiscountGroupList.map((g: any) => (
-                        <Select.Option key={g.id} value={String(g.id)}>{g.name}</Select.Option>
-                      ))}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontWeight: 500, whiteSpace: 'nowrap', fontSize: 13 }}>Pénznem:</span>
+                  <Form.Item name="currency_code" noStyle>
+                    <Select showSearch optionFilterProp="label" placeholder="Válassz pénznemet" style={{ width: 200 }} size="small">
+                      {(currencyList || []).map((c: any) => <Select.Option key={c.id} value={c.code} label={`${c.code} – ${c.name}`}>{c.code} – {c.name} {c.symbol ? `(${c.symbol})` : ''}</Select.Option>)}
                     </Select>
-                  </div>
+                  </Form.Item>
                 </div>
               }
             />

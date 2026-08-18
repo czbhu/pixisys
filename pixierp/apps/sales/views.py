@@ -375,17 +375,23 @@ def _build_items_table_html(items_qs, currency_symbol=''):
             except Exception:
                 return str(val)
 
+        def fmt_unit(val):
+            try:
+                return f"{float(val):,.2f}".replace(',', '\u00a0')
+            except Exception:
+                return str(val)
+
         # Use discounted totals when discount is applied
         disc_pct = float(item.discount_percent or 0)
         if disc_pct > 0:
             effective_total = float(item.discounted_net_total or 0) or (float(net_total) * (1 - disc_pct / 100))
             effective_unit = effective_total / float(qty) if float(qty) else float(net_unit)
-            unit_cell = (f'<span style="color:#2d8a00;font-weight:bold">{fmt(effective_unit)}{(" " + cur) if cur else ""}</span>'
-                         f'<br/><span style="color:#999;text-decoration:line-through;font-size:11px">{fmt(float(net_unit))}{(" " + cur) if cur else ""}</span>')
+            unit_cell = (f'<span style="color:#2d8a00;font-weight:bold">{fmt_unit(effective_unit)}{(" " + cur) if cur else ""}</span>'
+                         f'<br/><span style="color:#999;text-decoration:line-through;font-size:11px">{fmt_unit(float(net_unit))}{(" " + cur) if cur else ""}</span>')
             total_cell = (f'<span style="color:#2d8a00;font-weight:bold">{fmt(effective_total)}{(" " + cur) if cur else ""}</span>'
                           f'<br/><span style="color:#999;text-decoration:line-through;font-size:11px">{fmt(float(net_total))}{(" " + cur) if cur else ""}</span>')
         else:
-            unit_cell = f'{fmt(float(net_unit))}{(" " + cur) if cur else ""}'
+            unit_cell = f'{fmt_unit(float(net_unit))}{(" " + cur) if cur else ""}'
             total_cell = f'{fmt(float(net_total))}{(" " + cur) if cur else ""}'
 
         rows.append(
