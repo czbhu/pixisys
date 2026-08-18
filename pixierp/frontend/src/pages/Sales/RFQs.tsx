@@ -156,6 +156,7 @@ const RFQs: React.FC = () => {
   const [currencyList, setCurrencyList] = useState<MCurrency[]>([]);
   const [rfqDiscountMode, setRfqDiscountMode] = useState<string>('company'); // 'none'|'company'|group_id
   const [discountGroupList, setDiscountGroupList] = useState<any[]>([]);
+  const [costTotals, setCostTotals] = useState<{totalCost:number;profit:number;margin:number}|null>(null);
   const [rfqFiles, setRfqFiles] = useState<UploadFile<any>[]>([]);
   const [rfqFileRemarks, setRfqFileRemarks] = useState<Record<string, string>>({});
   const [rfqFileDisplayNames, setRfqFileDisplayNames] = useState<Record<string, string>>({});
@@ -5072,7 +5073,15 @@ const RFQs: React.FC = () => {
           </div>
           {/* ── Költség kalkuláció ───────────────────────────────────────── */}
           <div style={{ background: '#fff0f6', border: '1px solid #ffadd2', borderRadius: 8, padding: '8px 14px 4px', marginBottom: 10 }}>
-            <div style={{ fontSize: 11, fontWeight: 600, color: '#c41d7f', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Költség kalkuláció</div>
+            <div style={{ fontSize: 11, fontWeight: 600, color: '#c41d7f', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em', display: 'flex', alignItems: 'center', gap: 12 }}>
+              Költség kalkuláció
+              {costTotals && costTotals.profit !== 0 && (
+                <span style={{ fontSize: 12, fontWeight: 600, color: costTotals.profit >= 0 ? '#3f8600' : '#cf1322', textTransform: 'none', letterSpacing: 0 }}>
+                  Haszon: {costTotals.profit.toLocaleString('hu-HU', { maximumFractionDigits: 0 })} {currency}
+                  <span style={{ fontWeight: 400, color: '#888', marginLeft: 4 }}>({costTotals.margin.toFixed(1)}%)</span>
+                </span>
+              )}
+            </div>
           <div style={{ marginBottom: 8 }}>
              <RFQCostsTable
                 totalRevenue={newItems.reduce((sum, item, idx) => {
@@ -5082,6 +5091,7 @@ const RFQs: React.FC = () => {
                     : groupDisc.fixed > 0 ? Math.max(0, base - groupDisc.fixed) : base;
                   return sum + discounted;
                 }, 0)}
+                onTotals={setCostTotals}
                 currency={currency}
                 rfqItems={newItems.map(it => {
                   // For manufacturing items still pending (not yet API-saved),

@@ -40,8 +40,8 @@ interface RFQCostsTableProps {
   value?: any[];
   onChange?: (val: any[]) => void;
   rfqItems?: any[];
-  /** Increment to force cost rows to re-compute (e.g. after adding/editing an item) */
   refreshKey?: number;
+  onTotals?: (totals: { totalCost: number; profit: number; margin: number }) => void;
 }
 
 export const RFQCostsTable: React.FC<RFQCostsTableProps> = ({
@@ -49,6 +49,7 @@ export const RFQCostsTable: React.FC<RFQCostsTableProps> = ({
   currency,
   rfqItems,
   refreshKey,
+  onTotals,
 }) => {
   const [autoRows, setAutoRows] = useState<AutoRow[]>([]);
   const [currencies, setCurrencies] = useState<CurrencyItem[]>([]);
@@ -305,6 +306,11 @@ export const RFQCostsTable: React.FC<RFQCostsTableProps> = ({
   );
   const totalRevenueConverted = convert(totalRevenue, currency, displayCode);
   const profit = totalRevenueConverted - totalAutoCosts;
+
+  // Notify parent of current totals
+  React.useEffect(() => {
+    if (onTotals) onTotals({ totalCost: totalAutoCosts, profit, margin: totalRevenueConverted > 0 ? (profit / totalRevenueConverted) * 100 : 0 });
+  }, [totalAutoCosts, profit, totalRevenueConverted]); // eslint-disable-line
 
   const treeMetaList = React.useMemo(
     () => buildTreeMetaFromDepths(autoRows.map(r => r._depth || 0)),
