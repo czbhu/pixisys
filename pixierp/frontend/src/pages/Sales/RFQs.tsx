@@ -967,17 +967,27 @@ const RFQs: React.FC = () => {
 
   const computeItemDiscount = (it: any) => {
     if (!effectiveDiscountRules.length) return { pct: 0, fixed: 0, label: '' };
-    const typeMap: Record<string, string> = { product: 'product', manufacturing: 'product', service: 'service', material: 'material' };
-    const itemType = typeMap[it.item_type] || 'product';
+    // manufacturing items can match product OR material rules (manufactured products use materials)
+    const primaryType = it.item_type === 'service' ? 'service' : (it.item_type === 'material' ? 'material' : 'product');
+    const acceptedTypes = primaryType === 'product'
+      ? ['product', 'material']  // manufacturing/product items match both product and material rules
+      : [primaryType];
     for (const rule of effectiveDiscountRules) {
       const { target_type, target_id, discount_type, discount_value, name: ruleName } = rule;
       const isAllOfType = target_id === null || target_id === undefined || String(target_id) === '__mind__';
-      if (target_type !== itemType && !(target_type === 'material_group') && !(target_type === 'service_group')) continue;
-      if (target_type === 'material_group' && itemType !== 'material') continue;
-      if (target_type === 'service_group' && itemType !== 'service') continue;
+      const typeMatch = acceptedTypes.includes(target_type)
+        || (target_type === 'material_group' && primaryType === 'material')
+        || (target_type === 'service_group' && primaryType === 'service');
+      if (!typeMatch) continue;
       const idMatches = isAllOfType || Number(target_id) === Number(it.ref_id) || Number(target_id) === Number(it.product) || Number(target_id) === Number(it.service);
       if (!idMatches) continue;
       return { pct: discount_type === 'percent' ? Number(discount_value) : 0, fixed: discount_type === 'fixed' ? Number(discount_value) : 0, label: ruleName || target_type };
+    }
+    // Fallback: apply first MIND rule regardless of type (only if all rules are MIND/no-specific-target)
+    const mindRules = effectiveDiscountRules.filter((r: any) => !r.target_id || String(r.target_id) === '__mind__');
+    if (mindRules.length === effectiveDiscountRules.length && mindRules.length > 0) {
+      const r = mindRules[0];
+      return { pct: r.discount_type === 'percent' ? Number(r.discount_value) : 0, fixed: r.discount_type === 'fixed' ? Number(r.discount_value) : 0, label: r.name || r.target_type };
     }
     return { pct: 0, fixed: 0, label: '' };
   };
