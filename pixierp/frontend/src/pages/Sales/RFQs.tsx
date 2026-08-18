@@ -154,6 +154,8 @@ const RFQs: React.FC = () => {
   const [editIdx, setEditIdx] = useState<number | null>(null);
   const [currency, setCurrency] = useState<string>('HUF');
   const [currencyList, setCurrencyList] = useState<MCurrency[]>([]);
+  const [rfqDiscountMode, setRfqDiscountMode] = useState<string>('company'); // 'none'|'company'|group_id
+  const [discountGroupList, setDiscountGroupList] = useState<any[]>([]);
   const [rfqFiles, setRfqFiles] = useState<UploadFile<any>[]>([]);
   const [rfqFileRemarks, setRfqFileRemarks] = useState<Record<string, string>>({});
   const [rfqFileDisplayNames, setRfqFileDisplayNames] = useState<Record<string, string>>({});
@@ -947,6 +949,38 @@ const RFQs: React.FC = () => {
     const names = rfqs.map(r => r.created_by_name).filter(Boolean);
     return Array.from(new Set(names)).sort();
   }, [rfqs]);
+
+  // Effective discount rules based on selected mode and company's group
+  const effectiveDiscountRules = useMemo(() => {
+    if (rfqDiscountMode === 'none') return [];
+    let groupId: number | null = null;
+    if (rfqDiscountMode === 'company') {
+      const co = companies.find((c: any) => String(c.id) === String(watchedCompanyId) || c.id === watchedCompanyId);
+      groupId = (co as any)?.discount_group_id ?? null;
+    } else {
+      groupId = Number(rfqDiscountMode) || null;
+    }
+    if (!groupId) return [];
+    const group = discountGroupList.find((g: any) => g.id === groupId);
+    return (group?.rules ?? []) as any[];
+  }, [rfqDiscountMode, discountGroupList, watchedCompanyId, companies]);
+
+  const computeItemDiscount = (it: any) => {
+    if (!effectiveDiscountRules.length) return { pct: 0, fixed: 0, label: '' };
+    const typeMap: Record<string, string> = { product: 'product', manufacturing: 'product', service: 'service', material: 'material' };
+    const itemType = typeMap[it.item_type] || 'product';
+    for (const rule of effectiveDiscountRules) {
+      const { target_type, target_id, discount_type, discount_value, name: ruleName } = rule;
+      const isAllOfType = target_id === null || target_id === undefined || String(target_id) === '__mind__';
+      if (target_type !== itemType && !(target_type === 'material_group') && !(target_type === 'service_group')) continue;
+      if (target_type === 'material_group' && itemType !== 'material') continue;
+      if (target_type === 'service_group' && itemType !== 'service') continue;
+      const idMatches = isAllOfType || Number(target_id) === Number(it.ref_id) || Number(target_id) === Number(it.product) || Number(target_id) === Number(it.service);
+      if (!idMatches) continue;
+      return { pct: discount_type === 'percent' ? Number(discount_value) : 0, fixed: discount_type === 'fixed' ? Number(discount_value) : 0, label: ruleName || target_type };
+    }
+    return { pct: 0, fixed: 0, label: '' };
+  };
 
   // Save status filters to localStorage
   useEffect(() => {
@@ -2053,6 +2087,10 @@ const RFQs: React.FC = () => {
       setCurrencyList(currs);
       const def = currs.find(c => c.is_default);
       if (def?.code) setCurrency(def.code.toUpperCase());
+    } catch {}
+    try {
+      const dgRes = await api.get('/crm/discount-groups/', { params: { is_active: true, page_size: 200 } });
+      setDiscountGroupList(dgRes.data?.results ?? dgRes.data ?? []);
     } catch {}
     
     // Check if we have items to add from URL
@@ -4933,6 +4971,30 @@ const RFQs: React.FC = () => {
                   </Select>
                 </div>
               }
+              discountSelector={
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontWeight: 500, whiteSpace: 'nowrap', fontSize: 13 }}>Kedvezmény:</span>
+                  <Select
+                    value={rfqDiscountMode}
+                    onChange={setRfqDiscountMode}
+                    style={{ width: 220 }}
+                    size="small"
+                  >
+                    <Select.Option value="none">Nincs</Select.Option>
+                    <Select.Option value="company">
+                      Cég alapú{(() => {
+                        const co = companies.find((c: any) => String(c.id) === String(watchedCompanyId) || c.id === watchedCompanyId);
+                        const gid = (co as any)?.discount_group_id;
+                        const gname = gid ? discountGroupList.find((g: any) => g.id === gid)?.name : null;
+                        return gname ? ` (${gname})` : '';
+                      })()}
+                    </Select.Option>
+                    {discountGroupList.map((g: any) => (
+                      <Select.Option key={g.id} value={String(g.id)}>{g.name}</Select.Option>
+                    ))}
+                  </Select>
+                </div>
+              }
               onDeleteItem={(rec) => {
                 const idx = (rec.id as number) - 1;
                 const removedItem = newItems[idx];
@@ -4970,7 +5032,6 @@ const RFQs: React.FC = () => {
                 service_code: it.item_type === 'service' ? it.code : undefined,
                 manufacturing_product: (it as any).manufacturing_product,
               } as any;
-              // compute discounted totals to mirror server logic
               const discountPercent = Number((it as any).discount_percent || 0);
               const discountAmount = Number((it as any).discount_amount || 0);
               const net = Number(base.net_total || 0);
@@ -4978,6 +5039,16 @@ const RFQs: React.FC = () => {
               if (discountPercent > 0) discounted = discounted * (1 - discountPercent / 100);
               if (discountAmount > 0) discounted = Math.max(0, discounted - discountAmount);
               base.discounted_net_total = discounted;
+              // Apply discount group on top of item-level discount
+              const groupDisc = computeItemDiscount(it);
+              if (groupDisc.pct > 0 || groupDisc.fixed > 0) {
+                base._originalNetTotal = discounted;
+                if (groupDisc.pct > 0) base.discounted_net_total = discounted * (1 - groupDisc.pct / 100);
+                else base.discounted_net_total = Math.max(0, discounted - groupDisc.fixed);
+                base._appliedDiscountPct = groupDisc.pct;
+                base._appliedDiscountFixed = groupDisc.fixed;
+                base._appliedDiscountLabel = groupDisc.label;
+              }
               if (it.item_type === 'product') base.product_name = it.name;
               else if (it.item_type === 'manufacturing') base.manufacturing_product_name = it.name;
               else base.service_name = it.name;

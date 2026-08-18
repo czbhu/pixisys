@@ -63,6 +63,7 @@ interface ItemsTableProps {
   currency?: string;
   hidePrices?: boolean;
   currencySelector?: React.ReactNode;
+  discountSelector?: React.ReactNode;
   showSubItemsTooltip?: boolean;
   /** Ha true, nem jelenik meg az "Adatlap megnyitása" gomb */
   hideDetailLink?: boolean;
@@ -127,7 +128,7 @@ const DraggableRow = ({ children, ...props }: any) => {
   );
 };
 
-export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEditItem, quoteRequestId, onDeleteItem, onCopyItem, currency = 'HUF', hidePrices, currencySelector, showSubItemsTooltip = false, hideDetailLink = false, hideCopyButton = false, showInlineSubItems = false, inlineEditItemId, inlineEditContent, onWorkHours }) => {
+export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEditItem, quoteRequestId, onDeleteItem, onCopyItem, currency = 'HUF', hidePrices, currencySelector, discountSelector, showSubItemsTooltip = false, hideDetailLink = false, hideCopyButton = false, showInlineSubItems = false, inlineEditItemId, inlineEditContent, onWorkHours }) => {
   const [attachmentsModalOpen, setAttachmentsModalOpen] = useState(false);
   const [selectedAttachments, setSelectedAttachments] = useState<any[]>([]);
   // Per-tétel impozíció editor cél tétel
@@ -515,11 +516,26 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
       align: 'right',
       render: (r: any) => {
         const qty = Number(r.quantity || 1);
+        const original = Number(r._originalNetTotal ?? r.net_total ?? 0);
         const discounted = r.discounted_net_total != null ? Number(r.discounted_net_total) : Number(r.net_total || 0);
         const perUnit = qty > 0 ? discounted / qty : 0;
         const unit = r.unit || 'db';
-        return <span style={{ whiteSpace: 'nowrap', fontWeight: 'bold' }}>{Math.round(discounted)} ({Math.round(perUnit)}/{unit})</span>;
-      } 
+        const hasGroupDiscount = (r._appliedDiscountPct > 0 || r._appliedDiscountFixed > 0) && original !== discounted;
+        const cell = <span style={{ whiteSpace: 'nowrap', fontWeight: 'bold', color: hasGroupDiscount ? '#52c41a' : undefined }}>{Math.round(discounted)} ({Math.round(perUnit)}/{unit})</span>;
+        if (!hasGroupDiscount) return cell;
+        const pctLabel = r._appliedDiscountPct > 0 ? `${r._appliedDiscountPct}%` : `${r._appliedDiscountFixed} Ft`;
+        return (
+          <Tooltip title={
+            <div style={{fontSize:12}}>
+              <div>Eredeti: {Math.round(original).toLocaleString('hu-HU')} {currency}</div>
+              <div style={{color:'#95de64'}}>Kedvezményes: {Math.round(discounted).toLocaleString('hu-HU')} {currency}</div>
+              <div style={{color:'#faad14'}}>Kedvezmény: -{pctLabel} ({r._appliedDiscountLabel || ''})</div>
+            </div>
+          }>
+            {cell}
+          </Tooltip>
+        );
+      }
     });
   }
 
@@ -827,7 +843,7 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
       </div>
       {!hidePrices && (
       <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
-        <div>{currencySelector}</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>{currencySelector}{discountSelector}</div>
         <div style={{ textAlign: 'right' }}>
           <div style={{ fontSize: 16, fontWeight: 'bold', marginBottom: 4 }}>Összesen Nettó: {totals.netDiscounted.toFixed(2)} {currency}</div>
           <div style={{ fontSize: 12, color: '#666' }}>(nem tartalmazza az ÁFA-t)</div>
