@@ -302,21 +302,24 @@ const Companies: React.FC = () => {
     const showEditModal = async (company: Company) => {
         try {
             setLoading(true);
-            // Use company data from list directly (avoids 404 when external_id is missing)
-            // Try fetching details for bank_accounts; fall back to list data on error
             let detail = normalizeDetail(company);
             try {
                 const rawDetail = await crmService.getCompany(company.id);
                 detail = normalizeDetail(rawDetail);
             } catch (err) {
-                // 404 or other error: use list data as fallback
+                // fallback to list data
             }
             const bankAccounts = (detail as any)?.bank_accounts || [];
-            
-            // Vat Status initialization (Default DOMESTIC if not present)
             const vatStatus = detail.vat_status || (detail.is_hungarian_taxpayer !== false ? 'DOMESTIC' : 'OTHER');
-            
-            setEditingCompany(detail);
+
+            // Fetch discount_group from local endpoint (company.id = local integer ID from list)
+            let discountGroupId: number | null = (company as any).discount_group_id ?? null;
+            try {
+                const dgRes = await api.get(`/crm/companies/${company.id}/discount-group/`);
+                if (dgRes.data?.discount_group_id !== undefined) discountGroupId = dgRes.data.discount_group_id;
+            } catch {}
+
+            setEditingCompany({ ...detail, id: company.id } as Company);
             form.setFieldsValue({
                 ...defaultFormValues,
                 ...company,
@@ -324,7 +327,7 @@ const Companies: React.FC = () => {
                 vat_status: vatStatus,
                 is_hungarian_taxpayer: vatStatus === 'DOMESTIC',
                 bank_accounts: bankAccounts.length ? bankAccounts : [{ currency: 'HUF', is_primary: true }],
-                discount_group_id: (detail as any).discount_group_id ?? null,
+                discount_group_id: discountGroupId,
             });
             setIsModalVisible(true);
         } catch (err) {
@@ -384,7 +387,7 @@ const Companies: React.FC = () => {
             delete payload.discount_group_id;
             if (editingCompany) {
                 await crmService.updateCompany(editingCompany.id, payload);
-                // Save discount group separately (local-only field)
+                // Use local integer id (stored in editingCompany as overridden by showEditModal)
                 await api.patch(`/crm/companies/${editingCompany.id}/discount-group/`, { discount_group_id: discountGroupId });
                 message.success('Cég frissítve');
             } else {
