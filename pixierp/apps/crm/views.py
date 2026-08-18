@@ -222,9 +222,12 @@ class CompanyViewSet(viewsets.ViewSet):
     def discount_group(self, request, pk=None):
         from .models import Company as LocalCompany
         from .models import DiscountGroup
-        local = LocalCompany.objects.filter(id=pk).first()
+        try:
+            local = LocalCompany.objects.filter(id=int(pk)).first()
+        except (ValueError, TypeError):
+            local = LocalCompany.objects.filter(external_id=pk).first()
         if not local:
-            return Response({'error': 'Cég nem található'}, status=status.HTTP_404_NOT_FOUND)
+            return Response({'discount_group_id': None, 'discount_group_name': None})
         if request.method == 'PATCH':
             gid = request.data.get('discount_group_id')
             if gid:
@@ -294,7 +297,10 @@ class CompanyViewSet(viewsets.ViewSet):
             if item is not None:
                 try:
                     from .models import Company as _LC
-                    _local = _LC.objects.filter(id=pk).first()
+                    try:
+                        _local = _LC.objects.filter(id=int(pk)).first()
+                    except (ValueError, TypeError):
+                        _local = _LC.objects.filter(external_id=pk).first()
                     if _local:
                         item['discount_group_id'] = _local.discount_group_id
                         item['discount_group_name'] = _local.discount_group.name if _local.discount_group_id else None
