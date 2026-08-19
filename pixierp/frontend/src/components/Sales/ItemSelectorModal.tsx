@@ -271,6 +271,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
 
   const manuWatchQty = Form.useWatch('manu_quantity', manuForm);
   const manuWatchPrice = Form.useWatch('manu_net_unit_price', manuForm);
+  const manuWatchTotal = Form.useWatch('manu_net_total', manuForm);
 
   // Set of cost item IDs whose quantity should auto-sync with the main quantity
   const [syncQtyRows, setSyncQtyRows] = useState<Set<number>>(new Set());
@@ -2443,56 +2444,42 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
                       <Input style={{ width: 80 }} />
                     </Form.Item>
                     <Form.Item label="Nettó egységár" name="manu_net_unit_price" style={{ marginBottom: 8 }}>
-                      <Form.Item noStyle shouldUpdate={(p, c) => p.manu_net_unit_price !== c.manu_net_unit_price || p.manu_quantity !== c.manu_quantity}>
-                        {({ getFieldValue }) => {
-                          const up = getFieldValue('manu_net_unit_price') || 0;
-                          const discUp = groupDiscountPct > 0 && manuPriceFromCalc ? up * (1 - groupDiscountPct / 100) : null;
-                          return (
-                            <div>
-                              {discUp !== null ? (
-                                <>
-                                  <span style={{ color: '#52c41a', fontWeight: 600 }}>{discUp.toLocaleString('hu-HU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                                  <br/><span style={{ color: '#aaa', fontSize: 11, textDecoration: 'line-through' }}>{Number(up).toLocaleString('hu-HU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                                </>
-                              ) : (
-                                <NumInput min={0} style={{ width: 150 }} placeholder="0" disabled={manuPriceFromCalc}
-                                  onChange={() => setTimeout(() => {
-                                    const up2 = manuForm.getFieldValue('manu_net_unit_price') || 0;
-                                    const q = manuForm.getFieldValue('manu_quantity') || 1;
-                                    manuForm.setFieldsValue({ manu_net_total: parseFloat((up2 * q).toFixed(2)) });
-                                  }, 0)}
-                                />
-                              )}
-                            </div>
-                          );
-                        }}
-                      </Form.Item>
+                      <NumInput min={0} style={{ width: 150, display: (groupDiscountPct > 0 && manuPriceFromCalc) ? 'none' : undefined }} placeholder="0" disabled={manuPriceFromCalc}
+                        onChange={() => setTimeout(() => {
+                          const up = manuForm.getFieldValue('manu_net_unit_price') || 0;
+                          const q = manuForm.getFieldValue('manu_quantity') || 1;
+                          manuForm.setFieldsValue({ manu_net_total: parseFloat((up * q).toFixed(2)) });
+                        }, 0)}
+                      />
+                      {groupDiscountPct > 0 && manuPriceFromCalc && (() => {
+                        const up = Number(manuWatchPrice || 0);
+                        const discUp = up * (1 - groupDiscountPct / 100);
+                        return (
+                          <div>
+                            <span style={{ color: '#52c41a', fontWeight: 600 }}>{discUp.toLocaleString('hu-HU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                            <br/><span style={{ color: '#aaa', fontSize: 11, textDecoration: 'line-through' }}>{up.toLocaleString('hu-HU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                          </div>
+                        );
+                      })()}
                     </Form.Item>
                     <Form.Item label="Össz. nettó ár" name="manu_net_total" style={{ marginBottom: 8 }}>
-                      <Form.Item noStyle shouldUpdate={(p, c) => p.manu_net_total !== c.manu_net_total}>
-                        {({ getFieldValue }) => {
-                          const total = getFieldValue('manu_net_total') || 0;
-                          const discTotal = groupDiscountPct > 0 && manuPriceFromCalc ? total * (1 - groupDiscountPct / 100) : null;
-                          return (
-                            <div>
-                              {discTotal !== null ? (
-                                <>
-                                  <span style={{ color: '#52c41a', fontWeight: 700, fontSize: 14 }}>{discTotal.toLocaleString('hu-HU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                                  <br/><span style={{ color: '#aaa', fontSize: 11, textDecoration: 'line-through' }}>{Number(total).toLocaleString('hu-HU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                                </>
-                              ) : (
-                                <NumInput min={0} style={{ width: 150 }} placeholder="0" disabled={manuPriceFromCalc}
-                                  onChange={() => setTimeout(() => {
-                                    const total2 = manuForm.getFieldValue('manu_net_total') || 0;
-                                    const q = manuForm.getFieldValue('manu_quantity') || 1;
-                                    manuForm.setFieldsValue({ manu_net_unit_price: parseFloat((total2 / q).toFixed(6)) });
-                                  }, 0)}
-                                />
-                              )}
-                            </div>
-                          );
-                        }}
-                      </Form.Item>
+                      <NumInput min={0} style={{ width: 150, display: (groupDiscountPct > 0 && manuPriceFromCalc) ? 'none' : undefined }} placeholder="0" disabled={manuPriceFromCalc}
+                        onChange={() => setTimeout(() => {
+                          const total = manuForm.getFieldValue('manu_net_total') || 0;
+                          const q = manuForm.getFieldValue('manu_quantity') || 1;
+                          manuForm.setFieldsValue({ manu_net_unit_price: parseFloat((total / q).toFixed(6)) });
+                        }, 0)}
+                      />
+                      {groupDiscountPct > 0 && manuPriceFromCalc && (() => {
+                        const total = Number(manuWatchTotal || 0);
+                        const discTotal = total * (1 - groupDiscountPct / 100);
+                        return (
+                          <div>
+                            <span style={{ color: '#52c41a', fontWeight: 700, fontSize: 14 }}>{discTotal.toLocaleString('hu-HU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                            <br/><span style={{ color: '#aaa', fontSize: 11, textDecoration: 'line-through' }}>{total.toLocaleString('hu-HU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                          </div>
+                        );
+                      })()}
                     </Form.Item>
                     <Form.Item label=" " style={{ marginBottom: 8 }}>
                       <Checkbox checked={manuPriceFromCalc} onChange={e => setManuPriceFromCalc(e.target.checked)}>Árkalkuláció alapján</Checkbox>
