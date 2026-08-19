@@ -108,25 +108,31 @@ const RFQDetail: React.FC = () => {
   const [detailDiscountGroupList, setDetailDiscountGroupList] = useState<any[]>([]);
   const _discountStorageKey = id ? `rfq_discount_mode_${id}` : null;
   const [detailDiscountMode, setDetailDiscountMode] = useState<string>(() => {
-    // Restore persisted user choice for this RFQ
-    try { if (_discountStorageKey) return localStorage.getItem(_discountStorageKey) || 'none'; } catch {}
-    return 'none';
+    try {
+      if (_discountStorageKey) {
+        const saved = localStorage.getItem(_discountStorageKey);
+        if (saved !== null) return saved; // previously set by user or auto-detect
+      }
+    } catch {}
+    return '__unset__'; // first visit – will be determined by items/company
   });
   const handleDiscountModeChange = (mode: string) => {
     setDetailDiscountMode(mode);
     try { if (_discountStorageKey) localStorage.setItem(_discountStorageKey, mode); } catch {}
   };
 
-  // Preload discount mode — only if no saved preference and items have discount or company has group
+  // First-visit auto-detect: from saved items (how RFQ was created) then from company group
   useEffect(() => {
-    if (detailDiscountMode !== 'none') return;
+    if (detailDiscountMode !== '__unset__') return;
     const hasItemDiscount = (rfq?.items || []).some((it: any) => Number(it.discount_percent || 0) > 0);
     const hasCompanyGroup = !!(rfq?.company as any)?.discount_group;
-    if (hasItemDiscount || hasCompanyGroup) {
-      setDetailDiscountMode('company');
-      try { if (_discountStorageKey) localStorage.setItem(_discountStorageKey, 'company'); } catch {}
-    }
+    const mode = (hasItemDiscount || hasCompanyGroup) ? 'company' : 'none';
+    setDetailDiscountMode(mode);
+    try { if (_discountStorageKey) localStorage.setItem(_discountStorageKey, mode); } catch {}
   }, [rfq?.items, (rfq?.company as any)?.discount_group]); // eslint-disable-line
+
+  // Treat '__unset__' as 'none' for rendering
+  const effectiveDiscountMode = detailDiscountMode === '__unset__' ? 'none' : detailDiscountMode;
 
   // Company's discount group info (from the serialized rfq.company fields)
   const companyDiscountGroupId = (rfq?.company as any)?.discount_group ?? null;
@@ -134,10 +140,10 @@ const RFQDetail: React.FC = () => {
 
   // Resolve effective discount group ID
   const detailEffectiveGroupId = useMemo(() => {
-    if (detailDiscountMode === 'none') return null;
-    if (detailDiscountMode === 'company') return companyDiscountGroupId;
-    return Number(detailDiscountMode) || null;
-  }, [detailDiscountMode, companyDiscountGroupId]);
+    if (effectiveDiscountMode === 'none') return null;
+    if (effectiveDiscountMode === 'company') return companyDiscountGroupId;
+    return Number(effectiveDiscountMode) || null;
+  }, [effectiveDiscountMode, companyDiscountGroupId]);
 
   const detailEffectiveGroup = useMemo(() =>
     detailEffectiveGroupId ? detailDiscountGroupList.find((g: any) => g.id === detailEffectiveGroupId) ?? null : null,
@@ -1717,17 +1723,17 @@ const RFQDetail: React.FC = () => {
             <span style={{ fontSize: 11, fontWeight: 600, color: '#0958d9', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Tételek</span>
             <span style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', textTransform: 'none', letterSpacing: 0 }}>
               <span style={{ fontWeight: 500, fontSize: 12, color: '#444' }}>Kedvezmény:</span>
-              <Select value={detailDiscountMode} onChange={handleDiscountModeChange} style={{ width: 180 }} size="small">
+              <Select value={effectiveDiscountMode} onChange={handleDiscountModeChange} style={{ width: 180 }} size="small">
                 <Select.Option value="none">Nincs</Select.Option>
                 <Select.Option value="company">Cég alapú</Select.Option>
                 {detailDiscountGroupList.map((g: any) => (
                   <Select.Option key={g.id} value={String(g.id)}>{g.name}</Select.Option>
                 ))}
               </Select>
-              {detailDiscountMode === 'company' && (companyDiscountGroupName || detailEffectiveGroup?.name) && (
+              {effectiveDiscountMode === 'company' && (companyDiscountGroupName || detailEffectiveGroup?.name) && (
                 <span style={{ fontSize: 12, color: '#52c41a', fontWeight: 500 }}>→ {companyDiscountGroupName || detailEffectiveGroup?.name}</span>
               )}
-              {detailDiscountMode === 'company' && !companyDiscountGroupName && !detailEffectiveGroup && (
+              {effectiveDiscountMode === 'company' && !companyDiscountGroupName && !detailEffectiveGroup && (
                 <span style={{ fontSize: 12, color: '#999' }}>→ nincs beállítva</span>
               )}
             </span>
