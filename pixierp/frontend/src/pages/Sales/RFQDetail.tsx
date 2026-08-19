@@ -106,14 +106,26 @@ const RFQDetail: React.FC = () => {
   const [contacts, setContacts] = useState<any[]>([]);
   const [currencyList, setCurrencyList] = useState<any[]>([]);
   const [detailDiscountGroupList, setDetailDiscountGroupList] = useState<any[]>([]);
-  const [detailDiscountMode, setDetailDiscountMode] = useState<string>('none');
+  const _discountStorageKey = id ? `rfq_discount_mode_${id}` : null;
+  const [detailDiscountMode, setDetailDiscountMode] = useState<string>(() => {
+    // Restore persisted user choice for this RFQ
+    try { if (_discountStorageKey) return localStorage.getItem(_discountStorageKey) || 'none'; } catch {}
+    return 'none';
+  });
+  const handleDiscountModeChange = (mode: string) => {
+    setDetailDiscountMode(mode);
+    try { if (_discountStorageKey) localStorage.setItem(_discountStorageKey, mode); } catch {}
+  };
 
-  // Preload discount mode from company or saved item discounts
+  // Preload discount mode — only if no saved preference and items have discount or company has group
   useEffect(() => {
     if (detailDiscountMode !== 'none') return;
     const hasItemDiscount = (rfq?.items || []).some((it: any) => Number(it.discount_percent || 0) > 0);
     const hasCompanyGroup = !!(rfq?.company as any)?.discount_group;
-    if (hasItemDiscount || hasCompanyGroup) setDetailDiscountMode('company');
+    if (hasItemDiscount || hasCompanyGroup) {
+      setDetailDiscountMode('company');
+      try { if (_discountStorageKey) localStorage.setItem(_discountStorageKey, 'company'); } catch {}
+    }
   }, [rfq?.items, (rfq?.company as any)?.discount_group]); // eslint-disable-line
 
   // Company's discount group info (from the serialized rfq.company fields)
@@ -1705,7 +1717,7 @@ const RFQDetail: React.FC = () => {
             <span style={{ fontSize: 11, fontWeight: 600, color: '#0958d9', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Tételek</span>
             <span style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', textTransform: 'none', letterSpacing: 0 }}>
               <span style={{ fontWeight: 500, fontSize: 12, color: '#444' }}>Kedvezmény:</span>
-              <Select value={detailDiscountMode} onChange={setDetailDiscountMode} style={{ width: 180 }} size="small">
+              <Select value={detailDiscountMode} onChange={handleDiscountModeChange} style={{ width: 180 }} size="small">
                 <Select.Option value="none">Nincs</Select.Option>
                 <Select.Option value="company">Cég alapú</Select.Option>
                 {detailDiscountGroupList.map((g: any) => (
