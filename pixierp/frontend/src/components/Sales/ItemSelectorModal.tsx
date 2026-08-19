@@ -97,6 +97,8 @@ interface ItemSelectorModalProps {
   saveRef?: React.MutableRefObject<{ save: (keepOpen: boolean) => Promise<void> } | null>;
   /** Callback to save an imposition snapshot at RFQ level (shows "Mentés az ajánlathoz" button in ImpositionHelperModal) */
   onImpositionSaveToRfq?: (snapshot: any, autoName: string) => void | Promise<void>;
+  /** Visual-only group discount percent to show alongside the selling price */
+  groupDiscountPct?: number;
 }
 
 interface CostItem {
@@ -131,7 +133,7 @@ const { Search } = Input;
 
 const defaultVat = 27;
 
-export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defaultType = 'product', onCancel, onAdd, allowCreate = true, mode = 'add', initialSelection, initialValues, initialFormulas, customer, rfqId, rfqCurrency, initialManuPayload, quoteItemId, onManufacturingMarked, showCostTypeField, orderItems, expandCosts, renderInline = false, hideCodeField = false, saveRef, onImpositionSaveToRfq }) => {
+export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defaultType = 'product', onCancel, onAdd, allowCreate = true, mode = 'add', initialSelection, initialValues, initialFormulas, customer, rfqId, rfqCurrency, initialManuPayload, quoteItemId, onManufacturingMarked, showCostTypeField, orderItems, expandCosts, renderInline = false, hideCodeField = false, saveRef, onImpositionSaveToRfq, groupDiscountPct = 0 }) => {
   const navigate = useNavigate();
   const screens = Grid.useBreakpoint();
   const isMobile = !screens.md;
@@ -2894,6 +2896,12 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
                                   <span>Darabár: <b>{unitSellingConverted.toLocaleString('hu-HU', { maximumFractionDigits: 2 })} {sellCurrLabel}</b>{isForeignSell && <span style={{ color: '#aaa', fontSize: 11, marginLeft: 4 }}>({manuDisplayedTotals.unitSelling.toLocaleString('hu-HU', { maximumFractionDigits: 0 })} {baseCurrLabel})</span>}</span>
                                   <span>Összesen: <b>{totalSellingConverted.toLocaleString('hu-HU', { maximumFractionDigits: 2 })} {sellCurrLabel}</b>{isForeignSell && <span style={{ color: '#aaa', fontSize: 11, marginLeft: 4 }}>({manuDisplayedTotals.totalSelling.toLocaleString('hu-HU', { maximumFractionDigits: 0 })} {baseCurrLabel})</span>}</span>
                                 </Space>
+                                {groupDiscountPct > 0 && (
+                                  <div style={{ marginTop: 2, fontSize: 12 }}>
+                                    <span style={{ color: '#52c41a', fontWeight: 600 }}>Kedvezményes: {(totalSellingConverted * (1 - groupDiscountPct / 100)).toLocaleString('hu-HU', { maximumFractionDigits: 0 })} {sellCurrLabel}</span>
+                                    <span style={{ color: '#aaa', marginLeft: 6 }}>(-{groupDiscountPct}%)</span>
+                                  </div>
+                                )}
                               </Col>
                               <Col>
                                 <div style={{ color: profit >= 0 ? 'green' : 'red', fontWeight: 600, marginBottom: 4 }}>HASZON</div>

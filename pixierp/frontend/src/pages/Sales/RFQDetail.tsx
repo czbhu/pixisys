@@ -1763,6 +1763,7 @@ const RFQDetail: React.FC = () => {
             initialFormulas={editContext.item.formulas || {}}
             quoteItemId={editContext.item.id}
             onManufacturingMarked={refreshManufacturingFiles}
+            groupDiscountPct={computeDetailItemDiscount(editContext.item)}
           />
         </div>
         )}
