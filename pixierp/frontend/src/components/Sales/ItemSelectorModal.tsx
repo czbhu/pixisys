@@ -2446,7 +2446,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
                       <Form.Item noStyle shouldUpdate={(p, c) => p.manu_net_unit_price !== c.manu_net_unit_price || p.manu_quantity !== c.manu_quantity}>
                         {({ getFieldValue }) => {
                           const up = getFieldValue('manu_net_unit_price') || 0;
-                          const discUp = groupDiscountPct > 0 ? up * (1 - groupDiscountPct / 100) : null;
+                          const discUp = groupDiscountPct > 0 && manuPriceFromCalc ? up * (1 - groupDiscountPct / 100) : null;
                           return (
                             <div>
                               {discUp !== null ? (
@@ -2472,7 +2472,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
                       <Form.Item noStyle shouldUpdate={(p, c) => p.manu_net_total !== c.manu_net_total}>
                         {({ getFieldValue }) => {
                           const total = getFieldValue('manu_net_total') || 0;
-                          const discTotal = groupDiscountPct > 0 ? total * (1 - groupDiscountPct / 100) : null;
+                          const discTotal = groupDiscountPct > 0 && manuPriceFromCalc ? total * (1 - groupDiscountPct / 100) : null;
                           return (
                             <div>
                               {discTotal !== null ? (
