@@ -750,6 +750,12 @@ const RFQDetail: React.FC = () => {
         locked_exchange_rate: (payload as any).is_rate_locked ? ((payload as any).locked_exchange_rate ?? null) : null,
         cost_items_data: (payload as any).cost_items_data ?? undefined,
       };
+      // Merge group discount into discount_percent (same as create form withGroupDiscount)
+      const editGroupPct = editContext ? computeDetailItemDiscount(editContext.item) : 0;
+      if (editGroupPct > 0) {
+        const existing = Number(patch.discount_percent || 0);
+        patch.discount_percent = parseFloat(((1 - (1 - existing / 100) * (1 - editGroupPct / 100)) * 100).toFixed(4));
+      }
       if (payload.item_type === 'product') {
         patch.item_type = 'product';
         patch.product = payload.ref_id;
