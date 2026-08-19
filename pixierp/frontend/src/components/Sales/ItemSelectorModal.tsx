@@ -2443,22 +2443,56 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
                       <Input style={{ width: 80 }} />
                     </Form.Item>
                     <Form.Item label="Nettó egységár" name="manu_net_unit_price" style={{ marginBottom: 8 }}>
-                      <NumInput min={0} style={{ width: 150 }} placeholder="0" disabled={manuPriceFromCalc}
-                        onChange={() => setTimeout(() => {
-                          const up = manuForm.getFieldValue('manu_net_unit_price') || 0;
-                          const q = manuForm.getFieldValue('manu_quantity') || 1;
-                          manuForm.setFieldsValue({ manu_net_total: parseFloat((up * q).toFixed(2)) });
-                        }, 0)}
-                      />
+                      <Form.Item noStyle shouldUpdate={(p, c) => p.manu_net_unit_price !== c.manu_net_unit_price || p.manu_quantity !== c.manu_quantity}>
+                        {({ getFieldValue }) => {
+                          const up = getFieldValue('manu_net_unit_price') || 0;
+                          const discUp = groupDiscountPct > 0 ? up * (1 - groupDiscountPct / 100) : null;
+                          return (
+                            <div>
+                              {discUp !== null ? (
+                                <>
+                                  <span style={{ color: '#52c41a', fontWeight: 600 }}>{discUp.toLocaleString('hu-HU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                  <br/><span style={{ color: '#aaa', fontSize: 11, textDecoration: 'line-through' }}>{Number(up).toLocaleString('hu-HU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                </>
+                              ) : (
+                                <NumInput min={0} style={{ width: 150 }} placeholder="0" disabled={manuPriceFromCalc}
+                                  onChange={() => setTimeout(() => {
+                                    const up2 = manuForm.getFieldValue('manu_net_unit_price') || 0;
+                                    const q = manuForm.getFieldValue('manu_quantity') || 1;
+                                    manuForm.setFieldsValue({ manu_net_total: parseFloat((up2 * q).toFixed(2)) });
+                                  }, 0)}
+                                />
+                              )}
+                            </div>
+                          );
+                        }}
+                      </Form.Item>
                     </Form.Item>
                     <Form.Item label="Össz. nettó ár" name="manu_net_total" style={{ marginBottom: 8 }}>
-                      <NumInput min={0} style={{ width: 150 }} placeholder="0" disabled={manuPriceFromCalc}
-                        onChange={() => setTimeout(() => {
-                          const total = manuForm.getFieldValue('manu_net_total') || 0;
-                          const q = manuForm.getFieldValue('manu_quantity') || 1;
-                          manuForm.setFieldsValue({ manu_net_unit_price: parseFloat((total / q).toFixed(6)) });
-                        }, 0)}
-                      />
+                      <Form.Item noStyle shouldUpdate={(p, c) => p.manu_net_total !== c.manu_net_total}>
+                        {({ getFieldValue }) => {
+                          const total = getFieldValue('manu_net_total') || 0;
+                          const discTotal = groupDiscountPct > 0 ? total * (1 - groupDiscountPct / 100) : null;
+                          return (
+                            <div>
+                              {discTotal !== null ? (
+                                <>
+                                  <span style={{ color: '#52c41a', fontWeight: 700, fontSize: 14 }}>{discTotal.toLocaleString('hu-HU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                  <br/><span style={{ color: '#aaa', fontSize: 11, textDecoration: 'line-through' }}>{Number(total).toLocaleString('hu-HU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                </>
+                              ) : (
+                                <NumInput min={0} style={{ width: 150 }} placeholder="0" disabled={manuPriceFromCalc}
+                                  onChange={() => setTimeout(() => {
+                                    const total2 = manuForm.getFieldValue('manu_net_total') || 0;
+                                    const q = manuForm.getFieldValue('manu_quantity') || 1;
+                                    manuForm.setFieldsValue({ manu_net_unit_price: parseFloat((total2 / q).toFixed(6)) });
+                                  }, 0)}
+                                />
+                              )}
+                            </div>
+                          );
+                        }}
+                      </Form.Item>
                     </Form.Item>
                     <Form.Item label=" " style={{ marginBottom: 8 }}>
                       <Checkbox checked={manuPriceFromCalc} onChange={e => setManuPriceFromCalc(e.target.checked)}>Árkalkuláció alapján</Checkbox>
@@ -2896,12 +2930,6 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
                                   <span>Darabár: <b>{unitSellingConverted.toLocaleString('hu-HU', { maximumFractionDigits: 2 })} {sellCurrLabel}</b>{isForeignSell && <span style={{ color: '#aaa', fontSize: 11, marginLeft: 4 }}>({manuDisplayedTotals.unitSelling.toLocaleString('hu-HU', { maximumFractionDigits: 0 })} {baseCurrLabel})</span>}</span>
                                   <span>Összesen: <b>{totalSellingConverted.toLocaleString('hu-HU', { maximumFractionDigits: 2 })} {sellCurrLabel}</b>{isForeignSell && <span style={{ color: '#aaa', fontSize: 11, marginLeft: 4 }}>({manuDisplayedTotals.totalSelling.toLocaleString('hu-HU', { maximumFractionDigits: 0 })} {baseCurrLabel})</span>}</span>
                                 </Space>
-                                {groupDiscountPct > 0 && (
-                                  <div style={{ marginTop: 2, fontSize: 12 }}>
-                                    <span style={{ color: '#52c41a', fontWeight: 600 }}>Kedvezményes: {(totalSellingConverted * (1 - groupDiscountPct / 100)).toLocaleString('hu-HU', { maximumFractionDigits: 0 })} {sellCurrLabel}</span>
-                                    <span style={{ color: '#aaa', marginLeft: 6 }}>(-{groupDiscountPct}%)</span>
-                                  </div>
-                                )}
                               </Col>
                               <Col>
                                 <div style={{ color: profit >= 0 ? 'green' : 'red', fontWeight: 600, marginBottom: 4 }}>HASZON</div>
