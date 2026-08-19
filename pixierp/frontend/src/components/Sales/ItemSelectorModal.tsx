@@ -442,7 +442,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
     setManuDimensionsPerUnit(true);
     setManuCalculatedVolumes({ unit: 0, total: 0 });
     setManuCalculatedTotalDims(null);
-    setManuPriceFromCalc(mode === 'edit' ? (savedPriceFromCalc ?? false) : true);
+    setManuPriceFromCalc(mode === 'edit' ? (savedPriceFromCalc ?? true) : true);
     setManuPendingFiles([]);
     setManuPendingFileRemarks({});
     setExistingAttachments([]);
@@ -646,7 +646,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           // PrintShop detektálás cost items-ből (direkt tétel, nincs MP)
           if (!manuHasPrintShop && loadedItems.some(ci => (ci.formulas as any)?._syncQty === false)) setManuHasPrintShop(true);
         }
-        setManuPriceFromCalc(savedPriceFromCalc ?? false);
+        setManuPriceFromCalc(savedPriceFromCalc ?? true);
       }
       return;
     }

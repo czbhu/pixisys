@@ -107,26 +107,18 @@ const RFQDetail: React.FC = () => {
   const [currencyList, setCurrencyList] = useState<any[]>([]);
   const [detailDiscountGroupList, setDetailDiscountGroupList] = useState<any[]>([]);
   const [detailDiscountMode, setDetailDiscountMode] = useState<string>('none');
-  const [companyDiscountGroupId, setCompanyDiscountGroupId] = useState<number | null | undefined>(undefined);
-  const [companyDiscountGroupName, setCompanyDiscountGroupName] = useState<string | null>(null);
 
-  // Preload discount mode from item discount_percent or from company's assigned group
+  // Preload discount mode from company or saved item discounts
   useEffect(() => {
     if (detailDiscountMode !== 'none') return;
-    const hasDiscount = (rfq?.items || []).some((it: any) => Number(it.discount_percent || 0) > 0);
-    if (hasDiscount) { setDetailDiscountMode('company'); return; }
-    if (rfq?.company?.id) {
-      api.get(`/crm/companies/${rfq.company.id}/discount-group/`).then(r => {
-        if (r.data?.discount_group_id) {
-          setCompanyDiscountGroupId(r.data.discount_group_id);
-          setCompanyDiscountGroupName(r.data.discount_group_name || null);
-          setDetailDiscountMode('company');
-        } else {
-          setCompanyDiscountGroupId(null); // explicitly no group
-        }
-      }).catch(() => {});
-    }
-  }, [rfq?.items, rfq?.company?.id]); // eslint-disable-line
+    const hasItemDiscount = (rfq?.items || []).some((it: any) => Number(it.discount_percent || 0) > 0);
+    const hasCompanyGroup = !!(rfq?.company as any)?.discount_group;
+    if (hasItemDiscount || hasCompanyGroup) setDetailDiscountMode('company');
+  }, [rfq?.items, (rfq?.company as any)?.discount_group]); // eslint-disable-line
+
+  // Company's discount group info (from the serialized rfq.company fields)
+  const companyDiscountGroupId = (rfq?.company as any)?.discount_group ?? null;
+  const companyDiscountGroupName = (rfq?.company as any)?.discount_group_name ?? null;
 
   // Resolve effective discount group ID
   const detailEffectiveGroupId = useMemo(() => {
@@ -1707,7 +1699,7 @@ const RFQDetail: React.FC = () => {
             <span style={{ fontSize: 11, fontWeight: 600, color: '#0958d9', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Tételek</span>
             <span style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', textTransform: 'none', letterSpacing: 0 }}>
               <span style={{ fontWeight: 500, fontSize: 12, color: '#444' }}>Kedvezmény:</span>
-              <Select value={detailDiscountMode} onChange={v => { setDetailDiscountMode(v); if (v === 'company' && !companyDiscountGroupId && rfq?.company?.id) { api.get(`/crm/companies/${rfq.company.id}/discount-group/`).then(r => { if (r.data?.discount_group_id) setCompanyDiscountGroupId(r.data.discount_group_id); }).catch(()=>{}); } }} style={{ width: 180 }} size="small">
+              <Select value={detailDiscountMode} onChange={setDetailDiscountMode} style={{ width: 180 }} size="small">
                 <Select.Option value="none">Nincs</Select.Option>
                 <Select.Option value="company">Cég alapú</Select.Option>
                 {detailDiscountGroupList.map((g: any) => (
@@ -1717,7 +1709,7 @@ const RFQDetail: React.FC = () => {
               {detailDiscountMode === 'company' && (companyDiscountGroupName || detailEffectiveGroup?.name) && (
                 <span style={{ fontSize: 12, color: '#52c41a', fontWeight: 500 }}>→ {companyDiscountGroupName || detailEffectiveGroup?.name}</span>
               )}
-              {detailDiscountMode === 'company' && !detailEffectiveGroup && companyDiscountGroupId === null && (
+              {detailDiscountMode === 'company' && !companyDiscountGroupName && !detailEffectiveGroup && (
                 <span style={{ fontSize: 12, color: '#999' }}>→ nincs beállítva</span>
               )}
             </span>
