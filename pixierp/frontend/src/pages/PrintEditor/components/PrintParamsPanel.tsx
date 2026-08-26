@@ -285,6 +285,11 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
   const [rollAutoWidth, setRollAutoWidth] = useState(true);  // roll modal: auto szélesség
   const [rollManualWidth, setRollManualWidth] = useState<number | null>(null); // utoljára megadott kézi szélesség
   const [rollEqualPieces, setRollEqualPieces] = useState(false); // darabolásnál egyenlő csíkok
+  // Multi-row state for roll products
+  type RollRow = { id: number; width_mm: number; height_mm: number; quantity: number; pricing?: any };
+  const [rollRows, setRollRows] = useState<RollRow[]>([]);
+  const [rollRowsEnabled, setRollRowsEnabled] = useState(false);
+  const rollRowIdRef = React.useRef(1);
   const [modalSheetH, setModalSheetH] = useState(487);
   const [modalBleed, setModalBleed] = useState(3);
   const [modalForceRotate, setModalForceRotate] = useState<'auto' | 'normal' | 'rotated'>('auto');
@@ -1005,6 +1010,52 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
           );
         })()}
 
+          {/* Tekercses nyomtatás: méret alá kerül a mennyiség + több méret funkció */}
+          {selectedProduct?.calculator_type === 'roll_print' && (
+            <>
+              <SectionLabel label="Mennyiség" />
+              <div style={{ display: 'flex', gap: 4, alignItems: 'center', marginBottom: 6 }}>
+                <NumInput size="small" min={1} max={100000} style={{ flex: 1 }}
+                  value={params.quantity_input ?? params.quantity} addonAfter="db"
+                  onChange={v => { if (!v) return; update({ quantity_input: v, quantity_unit: 'db' }); }}
+                />
+                <Button size="small" icon={<PlusOutlined />} onClick={() => {
+                  setRollRowsEnabled(true);
+                  if (!rollRows.length) {
+                    const id = rollRowIdRef.current++;
+                    setRollRows([{ id, width_mm: params.width_mm ?? 0, height_mm: params.height_mm ?? 0, quantity: params.quantity ?? 1 }]);
+                  }
+                }} style={{ whiteSpace: 'nowrap', fontSize: 11 }}>Több méret</Button>
+              </div>
+              {rollRowsEnabled && (
+                <div style={{ border: '1px solid #d6e4ff', borderRadius: 6, padding: 8, marginBottom: 8, background: '#f0f5ff' }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: '#0958d9', marginBottom: 6 }}>Méret és mennyiség párok</div>
+                  {rollRows.map((row, i) => (
+                    <div key={row.id} style={{ display: 'flex', gap: 3, alignItems: 'center', marginBottom: 4 }}>
+                      <NumInput size="small" min={1} style={{ width: 70 }} value={row.width_mm} addonAfter="×"
+                        onChange={v => setRollRows(rs => rs.map(r => r.id === row.id ? { ...r, width_mm: v ?? r.width_mm } : r))} />
+                      <NumInput size="small" min={1} style={{ width: 70 }} value={row.height_mm}
+                        onChange={v => setRollRows(rs => rs.map(r => r.id === row.id ? { ...r, height_mm: v ?? r.height_mm } : r))} />
+                      <Text style={{ fontSize: 10, color: '#aaa' }}>mm</Text>
+                      <NumInput size="small" min={1} style={{ width: 58 }} value={row.quantity} addonAfter="db"
+                        onChange={v => setRollRows(rs => rs.map(r => r.id === row.id ? { ...r, quantity: v ?? r.quantity } : r))} />
+                      <Button size="small" type="text" danger icon={<DeleteOutlined />}
+                        onClick={() => { const next = rollRows.filter(r => r.id !== row.id); setRollRows(next); if (!next.length) setRollRowsEnabled(false); }} />
+                    </div>
+                  ))}
+                  <Button size="small" icon={<PlusOutlined />} onClick={() => {
+                    const id = rollRowIdRef.current++;
+                    setRollRows(rs => [...rs, { id, width_mm: params.width_mm ?? 0, height_mm: params.height_mm ?? 0, quantity: 1 }]);
+                  }} style={{ fontSize: 11, marginTop: 2 }}>Sor hozzáadása</Button>
+                  {rollRowsEnabled && rollRows.length > 0 && (() => {
+                    const totalQty = rollRows.reduce((s, r) => s + r.quantity, 0);
+                    return <div style={{ marginTop: 6, fontSize: 11, color: '#0958d9' }}>Összesen: {totalQty} db ({rollRows.length} sor)</div>;
+                  })()}
+                </div>
+              )}
+            </>
+          )}
+
           {/* Klikkdíjas nyomtatás: alapanyag → oldalszám → oldalankénti szolgáltatás → ívméret */}
           {isClickSheet && (
             <>
@@ -1627,19 +1678,21 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
             );
           })()}
 
-          <SectionLabel label="Mennyiség" />
-          <NumInput
-            size="small"
-            min={1}
-            max={100000}
-            style={{ width: '100%' }}
-            value={params.quantity_input ?? params.quantity}
-            addonAfter="db"
-            onChange={v => {
-              if (!v) return;
-              update({ quantity_input: v, quantity_unit: 'db' });
-            }}
-          />
+          {selectedProduct?.calculator_type !== 'roll_print' && <SectionLabel label="Mennyiség" />}
+          {selectedProduct?.calculator_type !== 'roll_print' && (
+            <NumInput
+              size="small"
+              min={1}
+              max={100000}
+              style={{ width: '100%' }}
+              value={params.quantity_input ?? params.quantity}
+              addonAfter="db"
+              onChange={v => {
+                if (!v) return;
+                update({ quantity_input: v, quantity_unit: 'db' });
+              }}
+            />
+          )}
       </>
 
       {/* Price display */}
