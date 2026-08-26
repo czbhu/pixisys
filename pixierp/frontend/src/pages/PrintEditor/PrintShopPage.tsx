@@ -533,9 +533,10 @@ const PrintShopPage: React.FC = () => {
 
       // Név: terméknév, méret, mennyiség
       const rfqTotalQtyP1 = bd?._rollRows ? (bd._rollRows as any[]).reduce((s: number, r: any) => s + r.quantity, 0) : params.quantity;
+      const isMultiRoll1 = !!(bd?._rollRows);
       const autoName = params.product_name && params.product_name.trim()
-        ? `${params.product_name.trim()}, ${rfqTotalQtyP1} db`
-        : `${params.width_mm}×${params.height_mm}mm, ${rfqTotalQtyP1} db, íves nyomtatás`;
+        ? `${params.product_name.trim()}, ${isMultiRoll1 ? '1 gar.' : rfqTotalQtyP1 + ' db'}`
+        : `${params.width_mm}×${params.height_mm}mm, ${isMultiRoll1 ? '1 gar.' : rfqTotalQtyP1 + ' db'}, íves nyomtatás`;
 
       // Nyomtatási forma szöveges leírása
       const printSvcLine = bd?.print_service_name_1
@@ -685,13 +686,18 @@ const PrintShopPage: React.FC = () => {
       // For multi-row roll: use combined total from bd, costItems may only reflect first row
       const effectiveTotalForUnit = bd?._rollRows ? (bd.total ?? costItemsSellingTotal) : costItemsSellingTotal;
       const unitPrice = rfqTotalQty > 0 ? effectiveTotalForUnit / rfqTotalQty : 0;
+      const isMultiRoll = !!(bd?._rollRows);
+      // Multi-size roll: 1 garnítúra = teljes összesített ár
+      const rfqQty = isMultiRoll ? 1 : rfqTotalQty;
+      const rfqUnit = isMultiRoll ? 'gar.' : 'db';
+      const rfqUnitPrice = isMultiRoll ? Math.round(effectiveTotalForUnit * 100) / 100 : Math.round(unitPrice * 100) / 100;
 
       const payload: any = {
         name: autoName,
         description,
-        quantity: rfqTotalQty,
-        quantity_unit: 'db',
-        net_unit_price: Math.round(unitPrice * 100) / 100,
+        quantity: rfqQty,
+        quantity_unit: rfqUnit,
+        net_unit_price: rfqUnitPrice,
         status: 'quote_request_open',
         date: new Date().toISOString().split('T')[0],
         deadline: new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0],
@@ -742,8 +748,8 @@ const PrintShopPage: React.FC = () => {
       if (rfqId && !editMfgId) {
         await import('../../services/salesService').then(({ salesService }) =>
           salesService.addRfqManufacturingItem(
-            rfqId, productId, autoName, params.quantity,
-            description, 'db', Math.round(unitPrice * 100) / 100, 27, 0, 0, {},
+            rfqId, productId, autoName, rfqQty,
+            description, rfqUnit, rfqUnitPrice, 27, 0, 0, {},
           )
         );
         message.success('Mentve az ajánlathoz.');
@@ -811,8 +817,8 @@ const PrintShopPage: React.FC = () => {
       const totalQtyBd = bd?._rollRows ? (bd._rollRows as any[]).reduce((s: number, r: any) => s + r.quantity, 0) : params.quantity;
 
       const autoName = params.product_name && params.product_name.trim()
-        ? `${params.product_name.trim()}, ${totalQtyBd} db`
-        : `${params.width_mm}×${params.height_mm}mm, ${totalQtyBd} db, íves nyomtatás`;
+        ? `${params.product_name.trim()}, ${bd?._rollRows ? '1 gar.' : totalQtyBd + ' db'}`
+        : `${params.width_mm}×${params.height_mm}mm, ${bd?._rollRows ? '1 gar.' : totalQtyBd + ' db'}, íves nyomtatás`;
 
       const isBoardProduct = !!(bd?.print_service_name);  // táblás UV ha print_service_name van (nem _1/_2)
       const isRollProduct = !!(bd?.is_roll_mode);  // tekercses nyomtatás
@@ -1019,10 +1025,14 @@ const PrintShopPage: React.FC = () => {
       const sellingTotal = costItems.reduce((s: number, ci: any) => s + (Number(ci.selling_price) || 0), 0);
       const effectiveTotalForUnit2 = bd?._rollRows ? (bd.total ?? sellingTotal) : sellingTotal;
       const unitPrice = totalQtyBd > 0 ? effectiveTotalForUnit2 / totalQtyBd : 0;
+      const isMultiRollSave = !!(bd?._rollRows);
+      const saveQty = isMultiRollSave ? 1 : totalQtyBd;
+      const saveUnit = isMultiRollSave ? 'gar.' : 'db';
+      const saveUnitPrice = isMultiRollSave ? Math.round(effectiveTotalForUnit2 * 100) / 100 : Math.round(unitPrice * 100) / 100;
 
       const payload: any = {
         name: autoName, description, internal_description: internal_description || undefined, quantity: totalQtyBd, quantity_unit: 'db',
-        net_unit_price: Math.round(unitPrice * 100) / 100,
+        net_unit_price: saveUnitPrice,
         status: 'quote_request_open',
         date: new Date().toISOString().split('T')[0],
         deadline: new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0],
@@ -1061,8 +1071,8 @@ const PrintShopPage: React.FC = () => {
         if (!savedRfqQriId) {
           const { salesService: ss } = await import('../../services/salesService');
           const qri = await ss.addRfqManufacturingItem(
-            rfqId, productId, autoName, params.quantity,
-            description, 'db', Math.round(unitPrice * 100) / 100, 27, 0, 0, {},
+            rfqId, productId, autoName, saveQty,
+            description, saveUnit, saveUnitPrice, 27, 0, 0, {},
           );
           setSavedRfqQriId(qri.id);
         } else {
@@ -1071,8 +1081,9 @@ const PrintShopPage: React.FC = () => {
             item_name: autoName,
             description,
             internal_description: internal_description || undefined,
-            net_unit_price: Math.round(unitPrice * 100) / 100,
-            quantity: params.quantity,
+            net_unit_price: saveUnitPrice,
+            quantity: saveQty,
+            quantity_unit: saveUnit,
           });
           // Értesítjük az RFQ detail oldalt a frissítésről
           try {
