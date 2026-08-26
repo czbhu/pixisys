@@ -1059,21 +1059,21 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                 <div style={{ border: '1px solid #d6e4ff', borderRadius: 6, padding: 8, marginBottom: 8, background: '#f0f5ff' }}>
                   <div style={{ fontSize: 11, fontWeight: 600, color: '#0958d9', marginBottom: 6 }}>Méret és mennyiség párok</div>
                   {rollRows.map((row) => (
-                    <div key={row.id} style={{ display: 'flex', gap: 4, alignItems: 'center', marginBottom: 4 }}>
-                      <NumInput size="small" min={1} style={{ width: 68 }} value={row.width_mm}
+                    <div key={row.id} style={{ display: 'flex', gap: 4, alignItems: 'center', marginBottom: 4, width: '100%' }}>
+                      <NumInput size="small" min={1} style={{ flex: 2, minWidth: 0 }} value={row.width_mm}
                         onChange={v => setRollRows(rs => rs.map(r => r.id === row.id ? { ...r, width_mm: v ?? r.width_mm } : r))} />
-                      <Text style={{ fontSize: 11, color: '#888' }}>×</Text>
-                      <NumInput size="small" min={1} style={{ width: 68 }} value={row.height_mm}
+                      <Text style={{ fontSize: 11, color: '#888', flexShrink: 0 }}>×</Text>
+                      <NumInput size="small" min={1} style={{ flex: 2, minWidth: 0 }} value={row.height_mm}
                         onChange={v => setRollRows(rs => rs.map(r => r.id === row.id ? { ...r, height_mm: v ?? r.height_mm } : r))} />
-                      <Text style={{ fontSize: 10, color: '#aaa' }}>mm</Text>
-                      <NumInput size="small" min={1} style={{ width: 60 }} value={row.quantity} addonAfter="db"
+                      <Text style={{ fontSize: 10, color: '#aaa', flexShrink: 0 }}>mm</Text>
+                      <NumInput size="small" min={1} style={{ flex: 1, minWidth: 0 }} value={row.quantity} addonAfter="db"
                         onChange={v => setRollRows(rs => rs.map(r => r.id === row.id ? { ...r, quantity: v ?? r.quantity } : r))} />
                       {rollRowPricing[row.id] && (
-                        <Text style={{ fontSize: 11, color: '#52c41a', fontWeight: 600 }}>
+                        <Text style={{ fontSize: 11, color: '#52c41a', fontWeight: 600, flexShrink: 0 }}>
                           {Math.round(rollRowPricing[row.id].total).toLocaleString('hu-HU')} Ft
                         </Text>
                       )}
-                      <Button size="small" type="text" danger icon={<DeleteOutlined />}
+                      <Button size="small" type="text" danger icon={<DeleteOutlined />} style={{ flexShrink: 0 }}
                         onClick={() => { const next = rollRows.filter(r => r.id !== row.id); setRollRows(next); if (!next.length) setRollRowsEnabled(false); }} />
                     </div>
                   ))}
