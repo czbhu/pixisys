@@ -840,14 +840,32 @@ def _calculate_multi_roll(items_data, print_service_id, material_id, bleed_mm,
             for inf in infos
         )
         svc_cost = Decimal('0')
+        print_service_items = []
         for ci in _svc.cost_items.filter(is_active=True):
             p = Decimal(str(ci.selling_price or 0))
             if ci.calculation_type == 'area':
-                svc_cost += p * total_area
+                ci_total = p * total_area
+                svc_cost += ci_total
+                print_service_items.append({
+                    'type': 'area', 'name': ci.name or 'Terület',
+                    'area_m2_per': round(float(total_area), 4),
+                    'units': 1, 'price_per': float(p),
+                    'total': round(float(ci_total), 2),
+                })
             elif ci.calculation_type == 'fixed':
                 svc_cost += p
+                print_service_items.append({
+                    'type': 'fixed', 'name': ci.name or 'Fix',
+                    'units': 1, 'price_per': float(p), 'total': float(p),
+                })
             elif ci.calculation_type in ('click', 'unit'):
-                svc_cost += p * Decimal(str(strip_count))
+                ci_total = p * Decimal(str(strip_count))
+                svc_cost += ci_total
+                print_service_items.append({
+                    'type': 'click', 'name': ci.name or 'Click',
+                    'units': strip_count, 'price_per': float(p),
+                    'total': round(float(ci_total), 2),
+                })
 
         margin = Decimal(str(getattr(config, 'margin_percent', 0) or 0))
         margin_mult = (1 + margin / 100) if margin > 0 else Decimal('1')
@@ -884,6 +902,8 @@ def _calculate_multi_roll(items_data, print_service_id, material_id, bleed_mm,
             'paper_cost': 0,
             'print_cost': float(svc_cost.quantize(Decimal('0.01'))),
             'print_cost_side1': float(svc_cost.quantize(Decimal('0.01'))),
+            'print_service_items': print_service_items,
+            'total_print_area_m2': round(float(total_area), 4),
         }
 
     # Try all MaterialSizes, pick cheapest

@@ -2053,6 +2053,11 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                   {(activePricing as any).print_service_name && (
                     <div>Nyomtatás – <em>{(activePricing as any).print_service_name}</em>:
                       <strong> {fmt(activePricing.print_cost_side1 ?? 0)}</strong>
+                      {(activePricing as any)._rollRows && (activePricing as any).total_print_area_m2 != null && (
+                        <span style={{ fontSize: 11, color: '#888', marginLeft: 6 }}>
+                          ({Number((activePricing as any).total_print_area_m2).toFixed(3)} m²)
+                        </span>
+                      )}
                       {((activePricing as any).print_service_items ?? []).filter((pi: any) => pi.type !== 'side2_service').map((pi: any, i: number) => (
                         <div key={i} style={{ paddingLeft: 12, fontSize: 11, color: '#666' }}>
                           {pi.type === 'area'
