@@ -876,6 +876,14 @@ def _calculate_multi_roll(items_data, print_service_id, material_id, bleed_mm,
             'is_roll_mode': True, 'print_service_name': _svc.name,
             'board_material_name': _mat.name,
             'board_material_cost': float(mat_cost.quantize(Decimal('0.01'))),
+            # Fields expected by frontend display
+            'sheet_w_mm': rw_mm, 'sheet_h_mm': 99999,
+            'items_per_sheet': 1,  # multi-méret módban szimbolikus érték
+            'roll_cols': infos[0]['eff_w'] > 0 and int(rw_mm / infos[0]['eff_w']) or 1,
+            'boards_needed': strip_count,
+            'paper_cost': 0,
+            'print_cost': float(svc_cost.quantize(Decimal('0.01'))),
+            'print_cost_side1': float(svc_cost.quantize(Decimal('0.01'))),
         }
 
     # Try all MaterialSizes, pick cheapest
