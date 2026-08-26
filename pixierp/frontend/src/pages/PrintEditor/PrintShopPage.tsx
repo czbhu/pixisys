@@ -835,7 +835,6 @@ const PrintShopPage: React.FC = () => {
       const sheetCount = params.sheet_count ?? 1;
       const sidesText = params.sides === '2' ? 'kétoldalas' : 'egyoldalas';
       const bd = priceBreakdown as any;
-      console.log('[handleRfqSave] bd._rollRows:', bd?._rollRows, 'bd.total:', bd?.total);
       const totalQtyBd = bd?._rollRows ? (bd._rollRows as any[]).reduce((s: number, r: any) => s + r.quantity, 0) : params.quantity;
 
       const autoName = params.product_name && params.product_name.trim()
@@ -1067,7 +1066,6 @@ const PrintShopPage: React.FC = () => {
       const saveQty = isMultiRollSave ? 1 : totalQtyBd;
       const saveUnit = isMultiRollSave ? 'gar.' : 'db';
       const saveUnitPrice = isMultiRollSave ? Math.round(effectiveTotalForUnit2 * 100) / 100 : Math.round(unitPrice * 100) / 100;
-      console.log('[handleRfqSave] isMultiRollSave:', isMultiRollSave, 'saveQty:', saveQty, 'saveUnit:', saveUnit, 'saveUnitPrice:', saveUnitPrice);
 
       const payload: any = {
         name: autoName, description, internal_description: internal_description || undefined, quantity: totalQtyBd, quantity_unit: 'db',
