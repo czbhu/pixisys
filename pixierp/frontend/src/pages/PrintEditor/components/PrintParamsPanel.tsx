@@ -2060,7 +2060,20 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                   {activePricing.paper_cost > 0 && <div>Papír: <strong>{fmt(activePricing.paper_cost)}</strong></div>}
                   {/* Anyagköltség (táblás UV) */}
                   {(activePricing as any).board_material_cost > 0 && (
-                    <div>Anyagköltség{(activePricing as any).board_material_label ? ` (${(activePricing as any).board_material_label})` : ''}: <strong>{fmt((activePricing as any).board_material_cost)}</strong></div>
+                    <div>Anyagköltség{(activePricing as any).board_material_label ? ` (${(activePricing as any).board_material_label})` : ''}: <strong>{fmt((activePricing as any).board_material_cost)}</strong>
+                      {(activePricing as any).material_breakdown && (() => {
+                        const mb = (activePricing as any).material_breakdown;
+                        const isM2 = mb.unit === 'm2';
+                        const line = isM2
+                          ? `${(mb.roll_width_mm / 1000).toFixed(3)} m × ${mb.roll_length_fm} fm × ${Number(mb.price_per).toLocaleString('hu-HU')} Ft/m²`
+                          : `${mb.roll_length_fm} fm × ${Number(mb.price_per).toLocaleString('hu-HU')} Ft/m`;
+                        return (
+                          <div style={{ paddingLeft: 12, fontSize: 11, color: '#666' }}>
+                            {line} = <strong>{fmt(mb.total)}</strong>
+                          </div>
+                        );
+                      })()}
+                    </div>
                   )}
                   {/* UV táblás/tekercses: print_service_items megjelenítése */}
                   {(activePricing as any).print_service_name && (

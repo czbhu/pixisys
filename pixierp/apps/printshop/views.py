@@ -905,6 +905,14 @@ def _calculate_multi_roll(items_data, print_service_id, material_id, bleed_mm,
             'print_cost_side1': float(svc_cost.quantize(Decimal('0.01'))),
             'print_service_items': print_service_items,
             'total_print_area_m2': round(float(total_area), 4),
+            'material_breakdown': {
+                'name': _mat.name,
+                'unit': _mat.unit or 'm',
+                'price_per': _raw_sell,
+                'roll_width_mm': rw_mm,
+                'roll_length_fm': roll_length_fm,
+                'total': float(mat_cost.quantize(Decimal('0.01'))),
+            },
         }
 
     # Try all MaterialSizes, pick cheapest
