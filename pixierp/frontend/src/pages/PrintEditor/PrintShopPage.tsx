@@ -167,6 +167,12 @@ const PrintShopPage: React.FC = () => {
     try { const s = localStorage.getItem(STORAGE_KEY); if (s) { const v = JSON.parse(s).itemId; return v ?? null; } } catch {} return null;
   });
   const [priceBreakdown, setPriceBreakdown] = useState<PriceBreakdown | null>(null);
+  // Stable ref for multi-row combined pricing so save functions always get the latest value
+  const multiRollPricingRef = React.useRef<any>(null);
+  const handlePriceChange = React.useCallback((bd: PriceBreakdown | null) => {
+    setPriceBreakdown(bd);
+    if ((bd as any)?._rollRows) multiRollPricingRef.current = bd;
+  }, []);
   const [saving, setSaving] = useState(false);
   const [rfqSaving, setRfqSaving] = useState(false);
   // fromRfq mód: folyamatos mentés támogatása (Mentés / Bezárás gombok)
@@ -529,7 +535,8 @@ const PrintShopPage: React.FC = () => {
     try {
       const sheetCount = params.sheet_count ?? 1;
       const sidesText = params.sides === '2' ? 'kétoldalas' : 'egyoldalas';
-      const bd = priceBreakdown as any;
+      const mrp = multiRollPricingRef.current;
+      const bd = (mrp?._rollRows ? mrp : priceBreakdown) as any;
 
       // Név: terméknév, méret, mennyiség
       const rfqTotalQtyP1 = bd?._rollRows ? (bd._rollRows as any[]).reduce((s: number, r: any) => s + r.quantity, 0) : params.quantity;
@@ -813,7 +820,8 @@ const PrintShopPage: React.FC = () => {
     try {
       const sheetCount = params.sheet_count ?? 1;
       const sidesText = params.sides === '2' ? 'kétoldalas' : 'egyoldalas';
-      const bd = priceBreakdown as any;
+      const mrp = multiRollPricingRef.current;
+      const bd = (mrp?._rollRows ? mrp : priceBreakdown) as any;
       const totalQtyBd = bd?._rollRows ? (bd._rollRows as any[]).reduce((s: number, r: any) => s + r.quantity, 0) : params.quantity;
 
       const autoName = params.product_name && params.product_name.trim()
@@ -1432,7 +1440,7 @@ const PrintShopPage: React.FC = () => {
                   key={panelKey}
                   params={params}
                   onChange={setParams}
-                  onPriceChange={setPriceBreakdown}
+                  onPriceChange={handlePriceChange}
                   onTemplateCategoriesChange={setTemplateCategoryIds}
                   onServicesChange={(s1, s2) => { panelServicesRef.current = { s1, s2 }; }}
                   onCustomCostChange={(items) => { panelCustomCostRef.current = items; }}
