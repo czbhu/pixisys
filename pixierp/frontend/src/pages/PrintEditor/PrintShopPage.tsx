@@ -694,6 +694,22 @@ const PrintShopPage: React.FC = () => {
       const effectiveTotalForUnit = bd?._rollRows ? (bd.total ?? costItemsSellingTotal) : costItemsSellingTotal;
       const unitPrice = rfqTotalQty > 0 ? effectiveTotalForUnit / rfqTotalQty : 0;
       const isMultiRoll = !!(bd?._rollRows);
+      // Multi-size roll: build cost items from combined response when normal costItems are empty
+      if (isMultiRoll && costItems.length === 0) {
+        if (bd.board_material_cost > 0) {
+          costItems.push({ type: 'material', name: bd.board_material_name || 'Alapanyag',
+            quantity: 1, unit: 'fm', cost_price: r4(bd.board_material_cost), unit_price: r4(bd.board_material_cost),
+            selling_unit_price: r4(bd.board_material_cost), selling_price: r4(bd.board_material_cost),
+            markup_percent: 0, is_internal: false, supplier: null, formulas: { _syncQty: false } });
+        }
+        for (const pi of (bd.print_service_items ?? [])) {
+          costItems.push({ type: 'service', name: pi.name || bd.print_service_name || 'Nyomtatás',
+            quantity: r4(pi.area_m2_per ?? pi.units ?? 1), unit: pi.type === 'area' ? 'm²' : 'db',
+            cost_price: r4(pi.price_per ?? 0), unit_price: r4(pi.price_per ?? 0),
+            selling_unit_price: r4(pi.price_per ?? 0), selling_price: r4(pi.total ?? 0),
+            markup_percent: 0, is_internal: false, supplier: null, formulas: { _syncQty: false } });
+        }
+      }
       // Multi-size roll: 1 garnítúra = teljes összesített ár
       const rfqQty = isMultiRoll ? 1 : rfqTotalQty;
       const rfqUnit = isMultiRoll ? 'gar.' : 'db';
@@ -756,7 +772,8 @@ const PrintShopPage: React.FC = () => {
         await import('../../services/salesService').then(({ salesService }) =>
           salesService.addRfqManufacturingItem(
             rfqId, productId, autoName, rfqQty,
-            description, rfqUnit, rfqUnitPrice, 27, 0, 0, {},
+            description, rfqUnit, rfqUnitPrice, 27, 0, 0,
+            isMultiRoll ? { _price_from_cost_calc: true } : {},
           )
         );
         message.success('Mentve az ajánlathoz.');
@@ -1034,6 +1051,22 @@ const PrintShopPage: React.FC = () => {
       const effectiveTotalForUnit2 = bd?._rollRows ? (bd.total ?? sellingTotal) : sellingTotal;
       const unitPrice = totalQtyBd > 0 ? effectiveTotalForUnit2 / totalQtyBd : 0;
       const isMultiRollSave = !!(bd?._rollRows);
+      // Multi-size roll: build cost items from combined response when normal costItems are empty
+      if (isMultiRollSave && costItems.length === 0) {
+        if (bd.board_material_cost > 0) {
+          costItems.push({ type: 'material', name: bd.board_material_name || 'Alapanyag',
+            quantity: 1, unit: 'fm', cost_price: r4(bd.board_material_cost), unit_price: r4(bd.board_material_cost),
+            selling_unit_price: r4(bd.board_material_cost), selling_price: r4(bd.board_material_cost),
+            markup_percent: 0, is_internal: false, supplier: null, formulas: { _syncQty: false } });
+        }
+        for (const pi of (bd.print_service_items ?? [])) {
+          costItems.push({ type: 'service', name: pi.name || bd.print_service_name || 'Nyomtatás',
+            quantity: r4(pi.area_m2_per ?? pi.units ?? 1), unit: pi.type === 'area' ? 'm²' : 'db',
+            cost_price: r4(pi.price_per ?? 0), unit_price: r4(pi.price_per ?? 0),
+            selling_unit_price: r4(pi.price_per ?? 0), selling_price: r4(pi.total ?? 0),
+            markup_percent: 0, is_internal: false, supplier: null, formulas: { _syncQty: false } });
+        }
+      }
       const saveQty = isMultiRollSave ? 1 : totalQtyBd;
       const saveUnit = isMultiRollSave ? 'gar.' : 'db';
       const saveUnitPrice = isMultiRollSave ? Math.round(effectiveTotalForUnit2 * 100) / 100 : Math.round(unitPrice * 100) / 100;
@@ -1080,7 +1113,8 @@ const PrintShopPage: React.FC = () => {
           const { salesService: ss } = await import('../../services/salesService');
           const qri = await ss.addRfqManufacturingItem(
             rfqId, productId, autoName, saveQty,
-            description, saveUnit, saveUnitPrice, 27, 0, 0, {},
+            description, saveUnit, saveUnitPrice, 27, 0, 0,
+            isMultiRollSave ? { _price_from_cost_calc: true } : {},
           );
           setSavedRfqQriId(qri.id);
         } else {
