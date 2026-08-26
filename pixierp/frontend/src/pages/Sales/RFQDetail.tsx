@@ -519,6 +519,21 @@ const RFQDetail: React.FC = () => {
     load();
   }, [load]);
 
+  // Listen for PrintShop save notifications and refresh items automatically
+  useEffect(() => {
+    if (!id) return;
+    let bc: BroadcastChannel | null = null;
+    try {
+      bc = new BroadcastChannel('printshop_rfq_updates');
+      bc.onmessage = (e) => {
+        if (e.data?.type === 'ITEM_UPDATED' && String(e.data?.rfqId) === String(id)) {
+          refreshItems();
+        }
+      };
+    } catch {}
+    return () => { try { bc?.close(); } catch {} };
+  }, [id, refreshItems]); // eslint-disable-line
+
   useEffect(() => {
     (async () => {
       try {

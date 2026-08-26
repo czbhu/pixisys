@@ -1048,6 +1048,12 @@ const PrintShopPage: React.FC = () => {
             net_unit_price: Math.round(unitPrice * 100) / 100,
             quantity: params.quantity,
           });
+          // Értesítjük az RFQ detail oldalt a frissítésről
+          try {
+            const bc = new BroadcastChannel('printshop_rfq_updates');
+            bc.postMessage({ type: 'ITEM_UPDATED', rfqId, qriId: savedRfqQriId });
+            bc.close();
+          } catch {}
         }
       } else if (window.opener && !window.opener.closed) {
         // Nincs rfq_id (új árajánlat modal) → postMessage az openernek, hogy adja hozzá a tételt
