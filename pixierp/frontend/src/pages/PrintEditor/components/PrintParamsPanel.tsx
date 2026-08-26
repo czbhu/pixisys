@@ -542,7 +542,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
         onPriceChange?.(combined);
       } catch {}
     }, 600);
-  }, [rollRows, rollRowsEnabled, selectedBoardPrintSvcId, boardSheetW, boardSheetH, boardBleed, boardForceRotate, rollEqualPieces, flatSelectedIds, flatFinishingIds]); // eslint-disable-line
+  }, [rollRows, rollRowsEnabled, selectedBoardPrintSvcId, boardSheetW, boardSheetH, boardBleed, boardForceRotate, rollEqualPieces, flatSelectedIds, flatFinishingIds, onPriceChange]); // eslint-disable-line
 
   // ── Click-sheet-print calculation ────────────────────────────────────────
   // Paraméteres kalkuláció: az ívméret értékek paraméterként jönnek be, nem a closure-ból
