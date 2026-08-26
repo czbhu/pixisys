@@ -292,6 +292,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
   const rollRowIdRef = React.useRef(1);
   const [rollRowPricing, setRollRowPricing] = useState<Record<number, any>>({});
   const rollCalcTimerRef = React.useRef<any>(null);
+  const [rollDimUnit, setRollDimUnit] = useState<'mm' | 'cm' | 'm'>('mm');
   const [modalSheetH, setModalSheetH] = useState(487);
   const [modalBleed, setModalBleed] = useState(3);
   const [modalForceRotate, setModalForceRotate] = useState<'auto' | 'normal' | 'rotated'>('auto');
@@ -1069,26 +1070,38 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
           {selectedProduct?.calculator_type === 'roll_print' && (
             <>
               <div style={{ border: '1px solid #d6e4ff', borderRadius: 6, padding: 8, marginBottom: 8, background: '#f0f5ff' }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: '#0958d9', marginBottom: 6 }}>Méretek & mennyiségek</div>
-                  {rollRows.map((row) => (
-                    <div key={row.id} style={{ display: 'flex', gap: 4, alignItems: 'center', marginBottom: 4, width: '100%' }}>
-                      <NumInput size="small" min={1} style={{ flex: 2, minWidth: 0 }} value={row.width_mm}
-                        onChange={v => setRollRows(rs => rs.map(r => r.id === row.id ? { ...r, width_mm: v ?? r.width_mm } : r))} />
-                      <Text style={{ fontSize: 11, color: '#888', flexShrink: 0 }}>×</Text>
-                      <NumInput size="small" min={1} style={{ flex: 2, minWidth: 0 }} value={row.height_mm}
-                        onChange={v => setRollRows(rs => rs.map(r => r.id === row.id ? { ...r, height_mm: v ?? r.height_mm } : r))} />
-                      <Text style={{ fontSize: 10, color: '#aaa', flexShrink: 0 }}>mm</Text>
-                      <NumInput size="small" min={1} style={{ flex: 1, minWidth: 0 }} value={row.quantity} addonAfter="db"
-                        onChange={v => setRollRows(rs => rs.map(r => r.id === row.id ? { ...r, quantity: v ?? r.quantity } : r))} />
-                      {rollRowPricing[row.id] && (
-                        <Text style={{ fontSize: 11, color: '#52c41a', fontWeight: 600, flexShrink: 0 }}>
-                          {Math.round(rollRowPricing[row.id].total).toLocaleString('hu-HU')} Ft
-                        </Text>
-                      )}
-                      <Button size="small" type="text" danger icon={<DeleteOutlined />} style={{ flexShrink: 0 }}
-                        onClick={() => { const next = rollRows.filter(r => r.id !== row.id); setRollRows(next); }} />
-                    </div>
-                  ))}
+                <div style={{ display: 'flex', alignItems: 'center', marginBottom: 6, gap: 6 }}>
+                  <span style={{ fontSize: 11, fontWeight: 600, color: '#0958d9', flex: 1 }}>Méretek & mennyiségek</span>
+                  <Select size="small" value={rollDimUnit} onChange={(v: 'mm'|'cm'|'m') => {
+                    // Convert existing rows to new unit (keep mm storage, just re-display)
+                    setRollDimUnit(v);
+                  }} style={{ width: 64 }} options={[{value:'mm',label:'mm'},{value:'cm',label:'cm'},{value:'m',label:'m'}]} />
+                </div>
+                  {(() => {
+                    const toMm = (v: number) => rollDimUnit === 'cm' ? v * 10 : rollDimUnit === 'm' ? v * 1000 : v;
+                    const fromMm = (v: number) => rollDimUnit === 'cm' ? v / 10 : rollDimUnit === 'm' ? v / 1000 : v;
+                    const step = rollDimUnit === 'm' ? 0.001 : rollDimUnit === 'cm' ? 0.1 : 1;
+                    const prec = rollDimUnit === 'm' ? 3 : rollDimUnit === 'cm' ? 1 : 0;
+                    return rollRows.map((row) => (
+                      <div key={row.id} style={{ display: 'flex', gap: 4, alignItems: 'center', marginBottom: 4, width: '100%' }}>
+                        <NumInput size="small" min={step} step={step} precision={prec} style={{ flex: 2, minWidth: 0 }} value={Math.round(fromMm(row.width_mm) * 10 ** prec) / 10 ** prec}
+                          onChange={v => setRollRows(rs => rs.map(r => r.id === row.id ? { ...r, width_mm: Math.round(toMm(v ?? fromMm(r.width_mm))) } : r))} />
+                        <Text style={{ fontSize: 11, color: '#888', flexShrink: 0 }}>×</Text>
+                        <NumInput size="small" min={step} step={step} precision={prec} style={{ flex: 2, minWidth: 0 }} value={Math.round(fromMm(row.height_mm) * 10 ** prec) / 10 ** prec}
+                          onChange={v => setRollRows(rs => rs.map(r => r.id === row.id ? { ...r, height_mm: Math.round(toMm(v ?? fromMm(r.height_mm))) } : r))} />
+                        <Text style={{ fontSize: 10, color: '#aaa', flexShrink: 0 }}>{rollDimUnit}</Text>
+                        <NumInput size="small" min={1} style={{ flex: 1, minWidth: 0 }} value={row.quantity} addonAfter="db"
+                          onChange={v => setRollRows(rs => rs.map(r => r.id === row.id ? { ...r, quantity: v ?? r.quantity } : r))} />
+                        {rollRowPricing[row.id] && (
+                          <Text style={{ fontSize: 11, color: '#52c41a', fontWeight: 600, flexShrink: 0 }}>
+                            {Math.round(rollRowPricing[row.id].total).toLocaleString('hu-HU')} Ft
+                          </Text>
+                        )}
+                        <Button size="small" type="text" danger icon={<DeleteOutlined />} style={{ flexShrink: 0 }}
+                          onClick={() => { const next = rollRows.filter(r => r.id !== row.id); setRollRows(next); }} />
+                      </div>
+                    ));
+                  })()}
                   <Button size="small" icon={<PlusOutlined />} onClick={() => {
                     const id = rollRowIdRef.current++;
                     setRollRows(rs => [...rs, { id, width_mm: params.width_mm ?? 0, height_mm: params.height_mm ?? 0, quantity: 1 }]);
