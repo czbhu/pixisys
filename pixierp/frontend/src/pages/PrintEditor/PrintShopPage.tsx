@@ -167,9 +167,12 @@ const PrintShopPage: React.FC = () => {
     try { const s = localStorage.getItem(STORAGE_KEY); if (s) { const v = JSON.parse(s).itemId; return v ?? null; } } catch {} return null;
   });
   const [priceBreakdown, setPriceBreakdown] = useState<PriceBreakdown | null>(null);
+  // Ref always mirrors state so save handlers read the latest value regardless of render timing
+  const priceBreakdownRef = React.useRef<PriceBreakdown | null>(null);
+  priceBreakdownRef.current = priceBreakdown;
   const handlePriceChange = React.useCallback((bd: PriceBreakdown | null) => {
-    // Only update priceBreakdown from single-item path; multi-row path writes directly
     setPriceBreakdown(bd);
+    priceBreakdownRef.current = bd;
   }, []);
   const [saving, setSaving] = useState(false);
   const [rfqSaving, setRfqSaving] = useState(false);
@@ -533,7 +536,7 @@ const PrintShopPage: React.FC = () => {
     try {
       const sheetCount = params.sheet_count ?? 1;
       const sidesText = params.sides === '2' ? 'kétoldalas' : 'egyoldalas';
-      const bd = priceBreakdown as any;
+      const bd = (priceBreakdownRef.current ?? priceBreakdown) as any;
 
       // Név: terméknév, méret, mennyiség
       const rfqTotalQtyP1 = bd?._rollRows ? (bd._rollRows as any[]).reduce((s: number, r: any) => s + r.quantity, 0) : params.quantity;
@@ -834,7 +837,7 @@ const PrintShopPage: React.FC = () => {
     try {
       const sheetCount = params.sheet_count ?? 1;
       const sidesText = params.sides === '2' ? 'kétoldalas' : 'egyoldalas';
-      const bd = priceBreakdown as any;
+      const bd = (priceBreakdownRef.current ?? priceBreakdown) as any;
       const totalQtyBd = bd?._rollRows ? (bd._rollRows as any[]).reduce((s: number, r: any) => s + r.quantity, 0) : params.quantity;
 
       const autoName = params.product_name && params.product_name.trim()
