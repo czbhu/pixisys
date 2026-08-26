@@ -806,6 +806,7 @@ const PrintShopPage: React.FC = () => {
         : `${params.width_mm}×${params.height_mm}mm, ${params.quantity} db, íves nyomtatás`;
 
       const isBoardProduct = !!(bd?.print_service_name);  // táblás UV ha print_service_name van (nem _1/_2)
+      const isRollProduct = !!(bd?.is_roll_mode);  // tekercses nyomtatás
 
       // Nyomtatás sor – mindig mindkét oldalt megjelenítjük, nyomatlan oldalnál jelezzük
       const printSvcLine = isBoardProduct
@@ -822,7 +823,11 @@ const PrintShopPage: React.FC = () => {
             : null);
 
       // Impozíció sor
-      const impLine = isBoardProduct
+      const impLine = isRollProduct
+        ? (bd?.roll_cols != null
+            ? `Impozíció: ${bd.roll_cols} db/tekercs szélesség (${bd.roll_cols}×1)` +
+              `${bd.rotated ? ', forgatva' : ''}` : null)
+        : isBoardProduct
         ? (bd?.items_per_sheet != null
             ? `Impozíció: ${bd.items_per_sheet} db/tábla (${bd.fit_w ?? '?'}×${bd.fit_h ?? '?'})` +
               `${bd.rotated ? ', forgatva' : ''}, ${bd.boards_needed} tábla` : null)
@@ -831,11 +836,15 @@ const PrintShopPage: React.FC = () => {
               `${bd.rotated ? ', forgatva' : ''}, ${bd.sheets_needed} ív` +
               (bd.clicks_total != null ? `, ${bd.clicks_total} klikk` : '') : null);
 
-      // Méret sor (Ívméret / Tábla méret)
-      const sheetLine = bd?.sheet_w_mm != null
-        ? `${isBoardProduct ? 'Tábla méret' : 'Ívméret'}: ${bd.sheet_w_mm}×${bd.sheet_h_mm} mm` +
-          (bd.cutting_info?.needs_cutting
-            ? ` (vágva: ${bd.cutting_info.cut_sheet_size_mm?.[0]}×${bd.cutting_info.cut_sheet_size_mm?.[1]} mm)` : '') : null;
+      // Méret sor (Ívméret / Tábla méret / Tekercs szélesség)
+      const sheetLine = isRollProduct
+        ? (bd?.sheet_w_mm != null
+            ? `Tekercs szélesség: ${bd.sheet_w_mm} mm` +
+              (bd?.roll_length_fm != null ? `\nSzükséges folyóméter: ${bd.roll_length_fm} fm` : '') : null)
+        : (bd?.sheet_w_mm != null
+            ? `${isBoardProduct ? 'Tábla méret' : 'Ívméret'}: ${bd.sheet_w_mm}×${bd.sheet_h_mm} mm` +
+              (bd.cutting_info?.needs_cutting
+                ? ` (vágva: ${bd.cutting_info.cut_sheet_size_mm?.[0]}×${bd.cutting_info.cut_sheet_size_mm?.[1]} mm)` : '') : null);
       const matLine = isBoardProduct
         ? (bd?.board_material_name ? `Alapanyag: ${bd.board_material_name}` : null)
         : (bd?.material_name ? `Alapanyag: ${bd.material_name}` : null);
