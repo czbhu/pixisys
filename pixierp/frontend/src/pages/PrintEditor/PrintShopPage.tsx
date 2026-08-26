@@ -1083,7 +1083,7 @@ const PrintShopPage: React.FC = () => {
             internal_description: internal_description || undefined,
             net_unit_price: saveUnitPrice,
             quantity: saveQty,
-            quantity_unit: saveUnit,
+            unit: saveUnit,
           });
           // Értesítjük az RFQ detail oldalt a frissítésről
           try {
