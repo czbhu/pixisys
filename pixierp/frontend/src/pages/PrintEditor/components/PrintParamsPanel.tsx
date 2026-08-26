@@ -485,6 +485,17 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
 
   useEffect(() => { calculatePrice(params); }, [params, flatSelectedIds, flatFinishingIds, selectedBoardPrintSvcId, selectedBoardPrintSvcId2, boardSheetW, boardSheetH, boardBleed, boardForceRotate, rollEqualPieces]); // eslint-disable-line
 
+  // Auto-initialize one row when a roll_print product is first selected
+  useEffect(() => {
+    const calcType = products.find(p => p.id === selectedProductId)?.calculator_type;
+    if (calcType !== 'roll_print') return;
+    if (rollRows.length === 0) {
+      const id = rollRowIdRef.current++;
+      setRollRows([{ id, width_mm: params.width_mm ?? 100, height_mm: params.height_mm ?? 100, quantity: params.quantity ?? 1 }]);
+      setRollRowsEnabled(true);
+    }
+  }, [selectedProductId, products]); // eslint-disable-line
+
   // Combined multi-row calculation for roll products
   useEffect(() => {
     if (!rollRowsEnabled || rollRows.length === 0 || !selectedBoardPrintSvcId) return;
@@ -963,10 +974,10 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
       </Select>
 
       <>
-        <SectionLabel label="Méret" />
+        {selectedProduct?.calculator_type !== 'roll_print' && <SectionLabel label="Méret" />}
 
         {/* If selected product has sizes, show them; otherwise show generic presets */}
-        {selectedProduct && selectedProduct.sizes.length > 0 ? (
+        {selectedProduct?.calculator_type !== 'roll_print' && (selectedProduct && selectedProduct.sizes.length > 0 ? (
           <Select
             value={productSizeKey ?? undefined}
             onChange={handleProductSizeChange}
@@ -1000,9 +1011,9 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
               <Option key={p.id} value={p.id}>{p.name} ({p.width_mm}×{p.height_mm} mm)</Option>
             ))}
           </Select>
-        )}
+        ))}
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 2 }}>
+        {selectedProduct?.calculator_type !== 'roll_print' && <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 2 }}>
           <NumInput
             size="small"
             min={wMin} max={wMax}
@@ -1023,7 +1034,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
             onChange={v => { if (v) { update({ height_mm: v }); setSelectedPreset(null); if (productSizeKey !== 'custom' && selectedProduct?.sizes.length) setProductSizeKey('custom'); } }}
           />
           <Text style={{ fontSize: 11, color: '#aaa' }}>mm</Text>
-        </div>
+        </div>}
         {sizeExceeded ? (
           <div style={{ marginBottom: 4, marginTop: 2, padding: '5px 8px', background: '#fff1f0', border: '1px solid #ffccc7', borderRadius: 4 }}>
             <Text style={{ fontSize: 11, color: '#cf1322' }}>
@@ -1056,26 +1067,11 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
           );
         })()}
 
-          {/* Tekercses nyomtatás: méret alá kerül a mennyiség + több méret funkció */}
+          {/* Tekercses nyomtatás: mindig a multi-sor panel jelenik meg */}
           {selectedProduct?.calculator_type === 'roll_print' && (
             <>
-              <SectionLabel label="Mennyiség" />
-              <div style={{ display: 'flex', gap: 4, alignItems: 'center', marginBottom: 6 }}>
-                <NumInput size="small" min={1} max={100000} style={{ flex: 1 }}
-                  value={params.quantity_input ?? params.quantity} addonAfter="db"
-                  onChange={v => { if (!v) return; update({ quantity_input: v, quantity_unit: 'db' }); }}
-                />
-                <Button size="small" icon={<PlusOutlined />} onClick={() => {
-                  setRollRowsEnabled(true);
-                  if (!rollRows.length) {
-                    const id = rollRowIdRef.current++;
-                    setRollRows([{ id, width_mm: params.width_mm ?? 0, height_mm: params.height_mm ?? 0, quantity: params.quantity ?? 1 }]);
-                  }
-                }} style={{ whiteSpace: 'nowrap', fontSize: 11 }}>Több méret</Button>
-              </div>
-              {rollRowsEnabled && (
-                <div style={{ border: '1px solid #d6e4ff', borderRadius: 6, padding: 8, marginBottom: 8, background: '#f0f5ff' }}>
-                  <div style={{ fontSize: 11, fontWeight: 600, color: '#0958d9', marginBottom: 6 }}>Méret és mennyiség párok</div>
+              <div style={{ border: '1px solid #d6e4ff', borderRadius: 6, padding: 8, marginBottom: 8, background: '#f0f5ff' }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: '#0958d9', marginBottom: 6 }}>Méretek & mennyiségek</div>
                   {rollRows.map((row) => (
                     <div key={row.id} style={{ display: 'flex', gap: 4, alignItems: 'center', marginBottom: 4, width: '100%' }}>
                       <NumInput size="small" min={1} style={{ flex: 2, minWidth: 0 }} value={row.width_mm}
@@ -1092,14 +1088,14 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                         </Text>
                       )}
                       <Button size="small" type="text" danger icon={<DeleteOutlined />} style={{ flexShrink: 0 }}
-                        onClick={() => { const next = rollRows.filter(r => r.id !== row.id); setRollRows(next); if (!next.length) setRollRowsEnabled(false); }} />
+                        onClick={() => { const next = rollRows.filter(r => r.id !== row.id); setRollRows(next); }} />
                     </div>
                   ))}
                   <Button size="small" icon={<PlusOutlined />} onClick={() => {
                     const id = rollRowIdRef.current++;
                     setRollRows(rs => [...rs, { id, width_mm: params.width_mm ?? 0, height_mm: params.height_mm ?? 0, quantity: 1 }]);
                   }} style={{ fontSize: 11, marginTop: 2 }}>Sor hozzáadása</Button>
-                  {rollRowsEnabled && rollRows.length > 0 && (() => {
+                  {rollRows.length > 0 && (() => {
                     const totalQty = rollRows.reduce((s, r) => s + r.quantity, 0);
                     const rowPrices = rollRows.map(r => rollRowPricing[r.id]?.total ?? 0);
                     const totalPrice = rowPrices.reduce((s, p) => s + p, 0);
@@ -1120,7 +1116,6 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                     );
                   })()}
                 </div>
-              )}
             </>
           )}
 
