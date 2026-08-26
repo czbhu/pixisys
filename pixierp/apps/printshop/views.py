@@ -222,8 +222,8 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
                     _prod_area = (w + 2 * _bleed_d) / 1000 * (h + 2 * _bleed_d) / 1000
                     _total_pieces = Decimal(str(int(qty) * sc))
                     if is_roll_mode and roll_length_fm and sheet_w_mm:
-                        # Tekercs: befoglalt nyomtatott terület = tekercs_szélesség × szükséges_hossz
-                        amt = price * Decimal(str(sheet_w_mm / 1000)) * Decimal(str(roll_length_fm))
+                        # Tekercs: tényleges nyomtatott terület = termék nyomtatott felület × darabszám
+                        amt = price * _prod_area * _total_pieces
                     else:
                         amt = price * _prod_area * _total_pieces
                     print_service_items.append({
@@ -450,7 +450,9 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
                     _mat_cost = Decimal(str(_raw_sell)) * Decimal(str(_len_fm)) * Decimal(str(rw_mm / 1000))
                 else:
                     _mat_cost = Decimal(str(_raw_sell)) * Decimal(str(_len_fm))
-                _roll_print_area = Decimal(str(rw_mm / 1000)) * Decimal(str(_len_fm))
+                _total_qty_dec = Decimal(str(int(qty) * sc))
+                # Tényleges nyomtatott terület = termék nyomtatott felület (ráhagyással) × darabszám
+                _roll_print_area = Decimal(str(_prod_w / 1000)) * Decimal(str(_prod_h / 1000)) * _total_qty_dec
                 _svc_cost = Decimal('0')
                 for ci in _rsvc.cost_items.filter(is_active=True):
                     _p = Decimal(str(ci.selling_price or 0))
@@ -509,9 +511,12 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
                 _roll_area = (_chosen_rw / 1000) * _chosen_len_fm
                 for _item in print_service_items:
                     if _item.get('type') == 'area':
-                        _item['area_m2_per'] = round(_roll_area, 4)
-                        _item['units'] = 1
-                        _item['total'] = round(_item['price_per'] * _roll_area, 2)
+                        # Tényleges nyomtatott terület = termék felület (ráhagyással) × darabszám
+                        _prod_area_actual = Decimal(str(_prod_w / 1000)) * Decimal(str(_prod_h / 1000))
+                        _total_qty_dec2 = Decimal(str(int(qty) * sc))
+                        _item['area_m2_per'] = round(float(_prod_area_actual), 4)
+                        _item['units'] = int(_total_qty_dec2)
+                        _item['total'] = round(float(_item['price_per'] * float(_prod_area_actual * _total_qty_dec2)), 2)
                 _corrected_subtotal = paper_cost + _chosen_svc_cost + finishing_cost + service_cost
                 total = ((_corrected_subtotal + board_material_cost) * margin_mult).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
                 unit_price = (total / qty).quantize(Decimal('0.0001'), rounding=ROUND_HALF_UP)
