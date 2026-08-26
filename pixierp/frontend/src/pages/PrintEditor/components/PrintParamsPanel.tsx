@@ -2458,7 +2458,97 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
 
               {bestFit > 0 ? (
                 <>
-                  {/* Vizuális rácspreview */}
+                  {/* Vizuális rácspreview – multi-méret: arányos strip-packing nézet */}
+                  {isRollMode && (activePricing as any)?._rollRows?.length > 0 ? (() => {
+                    const multiRows: any[] = (activePricing as any)._rollRows;
+                    const rollW = sw;
+                    const bleedVal = modalBleed;
+                    const COLORS = ['#bae0ff','#b7eb8f','#ffd591','#ffadd2','#d3adf7','#87e8de'];
+                    // Compute per-item effective dimensions (same rotation logic as backend)
+                    const itemInfos = multiRows.map((r: any, idx: number) => {
+                      const pw_i = r.width_mm + 2 * bleedVal;
+                      const ph_i = r.height_mm + 2 * bleedVal;
+                      const colsN = pw_i > 0 ? Math.floor(rollW / pw_i) : 0;
+                      const colsR = ph_i > 0 ? Math.floor(rollW / ph_i) : 0;
+                      const useRot = colsR > colsN;
+                      return { idx, eff_w: useRot ? ph_i : pw_i, eff_h: useRot ? pw_i : ph_i, qty: r.quantity, label: `${r.width_mm}×${r.height_mm}mm` };
+                    });
+                    // Greedy packing (same as backend)
+                    const rem = itemInfos.map(it => ({ ...it, left: it.qty }));
+                    const strips: { items: { idx: number; count: number; eff_w: number; eff_h: number }[]; strip_h: number; usedW: number }[] = [];
+                    for (let iter = 0; iter < 100000 && rem.some(r => r.left > 0); iter++) {
+                      let availW = rollW; let stripH = 0;
+                      const placed: { idx: number; count: number; eff_w: number; eff_h: number }[] = [];
+                      for (const r of rem) {
+                        if (r.left <= 0 || r.eff_w <= 0) continue;
+                        const fit = Math.floor(availW / r.eff_w);
+                        if (fit <= 0) continue;
+                        const take = Math.min(r.left, fit);
+                        placed.push({ idx: r.idx, count: take, eff_w: r.eff_w, eff_h: r.eff_h });
+                        availW -= take * r.eff_w;
+                        stripH = Math.max(stripH, r.eff_h);
+                        r.left -= take;
+                      }
+                      if (stripH === 0) break;
+                      strips.push({ items: placed, strip_h: stripH, usedW: rollW - availW });
+                    }
+                    const totalRollMm = strips.reduce((s, st) => s + st.strip_h, 0);
+                    const DISP_W = 280;
+                    const DISP_H = Math.min(220, Math.max(60, strips.length * 40));
+                    const scaleX = DISP_W / rollW;
+                    const scaleY = DISP_H / (totalRollMm || 1);
+                    let svgH = 0;
+                    const stripRects = strips.map((strip, si) => {
+                      const y0 = svgH; const sh_px = strip.strip_h * scaleY;
+                      svgH += sh_px;
+                      let xOff = 0;
+                      const itemRects = strip.items.flatMap((it) =>
+                        Array.from({ length: it.count }).map((_, k) => {
+                          const rx = xOff + k * it.eff_w * scaleX;
+                          const rw = it.eff_w * scaleX - 1;
+                          const rh = it.eff_h * scaleY - 1;
+                          return { rx, ry: y0, rw, rh, color: COLORS[it.idx % COLORS.length], label: it.count > 1 ? String(k + 1) : '' };
+                        }).concat((() => { xOff += it.count * it.eff_w * scaleX; return []; })())
+                      );
+                      return { y0, sh_px, itemRects, usedW: strip.usedW * scaleX };
+                    });
+                    return (
+                      <div style={{ background: '#f5f5f5', borderRadius: 8, padding: 12, marginBottom: 16, textAlign: 'center' }}>
+                        <div style={{ display: 'inline-block', border: '2px solid #1677ff', background: '#fff', position: 'relative' }}>
+                          <svg width={DISP_W} height={svgH} style={{ display: 'block' }}>
+                            <rect x={0} y={0} width={DISP_W} height={svgH} fill="#f5f5f5" />
+                            {stripRects.map((strip, si) => (
+                              <g key={si}>
+                                <rect x={0} y={strip.y0} width={DISP_W} height={strip.sh_px} fill="#e8e8e8" />
+                                {strip.itemRects.map((r, ri) => (
+                                  <g key={ri}>
+                                    <rect x={r.rx} y={r.ry} width={r.rw} height={r.rh} fill={r.color} stroke="#91caff" strokeWidth={0.5} rx={1} />
+                                    {r.rh > 14 && r.rw > 16 && (
+                                      <text x={r.rx + r.rw / 2} y={r.ry + r.rh / 2 + 4} textAnchor="middle" fontSize={9} fill="#0958d9">{r.label}</text>
+                                    )}
+                                  </g>
+                                ))}
+                                {si < stripRects.length - 1 && (
+                                  <line x1={0} y1={strip.y0 + strip.sh_px} x2={DISP_W} y2={strip.y0 + strip.sh_px} stroke="#d0d0d0" strokeWidth={1} />
+                                )}
+                              </g>
+                            ))}
+                          </svg>
+                        </div>
+                        <div style={{ marginTop: 6, fontSize: 11, color: '#888' }}>
+                          {strips.length} strip · Tekercs: {rollW} mm × {(totalRollMm / 1000).toFixed(2)} m
+                        </div>
+                        <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: 8 }}>
+                          {multiRows.map((r: any, i: number) => (
+                            <span key={i} style={{ fontSize: 10, color: '#444', display: 'flex', alignItems: 'center', gap: 3 }}>
+                              <span style={{ width: 10, height: 10, background: COLORS[i % COLORS.length], border: '1px solid #ccc', display: 'inline-block', borderRadius: 2 }} />
+                              {r.width_mm}×{r.height_mm}mm ({r.quantity} db)
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })() : (
                   <div style={{ background: '#f5f5f5', borderRadius: 8, padding: 16, marginBottom: 16, textAlign: 'center' }}>
                     <div style={{ display: 'inline-block', border: '2px solid #1677ff', padding: 4, background: '#fff' }}>
                       <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, 1fr)`, gap: 2 }}>
@@ -2484,6 +2574,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                       {rotated ? 'Elforgatva elhelyezve' : 'Normál elhelyezés'} · {cols} × {rows} elrendezés
                     </div>
                   </div>
+                  )}
 
                   {/* Eredmények */}
                   {(() => {
