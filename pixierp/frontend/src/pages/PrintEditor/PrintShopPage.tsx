@@ -773,7 +773,7 @@ const PrintShopPage: React.FC = () => {
           salesService.addRfqManufacturingItem(
             rfqId, productId, autoName, rfqQty,
             description, rfqUnit, rfqUnitPrice, 27, 0, 0,
-            isMultiRoll ? { _price_from_cost_calc: true } : {},
+            isMultiRoll ? { _price_from_cost_calc: true as any } : {},
           )
         );
         message.success('Mentve az ajánlathoz.');
@@ -1114,7 +1114,7 @@ const PrintShopPage: React.FC = () => {
           const qri = await ss.addRfqManufacturingItem(
             rfqId, productId, autoName, saveQty,
             description, saveUnit, saveUnitPrice, 27, 0, 0,
-            isMultiRollSave ? { _price_from_cost_calc: true } : {},
+            isMultiRollSave ? { _price_from_cost_calc: true as any } : {},
           );
           setSavedRfqQriId(qri.id);
         } else {
