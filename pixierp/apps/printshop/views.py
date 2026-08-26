@@ -902,9 +902,11 @@ def _calculate_multi_roll(items_data, print_service_id, material_id, bleed_mm,
         return None
 
     candidates.sort(key=lambda x: x['total'])
-    best = candidates[0]
-    best['is_best'] = True
-    best['size_comparison'] = candidates
+    best = {**candidates[0], 'is_best': True}  # copy to avoid circular reference
+    # size_comparison entries must not nest back into themselves
+    best['size_comparison'] = [
+        {k: v for k, v in c.items() if k != 'size_comparison'} for c in candidates
+    ]
     return best
 
 
