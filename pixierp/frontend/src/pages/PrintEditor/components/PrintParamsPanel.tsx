@@ -2494,9 +2494,10 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                     }
                     const totalRollMm = strips.reduce((s, st) => s + st.strip_h, 0);
                     const DISP_W = 280;
-                    const DISP_H = Math.min(220, Math.max(60, strips.length * 40));
-                    const scaleX = DISP_W / rollW;
-                    const scaleY = DISP_H / (totalRollMm || 1);
+                    // Uniform scale: same for x and y so proportions are correct
+                    const scale = DISP_W / (rollW || 1);
+                    const scaleX = scale;
+                    const scaleY = scale;
                     let svgH = 0;
                     const stripRects = strips.map((strip, si) => {
                       const y0 = svgH; const sh_px = strip.strip_h * scaleY;
@@ -2514,7 +2515,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                     });
                     return (
                       <div style={{ background: '#f5f5f5', borderRadius: 8, padding: 12, marginBottom: 16, textAlign: 'center' }}>
-                        <div style={{ display: 'inline-block', border: '2px solid #1677ff', background: '#fff', position: 'relative' }}>
+                        <div style={{ display: 'inline-block', border: '2px solid #1677ff', background: '#fff', position: 'relative', maxHeight: 380, overflowY: 'auto' }}>
                           <svg width={DISP_W} height={svgH} style={{ display: 'block' }}>
                             <rect x={0} y={0} width={DISP_W} height={svgH} fill="#f5f5f5" />
                             {stripRects.map((strip, si) => (
@@ -2621,8 +2622,8 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                     )}
                   </div>
 
-                  {/* ── Produkciós ívek/táblák vizualizáció ─────────────── */}
-                  {(() => {
+                  {/* ── Produkciós ívek/táblák vizualizáció – csak nem tekercses módban ─── */}
+                  {!isRollMode && (() => {
                     const remainingOnLast = totalPieces % bestFit;
                     const fullSheets = remainingOnLast === 0 ? sheetsNeeded : sheetsNeeded - 1;
                     const partialItems = remainingOnLast;
