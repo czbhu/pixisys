@@ -290,6 +290,8 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
   const [rollRows, setRollRows] = useState<RollRow[]>([]);
   const [rollRowsEnabled, setRollRowsEnabled] = useState(false);
   const rollRowIdRef = React.useRef(1);
+  const [rollRowPricing, setRollRowPricing] = useState<Record<number, any>>({});
+  const rollCalcTimerRef = React.useRef<any>(null);
   const [modalSheetH, setModalSheetH] = useState(487);
   const [modalBleed, setModalBleed] = useState(3);
   const [modalForceRotate, setModalForceRotate] = useState<'auto' | 'normal' | 'rotated'>('auto');
@@ -482,6 +484,32 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
   }, [flatSelectedIds, flatFinishingIds, selectedBoardPrintSvcId, selectedBoardPrintSvcId2, boardSheetW, boardSheetH, boardBleed, boardForceRotate, rollEqualPieces]); // eslint-disable-line
 
   useEffect(() => { calculatePrice(params); }, [params, flatSelectedIds, flatFinishingIds, selectedBoardPrintSvcId, selectedBoardPrintSvcId2, boardSheetW, boardSheetH, boardBleed, boardForceRotate, rollEqualPieces]); // eslint-disable-line
+
+  // Combined multi-row calculation for roll products
+  useEffect(() => {
+    if (!rollRowsEnabled || rollRows.length === 0 || !selectedBoardPrintSvcId) return;
+    if (rollCalcTimerRef.current) clearTimeout(rollCalcTimerRef.current);
+    rollCalcTimerRef.current = setTimeout(async () => {
+      const results: Record<number, any> = {};
+      for (const row of rollRows) {
+        try {
+          const res = await api.post('/printshop/orders/calculate-price/', {
+            width_mm: row.width_mm, height_mm: row.height_mm, quantity: row.quantity,
+            sides: params.sides, side1_mode: params.side1_mode, side2_mode: params.side2_mode,
+            binding: params.binding, folding_count: params.folding_count, sheet_count: 1,
+            selected_service_ids: flatSelectedIds, finishing_service_ids: flatFinishingIds,
+            print_service_id: selectedBoardPrintSvcId,
+            sheet_w_mm: boardSheetW, sheet_h_mm: boardSheetH, bleed_mm: boardBleed,
+            force_rotate: boardForceRotate === 'auto' ? null : boardForceRotate === 'rotated',
+            material_id: params.material_id || undefined,
+            roll_equal_pieces: rollEqualPieces,
+          });
+          results[row.id] = res.data;
+        } catch {}
+      }
+      setRollRowPricing(results);
+    }, 600);
+  }, [rollRows, rollRowsEnabled, selectedBoardPrintSvcId, boardSheetW, boardSheetH, boardBleed, boardForceRotate, rollEqualPieces, flatSelectedIds, flatFinishingIds]); // eslint-disable-line
 
   // ── Click-sheet-print calculation ────────────────────────────────────────
   // Paraméteres kalkuláció: az ívméret értékek paraméterként jönnek be, nem a closure-ból
@@ -1030,8 +1058,8 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
               {rollRowsEnabled && (
                 <div style={{ border: '1px solid #d6e4ff', borderRadius: 6, padding: 8, marginBottom: 8, background: '#f0f5ff' }}>
                   <div style={{ fontSize: 11, fontWeight: 600, color: '#0958d9', marginBottom: 6 }}>Méret és mennyiség párok</div>
-                  {rollRows.map((row, i) => (
-                    <div key={row.id} style={{ display: 'flex', gap: 3, alignItems: 'center', marginBottom: 4 }}>
+                  {rollRows.map((row) => (
+                    <div key={row.id} style={{ display: 'flex', gap: 3, alignItems: 'center', marginBottom: 4, flexWrap: 'wrap' }}>
                       <NumInput size="small" min={1} style={{ width: 70 }} value={row.width_mm} addonAfter="×"
                         onChange={v => setRollRows(rs => rs.map(r => r.id === row.id ? { ...r, width_mm: v ?? r.width_mm } : r))} />
                       <NumInput size="small" min={1} style={{ width: 70 }} value={row.height_mm}
@@ -1039,6 +1067,11 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                       <Text style={{ fontSize: 10, color: '#aaa' }}>mm</Text>
                       <NumInput size="small" min={1} style={{ width: 58 }} value={row.quantity} addonAfter="db"
                         onChange={v => setRollRows(rs => rs.map(r => r.id === row.id ? { ...r, quantity: v ?? r.quantity } : r))} />
+                      {rollRowPricing[row.id] && (
+                        <Text style={{ fontSize: 11, color: '#52c41a', fontWeight: 600, marginLeft: 4 }}>
+                          {Math.round(rollRowPricing[row.id].total).toLocaleString('hu-HU')} Ft
+                        </Text>
+                      )}
                       <Button size="small" type="text" danger icon={<DeleteOutlined />}
                         onClick={() => { const next = rollRows.filter(r => r.id !== row.id); setRollRows(next); if (!next.length) setRollRowsEnabled(false); }} />
                     </div>
@@ -1049,7 +1082,23 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                   }} style={{ fontSize: 11, marginTop: 2 }}>Sor hozzáadása</Button>
                   {rollRowsEnabled && rollRows.length > 0 && (() => {
                     const totalQty = rollRows.reduce((s, r) => s + r.quantity, 0);
-                    return <div style={{ marginTop: 6, fontSize: 11, color: '#0958d9' }}>Összesen: {totalQty} db ({rollRows.length} sor)</div>;
+                    const rowPrices = rollRows.map(r => rollRowPricing[r.id]?.total ?? 0);
+                    const totalPrice = rowPrices.reduce((s, p) => s + p, 0);
+                    const allCalced = rowPrices.every(p => p > 0);
+                    return (
+                      <div style={{ marginTop: 8, borderTop: '1px solid #d6e4ff', paddingTop: 6 }}>
+                        <div style={{ fontSize: 11, color: '#0958d9' }}>Összesen: <b>{totalQty} db</b> ({rollRows.length} sor)</div>
+                        {allCalced && totalPrice > 0 && (
+                          <div style={{ fontSize: 13, fontWeight: 700, color: '#0958d9', marginTop: 3 }}>
+                            Kombinált ár: {Math.round(totalPrice).toLocaleString('hu-HU')} Ft
+                            <Text style={{ fontSize: 10, color: '#888', marginLeft: 6 }}>
+                              ({Math.round(totalPrice / totalQty).toLocaleString('hu-HU')} Ft/db átlag)
+                            </Text>
+                          </div>
+                        )}
+                        {!allCalced && <div style={{ fontSize: 10, color: '#888' }}>Számolás folyamatban…</div>}
+                      </div>
+                    );
                   })()}
                 </div>
               )}
