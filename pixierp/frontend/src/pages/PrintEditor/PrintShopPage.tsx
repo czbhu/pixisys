@@ -1142,8 +1142,9 @@ const PrintShopPage: React.FC = () => {
           _ps_mfg_id: productId,
           _editor_state,  // tétel-specifikus állapot visszatöltéshez
           name: autoName,
-          quantity: params.quantity,
-          net_unit_price: Math.round(unitPrice * 100) / 100,
+          quantity: saveQty,
+          unit: saveUnit,
+          net_unit_price: saveUnitPrice,
           description,
         }, window.location.origin);
       }

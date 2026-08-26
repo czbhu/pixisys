@@ -2552,7 +2552,7 @@ const RFQs: React.FC = () => {
           manufacturing_product: { id: productId, name: d.name },
           name: d.name || `Egyedi termék #${productId}`,
           quantity: Number(d.quantity) || 1,
-          unit: 'db',
+          unit: d.unit || 'db',
           net_unit_price: Number(d.net_unit_price) || 0,
           vat_rate: 27,
           description: d.description || '',
