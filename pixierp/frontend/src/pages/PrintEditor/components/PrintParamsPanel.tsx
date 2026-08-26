@@ -473,16 +473,21 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
             roll_equal_pieces: rollEqualPieces,
           } : {}),
         });
-        setPricing(res.data);
-        onPriceChange?.(res.data);
+        // In multi-row roll mode, pricing is managed by the multi-row effect
+        if (!rollRowsEnabled) {
+          setPricing(res.data);
+          onPriceChange?.(res.data);
+        }
       } catch {
-        setPricing(null);
-        onPriceChange?.(null);
+        if (!rollRowsEnabled) {
+          setPricing(null);
+          onPriceChange?.(null);
+        }
       } finally {
         setCalcLoading(false);
       }
     }, 400);
-  }, [flatSelectedIds, flatFinishingIds, selectedBoardPrintSvcId, selectedBoardPrintSvcId2, boardSheetW, boardSheetH, boardBleed, boardForceRotate, rollEqualPieces]); // eslint-disable-line
+  }, [flatSelectedIds, flatFinishingIds, selectedBoardPrintSvcId, selectedBoardPrintSvcId2, boardSheetW, boardSheetH, boardBleed, boardForceRotate, rollEqualPieces, rollRowsEnabled]); // eslint-disable-line
 
   useEffect(() => { calculatePrice(params); }, [params, flatSelectedIds, flatFinishingIds, selectedBoardPrintSvcId, selectedBoardPrintSvcId2, boardSheetW, boardSheetH, boardBleed, boardForceRotate, rollEqualPieces]); // eslint-disable-line
 
