@@ -496,47 +496,45 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
     }
   }, [selectedProductId, products]); // eslint-disable-line
 
-  // Combined multi-row calculation for roll products
+  // Combined multi-row calculation for roll products — one combined API call
   useEffect(() => {
     if (!rollRowsEnabled || rollRows.length === 0 || !selectedBoardPrintSvcId) return;
     if (rollCalcTimerRef.current) clearTimeout(rollCalcTimerRef.current);
     rollCalcTimerRef.current = setTimeout(async () => {
-      const results: Record<number, any> = {};
-      for (const row of rollRows) {
-        try {
-          const res = await api.post('/printshop/orders/calculate-price/', {
-            width_mm: row.width_mm, height_mm: row.height_mm, quantity: row.quantity,
-            sides: params.sides, side1_mode: params.side1_mode, side2_mode: params.side2_mode,
-            binding: params.binding, folding_count: params.folding_count, sheet_count: 1,
-            selected_service_ids: flatSelectedIds, finishing_service_ids: flatFinishingIds,
-            print_service_id: selectedBoardPrintSvcId,
-            sheet_w_mm: boardSheetW, sheet_h_mm: boardSheetH, bleed_mm: boardBleed,
-            force_rotate: boardForceRotate === 'auto' ? null : boardForceRotate === 'rotated',
-            material_id: params.material_id || undefined,
-            roll_equal_pieces: rollEqualPieces,
-          });
-          results[row.id] = res.data;
-        } catch {}
-      }
-      setRollRowPricing(results);
-      // Build combined pricing when all rows finished → feed to parent and impozíció bar
-      const allCalced = rollRows.every(r => results[r.id]);
-      if (allCalced && rollRows.length > 0) {
-        const first = results[rollRows[0].id];
-        const totalQty = rollRows.reduce((s, r) => s + r.quantity, 0);
-        const totalCost = rollRows.reduce((s, r) => s + (results[r.id]?.total ?? 0), 0);
+      try {
+        const res = await api.post('/printshop/orders/calculate-price-multi/', {
+          items: rollRows.map(r => ({ width_mm: r.width_mm, height_mm: r.height_mm, quantity: r.quantity })),
+          print_service_id: selectedBoardPrintSvcId,
+          bleed_mm: boardBleed,
+          force_rotate: boardForceRotate === 'auto' ? null : boardForceRotate === 'rotated',
+          material_id: params.material_id || undefined,
+        });
+        const data = res.data as any;
+        // Per-row pricing for row-level display (from items_layout)
+        const results: Record<number, any> = {};
+        rollRows.forEach((row, i) => {
+          const layout = data.items_layout?.[i] ?? {};
+          results[row.id] = {
+            total: (data.total ?? 0) * (row.quantity / Math.max(data.total_qty ?? 1, 1)),
+            roll_cols: layout.roll_cols ?? 1,
+            boards_needed: layout.boards_needed ?? 0,
+            roll_length_fm: layout.roll_length_fm ?? 0,
+          };
+        });
+        setRollRowPricing(results);
+        // Combined pricing for parent (onPriceChange) and impozíció bar
         const combined: any = {
-          ...first,
-          total: totalCost,
-          unit_price: totalQty > 0 ? totalCost / totalQty : 0,
-          roll_length_fm: rollRows.reduce((s, r) => s + (results[r.id]?.roll_length_fm ?? 0), 0),
-          boards_needed: rollRows.reduce((s, r) => s + (results[r.id]?.boards_needed ?? 0), 0),
-          quantity: totalQty,
-          _rollRows: rollRows.map(r => ({ width_mm: r.width_mm, height_mm: r.height_mm, quantity: r.quantity, ...results[r.id] })),
+          ...data,
+          quantity: data.total_qty,
+          boards_needed: data.strip_count,
+          _rollRows: rollRows.map((r, i) => ({
+            width_mm: r.width_mm, height_mm: r.height_mm, quantity: r.quantity,
+            ...(data.items_layout?.[i] ?? {}),
+          })),
         };
         setPricing(combined);
         onPriceChange?.(combined);
-      }
+      } catch {}
     }, 600);
   }, [rollRows, rollRowsEnabled, selectedBoardPrintSvcId, boardSheetW, boardSheetH, boardBleed, boardForceRotate, rollEqualPieces, flatSelectedIds, flatFinishingIds]); // eslint-disable-line
 

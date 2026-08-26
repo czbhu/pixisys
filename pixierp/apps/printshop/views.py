@@ -743,6 +743,171 @@ class PrintPricingConfigViewSet(viewsets.ViewSet):
         return Response(serializer.data)
 
 
+def _pack_items_on_roll(items_info, roll_width_mm):
+    """Greedy strip-packing: fill each roll strip with as many items as fit width-wise.
+    items_info: [{'idx', 'eff_w', 'eff_h', 'qty'}]
+    Returns: {'total_roll_mm', 'strip_count', 'item_strip_counts': {idx: n_strips}}
+    """
+    remaining = [[i['idx'], i['eff_w'], i['eff_h'], int(i['qty'])] for i in items_info]
+    total_roll_mm = 0.0
+    strip_count = 0
+    item_strip_counts = {}
+
+    for _ in range(200000):
+        if all(r[3] <= 0 for r in remaining):
+            break
+        avail_w = float(roll_width_mm)
+        strip_h = 0.0
+        placed = {}
+        for r in remaining:
+            idx, ew, eh, qty = r
+            if qty <= 0 or ew <= 0:
+                continue
+            fit = int(avail_w / ew)
+            if fit <= 0:
+                continue
+            take = min(qty, fit)
+            placed[idx] = take
+            avail_w -= take * ew
+            strip_h = max(strip_h, float(eh))
+        if strip_h == 0:
+            break
+        for r in remaining:
+            idx = r[0]
+            if idx in placed:
+                r[3] -= placed[idx]
+                item_strip_counts[idx] = item_strip_counts.get(idx, 0) + 1
+        total_roll_mm += strip_h
+        strip_count += 1
+
+    return {'total_roll_mm': total_roll_mm, 'strip_count': strip_count, 'item_strip_counts': item_strip_counts}
+
+
+def _calculate_multi_roll(items_data, print_service_id, material_id, bleed_mm,
+                           force_rotate, config, selected_service_ids=None):
+    """Combined roll-print pricing for multiple sizes packed together on the roll."""
+    import math as _math
+    from apps.warehouse.models import Material as _Mat, MaterialSize as _MS
+    from apps.manufacturing.models import Service as _Svc
+
+    bleed = float(bleed_mm or 0)
+
+    try:
+        _mat = _Mat.objects.get(id=material_id)
+        _svc = _Svc.objects.prefetch_related('cost_items').get(id=print_service_id)
+    except Exception:
+        return None
+
+    _dm = {'mm': 1, 'cm': 10, 'm': 1000}.get(_mat.dimension_unit or 'mm', 1)
+    _raw_sell = float(_mat.unit_selling_price or 0)
+
+    # Build per-item effective dimensions
+    def _item_info(it, rw_mm, force_rot):
+        pw = float(it['width_mm']) + 2 * bleed
+        ph = float(it['height_mm']) + 2 * bleed
+        qty = int(it['quantity'])
+        cols_n = int(rw_mm / pw) if pw > 0 else 0
+        cols_r = int(rw_mm / ph) if ph > 0 else 0
+        if force_rot is None:
+            use_rot = cols_r > cols_n
+        else:
+            use_rot = bool(force_rot)
+        eff_w = ph if use_rot else pw
+        eff_h = pw if use_rot else ph
+        return {'eff_w': eff_w, 'eff_h': eff_h, 'prod_w': pw, 'prod_h': ph,
+                'qty': qty, 'idx': it.get('_idx', 0)}
+
+    def _cost_for_width(rw_mm):
+        if rw_mm <= 0:
+            return None
+        infos = [_item_info({**it, '_idx': i}, rw_mm, force_rotate)
+                 for i, it in enumerate(items_data)]
+        pack = _pack_items_on_roll(infos, rw_mm)
+        total_roll_mm = pack['total_roll_mm']
+        strip_count = pack['strip_count']
+        if total_roll_mm <= 0:
+            return None
+        roll_length_fm = _math.ceil(total_roll_mm / 100) / 10
+
+        if _mat.unit == 'm2':
+            mat_cost = Decimal(str(_raw_sell)) * Decimal(str(roll_length_fm)) * Decimal(str(rw_mm / 1000))
+        else:
+            mat_cost = Decimal(str(_raw_sell)) * Decimal(str(roll_length_fm))
+
+        # Area cost = sum of individual print areas (independent of layout)
+        total_area = sum(
+            Decimal(str(inf['prod_w'] / 1000)) * Decimal(str(inf['prod_h'] / 1000)) * Decimal(str(inf['qty']))
+            for inf in infos
+        )
+        svc_cost = Decimal('0')
+        for ci in _svc.cost_items.filter(is_active=True):
+            p = Decimal(str(ci.selling_price or 0))
+            if ci.calculation_type == 'area':
+                svc_cost += p * total_area
+            elif ci.calculation_type == 'fixed':
+                svc_cost += p
+            elif ci.calculation_type in ('click', 'unit'):
+                svc_cost += p * Decimal(str(strip_count))
+
+        margin = Decimal(str(getattr(config, 'margin_percent', 0) or 0))
+        margin_mult = (1 + margin / 100) if margin > 0 else Decimal('1')
+        total_cost = ((mat_cost + svc_cost) * margin_mult).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+
+        total_qty = sum(int(it['quantity']) for it in items_data)
+        unit_price = (total_cost / Decimal(str(max(total_qty, 1)))).quantize(Decimal('0.0001'), rounding=ROUND_HALF_UP)
+
+        items_layout = []
+        for inf in infos:
+            n_strips = pack['item_strip_counts'].get(inf['idx'], 0)
+            items_layout.append({
+                'roll_cols': max(1, int(rw_mm / inf['eff_w'])) if inf['eff_w'] > 0 else 1,
+                'boards_needed': n_strips,
+                'roll_length_fm': _math.ceil(n_strips * inf['eff_h'] / 100) / 10,
+            })
+
+        return {
+            'roll_width_mm': rw_mm, 'roll_length_fm': roll_length_fm,
+            'strip_count': strip_count, 'total_roll_mm': total_roll_mm,
+            'material_cost': float(mat_cost.quantize(Decimal('0.01'))),
+            'service_cost': float(svc_cost.quantize(Decimal('0.01'))),
+            'total': float(total_cost), 'unit_price': float(unit_price),
+            'total_qty': total_qty,
+            'items_layout': items_layout,
+            'is_roll_mode': True, 'print_service_name': _svc.name,
+            'board_material_name': _mat.name,
+            'board_material_cost': float(mat_cost.quantize(Decimal('0.01'))),
+        }
+
+    # Try all MaterialSizes, pick cheapest
+    ms_list = list(_MS.objects.filter(material=_mat, is_active=True).order_by('sort_order', 'width'))
+    candidates = []
+    for ms in ms_list:
+        rw = float(ms.width or 0) * _dm
+        if rw > 0:
+            r = _cost_for_width(rw)
+            if r:
+                r['label'] = ms.name or f'{int(rw)} mm'
+                r['size_id'] = ms.id
+                candidates.append(r)
+
+    if not candidates:
+        rw_base = float(_mat.roll_width or 0) * _dm or float(_mat.width or 0) * _dm
+        if rw_base > 0:
+            r = _cost_for_width(rw_base)
+            if r:
+                r['label'] = f'{int(rw_base)} mm (alap)'
+                candidates.append(r)
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda x: x['total'])
+    best = candidates[0]
+    best['is_best'] = True
+    best['size_comparison'] = candidates
+    return best
+
+
 class PrintOrderViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
@@ -797,6 +962,29 @@ class PrintOrderViewSet(viewsets.ModelViewSet):
                 roll_equal_pieces=bool(d.get('roll_equal_pieces', False)),
             )
             return Response(breakdown)
+        except Exception as e:
+            return Response({'error': str(e)}, status=400)
+
+    @action(detail=False, methods=['post'], url_path='calculate-price-multi')
+    def calculate_price_multi(self, request):
+        """Több méret egyszerre a tekercsen – egymás mellé csomagolva."""
+        d = request.data
+        items_data = d.get('items', [])
+        if not items_data:
+            return Response({'error': 'No items'}, status=400)
+        try:
+            config = PrintPricingConfig.get_config()
+            result = _calculate_multi_roll(
+                items_data=items_data,
+                print_service_id=d.get('print_service_id') or None,
+                material_id=d.get('material_id') or None,
+                bleed_mm=float(d.get('bleed_mm', 0) or 0),
+                force_rotate=d.get('force_rotate'),
+                config=config,
+            )
+            if result is None:
+                return Response({'error': 'Nem sikerült kalkulálni'}, status=400)
+            return Response(result)
         except Exception as e:
             return Response({'error': str(e)}, status=400)
 
