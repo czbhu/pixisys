@@ -508,6 +508,24 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
         } catch {}
       }
       setRollRowPricing(results);
+      // Build combined pricing when all rows finished → feed to parent and impozíció bar
+      const allCalced = rollRows.every(r => results[r.id]);
+      if (allCalced && rollRows.length > 0) {
+        const first = results[rollRows[0].id];
+        const totalQty = rollRows.reduce((s, r) => s + r.quantity, 0);
+        const totalCost = rollRows.reduce((s, r) => s + (results[r.id]?.total ?? 0), 0);
+        const combined: any = {
+          ...first,
+          total: totalCost,
+          unit_price: totalQty > 0 ? totalCost / totalQty : 0,
+          roll_length_fm: rollRows.reduce((s, r) => s + (results[r.id]?.roll_length_fm ?? 0), 0),
+          boards_needed: rollRows.reduce((s, r) => s + (results[r.id]?.boards_needed ?? 0), 0),
+          quantity: totalQty,
+          _rollRows: rollRows.map(r => ({ width_mm: r.width_mm, height_mm: r.height_mm, quantity: r.quantity, ...results[r.id] })),
+        };
+        setPricing(combined);
+        onPriceChange?.(combined);
+      }
     }, 600);
   }, [rollRows, rollRowsEnabled, selectedBoardPrintSvcId, boardSheetW, boardSheetH, boardBleed, boardForceRotate, rollEqualPieces, flatSelectedIds, flatFinishingIds]); // eslint-disable-line
 
@@ -1994,9 +2012,13 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                       <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                         <AppstoreOutlined style={{ color: '#52c41a', fontSize: 11 }} />
                         {(activePricing as any).is_roll_mode ? (
-                          <span>Tekercs impozíció: <strong>{(activePricing as any).roll_cols ?? (activePricing as any).fit_w ?? 1} db / sor</strong>
-                            {(() => { const best = (activePricing as any).size_comparison?.find((s: any) => s.is_best); return best?.is_cut ? <Tag color="orange" style={{ marginLeft: 6, fontSize: 10 }}>darabolva · {best.n_strips} csík/db</Tag> : null; })()}
-                          </span>
+                          (activePricing as any)._rollRows ? (
+                            <span>Tekercs impozíció – <strong>{(activePricing as any)._rollRows.length} méretvariáns</strong></span>
+                          ) : (
+                            <span>Tekercs impozíció: <strong>{(activePricing as any).roll_cols ?? (activePricing as any).fit_w ?? 1} db / sor</strong>
+                              {(() => { const best = (activePricing as any).size_comparison?.find((s: any) => s.is_best); return best?.is_cut ? <Tag color="orange" style={{ marginLeft: 6, fontSize: 10 }}>darabolva · {best.n_strips} csík/db</Tag> : null; })()}
+                            </span>
+                          )
                         ) : (
                           <span>Impozíció: <strong>{(activePricing as any).fit_w ?? 1} × {(activePricing as any).fit_h ?? 1}</strong> = <strong>{(activePricing as any).items_per_sheet} db/ív</strong>
                             {(activePricing as any).rotated && <Tag color="orange" style={{ marginLeft: 6, fontSize: 10 }}>forgatva</Tag>}
@@ -2004,10 +2026,24 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                         )}
                       </div>
                       {(activePricing as any).is_roll_mode ? (
-                        <div>Tekercs hossz: <strong>{((activePricing as any).roll_length_fm ?? 0).toFixed(1)} fm</strong>
-                          {' · '}Sorok: <strong>{(activePricing as any).boards_needed}</strong>
-                          {' · '}Szélesség: <strong>{boardSheetW} mm</strong>
-                        </div>
+                        (activePricing as any)._rollRows ? (
+                          <div>
+                            {((activePricing as any)._rollRows as any[]).map((rr: any, i: number) => (
+                              <div key={i} style={{ paddingLeft: 6 }}>
+                                <strong>{rr.width_mm}×{rr.height_mm} mm</strong>{' · '}{rr.quantity} db{' · '}
+                                {rr.roll_cols ?? 1} db/sor{' · '}{(rr.roll_length_fm ?? 0).toFixed(1)} fm
+                              </div>
+                            ))}
+                            <div style={{ marginTop: 2 }}>Össz. tekercs hossz: <strong>{((activePricing as any).roll_length_fm ?? 0).toFixed(1)} fm</strong>
+                              {' · '}Szélesség: <strong>{boardSheetW} mm</strong>
+                            </div>
+                          </div>
+                        ) : (
+                          <div>Tekercs hossz: <strong>{((activePricing as any).roll_length_fm ?? 0).toFixed(1)} fm</strong>
+                            {' · '}Sorok: <strong>{(activePricing as any).boards_needed}</strong>
+                            {' · '}Szélesség: <strong>{boardSheetW} mm</strong>
+                          </div>
+                        )
                       ) : (
                         <div>Szükséges táblák: <strong>{(activePricing as any).boards_needed}</strong>
                           {' · '}Ívméret: <strong>{boardSheetW}×{boardSheetH} mm</strong>

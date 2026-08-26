@@ -532,9 +532,10 @@ const PrintShopPage: React.FC = () => {
       const bd = priceBreakdown as any;
 
       // Név: terméknév, méret, mennyiség
+      const rfqTotalQtyP1 = bd?._rollRows ? (bd._rollRows as any[]).reduce((s: number, r: any) => s + r.quantity, 0) : params.quantity;
       const autoName = params.product_name && params.product_name.trim()
-        ? `${params.product_name.trim()}, ${params.quantity} db`
-        : `${params.width_mm}×${params.height_mm}mm, ${params.quantity} db, íves nyomtatás`;
+        ? `${params.product_name.trim()}, ${rfqTotalQtyP1} db`
+        : `${params.width_mm}×${params.height_mm}mm, ${rfqTotalQtyP1} db, íves nyomtatás`;
 
       // Nyomtatási forma szöveges leírása
       const printSvcLine = bd?.print_service_name_1
@@ -586,10 +587,15 @@ const PrintShopPage: React.FC = () => {
           `\nEgységár: ${Number(bd.unit_price ?? 0).toLocaleString('hu-HU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Ft/db`
         : null;
 
+      const rfqMeretLine = bd?._rollRows
+        ? (bd._rollRows as any[]).map((rr: any) => `${rr.width_mm}×${rr.height_mm} mm, ${rr.quantity} db`).join(' + ')
+        : `${params.width_mm} × ${params.height_mm} mm, ${sidesText}`;
+      const rfqTotalQty = bd?._rollRows ? (bd._rollRows as any[]).reduce((s: number, r: any) => s + r.quantity, 0) : params.quantity;
+
       const description = [
         `Termék: ${params.product_name || 'Egyedi nyomtatás'}`,
-        `Méret: ${params.width_mm} × ${params.height_mm} mm, ${sidesText}`,
-        `Mennyiség: ${params.quantity} db${sheetCount > 1 ? ` × ${sheetCount} lap` : ''}`,
+        `Méret: ${rfqMeretLine}`,
+        bd?._rollRows ? null : `Mennyiség: ${params.quantity} db${sheetCount > 1 ? ` × ${sheetCount} lap` : ''}`,
         params.binding && params.binding !== 'none' ? `Kötés: ${params.binding}` : null,
         matLine, printSvcLine, impLine, sheetLine, extrasLine,
       ].filter(Boolean).map(l => `<p>${String(l).replace(/\n/g, '</p><p>')}</p>`).join('');
@@ -676,12 +682,14 @@ const PrintShopPage: React.FC = () => {
       }
 
       const costItemsSellingTotal = costItems.reduce((sum: number, ci: any) => sum + (Number(ci.selling_price) || 0), 0);
-      const unitPrice = params.quantity > 0 ? costItemsSellingTotal / params.quantity : 0;
+      // For multi-row roll: use combined total from bd, costItems may only reflect first row
+      const effectiveTotalForUnit = bd?._rollRows ? (bd.total ?? costItemsSellingTotal) : costItemsSellingTotal;
+      const unitPrice = rfqTotalQty > 0 ? effectiveTotalForUnit / rfqTotalQty : 0;
 
       const payload: any = {
         name: autoName,
         description,
-        quantity: params.quantity,
+        quantity: rfqTotalQty,
         quantity_unit: 'db',
         net_unit_price: Math.round(unitPrice * 100) / 100,
         status: 'quote_request_open',
@@ -800,10 +808,11 @@ const PrintShopPage: React.FC = () => {
       const sheetCount = params.sheet_count ?? 1;
       const sidesText = params.sides === '2' ? 'kétoldalas' : 'egyoldalas';
       const bd = priceBreakdown as any;
+      const totalQtyBd = bd?._rollRows ? (bd._rollRows as any[]).reduce((s: number, r: any) => s + r.quantity, 0) : params.quantity;
 
       const autoName = params.product_name && params.product_name.trim()
-        ? `${params.product_name.trim()}, ${params.quantity} db`
-        : `${params.width_mm}×${params.height_mm}mm, ${params.quantity} db, íves nyomtatás`;
+        ? `${params.product_name.trim()}, ${totalQtyBd} db`
+        : `${params.width_mm}×${params.height_mm}mm, ${totalQtyBd} db, íves nyomtatás`;
 
       const isBoardProduct = !!(bd?.print_service_name);  // táblás UV ha print_service_name van (nem _1/_2)
       const isRollProduct = !!(bd?.is_roll_mode);  // tekercses nyomtatás
@@ -824,9 +833,13 @@ const PrintShopPage: React.FC = () => {
 
       // Impozíció sor
       const impLine = isRollProduct
-        ? (bd?.roll_cols != null
-            ? `Impozíció: ${bd.roll_cols} db/tekercs szélesség (${bd.roll_cols}×1)` +
-              `${bd.rotated ? ', forgatva' : ''}` : null)
+        ? (bd?._rollRows
+            ? (bd._rollRows as any[]).map((rr: any) =>
+                `${rr.width_mm}×${rr.height_mm}mm · ${rr.quantity} db · ${rr.roll_cols ?? 1} db/sor · ${(rr.roll_length_fm ?? 0).toFixed(1)} fm`
+              ).join('\n')
+            : (bd?.roll_cols != null
+                ? `Impozíció: ${bd.roll_cols} db/tekercs szélesség (${bd.roll_cols}×1)` +
+                  `${bd.rotated ? ', forgatva' : ''}` : null))
         : isBoardProduct
         ? (bd?.items_per_sheet != null
             ? `Impozíció: ${bd.items_per_sheet} db/tábla (${bd.fit_w ?? '?'}×${bd.fit_h ?? '?'})` +
@@ -840,7 +853,7 @@ const PrintShopPage: React.FC = () => {
       const sheetLine = isRollProduct
         ? (bd?.sheet_w_mm != null
             ? `Tekercs szélesség: ${bd.sheet_w_mm} mm` +
-              (bd?.roll_length_fm != null ? `\nSzükséges folyóméter: ${bd.roll_length_fm} fm` : '') : null)
+              (bd?.roll_length_fm != null ? `\nSzükséges${bd._rollRows ? ' össz.' : ''} folyóméter: ${(bd.roll_length_fm ?? 0).toFixed(1)} fm` : '') : null)
         : (bd?.sheet_w_mm != null
             ? `${isBoardProduct ? 'Tábla méret' : 'Ívméret'}: ${bd.sheet_w_mm}×${bd.sheet_h_mm} mm` +
               (bd.cutting_info?.needs_cutting
@@ -888,10 +901,13 @@ const PrintShopPage: React.FC = () => {
       })();
 
       // Külső leírás: termék, méret, mennyiség, nyomtatás, utómunka (impozíció/tábla méret NEM)
+      const meretLine = bd?._rollRows
+        ? (bd._rollRows as any[]).map((rr: any) => `${rr.width_mm}×${rr.height_mm} mm, ${rr.quantity} db`).join(' + ')
+        : `${params.width_mm} × ${params.height_mm} mm, ${sidesText}`;
       const description = toHtml([
         `Termék: ${params.product_name || 'Egyedi nyomtatás'}`,
-        `Méret: ${params.width_mm} × ${params.height_mm} mm, ${sidesText}`,
-        `Mennyiség: ${params.quantity} db${sheetCount > 1 ? ` × ${sheetCount} lap` : ''}`,
+        `Méret: ${meretLine}`,
+        bd?._rollRows ? null : `Mennyiség: ${params.quantity} db${sheetCount > 1 ? ` × ${sheetCount} lap` : ''}`,
         (!isBoardProduct && params.binding && params.binding !== 'none' && params.binding !== 'cut') ? `Kötés: ${params.binding}` : null,
         matLine,
         printSvcLine,
@@ -1001,10 +1017,11 @@ const PrintShopPage: React.FC = () => {
           formulas: { _syncQty: false } });
       }
       const sellingTotal = costItems.reduce((s: number, ci: any) => s + (Number(ci.selling_price) || 0), 0);
-      const unitPrice = params.quantity > 0 ? sellingTotal / params.quantity : 0;
+      const effectiveTotalForUnit2 = bd?._rollRows ? (bd.total ?? sellingTotal) : sellingTotal;
+      const unitPrice = totalQtyBd > 0 ? effectiveTotalForUnit2 / totalQtyBd : 0;
 
       const payload: any = {
-        name: autoName, description, internal_description: internal_description || undefined, quantity: params.quantity, quantity_unit: 'db',
+        name: autoName, description, internal_description: internal_description || undefined, quantity: totalQtyBd, quantity_unit: 'db',
         net_unit_price: Math.round(unitPrice * 100) / 100,
         status: 'quote_request_open',
         date: new Date().toISOString().split('T')[0],
