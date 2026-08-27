@@ -699,11 +699,16 @@ const PrintShopPage: React.FC = () => {
         const mb = bd.material_breakdown;
         if (mb && mb.total > 0) {
           const sp = r4(mb.price_per ?? 0); const cp = r4(mb.cost_price_per ?? mb.price_per ?? 0);
+          const matUnit = mb.unit === 'm2' ? 'm²' : 'fm';
+          const matQty = mb.unit === 'm2'
+            ? r4((mb.roll_width_mm ?? 0) / 1000 * (mb.roll_length_fm ?? 0))
+            : r4(mb.roll_length_fm ?? 0);
           costItems.push({ type: 'material', name: mb.name || 'Alapanyag',
-            quantity: 1, unit: 'fm', cost_price: cp, unit_price: sp,
+            quantity: matQty, unit: matUnit, cost_price: cp, unit_price: sp,
             selling_unit_price: sp, selling_price: r4(mb.total),
             markup_percent: cp > 0 ? Math.round((sp - cp) / cp * 100) : 0,
             is_internal: false, supplier: supId(mb.supplier_id), formulas: { _syncQty: false } });
+        }
         }
         for (const pi of (bd.print_service_items ?? [])) {
           const sp = r4(pi.price_per ?? 0); const cp = r4(pi.cost_price_per ?? pi.price_per ?? 0);
@@ -1061,11 +1066,16 @@ const PrintShopPage: React.FC = () => {
         const mb = bd.material_breakdown;
         if (mb && mb.total > 0) {
           const sp = r4(mb.price_per ?? 0); const cp = r4(mb.cost_price_per ?? mb.price_per ?? 0);
+          const matUnit = mb.unit === 'm2' ? 'm²' : 'fm';
+          const matQty = mb.unit === 'm2'
+            ? r4((mb.roll_width_mm ?? 0) / 1000 * (mb.roll_length_fm ?? 0))
+            : r4(mb.roll_length_fm ?? 0);
           costItems.push({ type: 'material', name: mb.name || 'Alapanyag',
-            quantity: 1, unit: 'fm', cost_price: cp, unit_price: sp,
+            quantity: matQty, unit: matUnit, cost_price: cp, unit_price: sp,
             selling_unit_price: sp, selling_price: r4(mb.total),
             markup_percent: cp > 0 ? Math.round((sp - cp) / cp * 100) : 0,
             is_internal: false, supplier: supId(mb.supplier_id), formulas: { _syncQty: false } });
+        }
         }
         for (const pi of (bd.print_service_items ?? [])) {
           const sp = r4(pi.price_per ?? 0); const cp = r4(pi.cost_price_per ?? pi.price_per ?? 0);
