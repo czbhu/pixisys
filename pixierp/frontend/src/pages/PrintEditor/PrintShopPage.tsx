@@ -703,7 +703,7 @@ const PrintShopPage: React.FC = () => {
             quantity: 1, unit: 'fm', cost_price: cp, unit_price: sp,
             selling_unit_price: sp, selling_price: r4(mb.total),
             markup_percent: cp > 0 ? Math.round((sp - cp) / cp * 100) : 0,
-            is_internal: false, supplier: null, formulas: { _syncQty: false } });
+            is_internal: false, supplier: supId(mb.supplier_id), formulas: { _syncQty: false } });
         }
         for (const pi of (bd.print_service_items ?? [])) {
           const sp = r4(pi.price_per ?? 0); const cp = r4(pi.cost_price_per ?? pi.price_per ?? 0);
@@ -712,7 +712,8 @@ const PrintShopPage: React.FC = () => {
             cost_price: cp, unit_price: sp,
             selling_unit_price: sp, selling_price: r4(pi.total ?? 0),
             markup_percent: r4(pi.markup_percentage ?? (cp > 0 ? (sp - cp) / cp * 100 : 0)),
-            is_internal: false, supplier: null, formulas: { _syncQty: false } });
+            is_internal: pi.is_internal ?? false, department: pi.department_id ?? null,
+            supplier: supId(pi.supplier_id), formulas: { _syncQty: false } });
         }
       }
       // Multi-size roll: 1 garnítúra = teljes összesített ár
@@ -1064,7 +1065,7 @@ const PrintShopPage: React.FC = () => {
             quantity: 1, unit: 'fm', cost_price: cp, unit_price: sp,
             selling_unit_price: sp, selling_price: r4(mb.total),
             markup_percent: cp > 0 ? Math.round((sp - cp) / cp * 100) : 0,
-            is_internal: false, supplier: null, formulas: { _syncQty: false } });
+            is_internal: false, supplier: supId(mb.supplier_id), formulas: { _syncQty: false } });
         }
         for (const pi of (bd.print_service_items ?? [])) {
           const sp = r4(pi.price_per ?? 0); const cp = r4(pi.cost_price_per ?? pi.price_per ?? 0);
@@ -1073,7 +1074,8 @@ const PrintShopPage: React.FC = () => {
             cost_price: cp, unit_price: sp,
             selling_unit_price: sp, selling_price: r4(pi.total ?? 0),
             markup_percent: r4(pi.markup_percentage ?? (cp > 0 ? (sp - cp) / cp * 100 : 0)),
-            is_internal: false, supplier: null, formulas: { _syncQty: false } });
+            is_internal: pi.is_internal ?? false, department: pi.department_id ?? null,
+            supplier: supId(pi.supplier_id), formulas: { _syncQty: false } });
         }
       }
       const saveQty = isMultiRollSave ? 1 : totalQtyBd;

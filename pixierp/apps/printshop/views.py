@@ -793,13 +793,17 @@ def _calculate_multi_roll(items_data, print_service_id, material_id, bleed_mm,
     bleed = float(bleed_mm or 0)
 
     try:
-        _mat = _Mat.objects.get(id=material_id)
+        _mat = _Mat.objects.prefetch_related('materialsupplier_set').get(id=material_id)
         _svc = _Svc.objects.prefetch_related('cost_items').get(id=print_service_id)
     except Exception:
         return None
 
     _dm = {'mm': 1, 'cm': 10, 'm': 1000}.get(_mat.dimension_unit or 'mm', 1)
     _raw_sell = float(_mat.unit_selling_price or 0)
+    _mat_supplier_id = None
+    _mat_sup = _mat.materialsupplier_set.first()
+    if _mat_sup:
+        _mat_supplier_id = _mat_sup.supplier_id
 
     # Build per-item effective dimensions
     def _item_info(it, rw_mm, force_rot):
@@ -853,6 +857,7 @@ def _calculate_multi_roll(items_data, print_service_id, material_id, bleed_mm,
                     'units': 1, 'price_per': float(p), 'cost_price_per': float(cp_area),
                     'markup_percentage': round(float((p - cp_area) / cp_area * 100) if cp_area > 0 else 0, 2),
                     'total': round(float(ci_total), 2),
+                    'supplier_id': ci.supplier_id, 'department_id': ci.department_id, 'is_internal': ci.is_internal,
                 })
             elif ci.calculation_type == 'fixed':
                 svc_cost += p
@@ -862,6 +867,7 @@ def _calculate_multi_roll(items_data, print_service_id, material_id, bleed_mm,
                     'units': 1, 'price_per': float(p), 'cost_price_per': float(cp_fix),
                     'markup_percentage': round(float((p - cp_fix) / cp_fix * 100) if cp_fix > 0 else 0, 2),
                     'total': float(p),
+                    'supplier_id': ci.supplier_id, 'department_id': ci.department_id, 'is_internal': ci.is_internal,
                 })
             elif ci.calculation_type in ('click', 'unit'):
                 ci_total = p * Decimal(str(strip_count))
@@ -872,6 +878,7 @@ def _calculate_multi_roll(items_data, print_service_id, material_id, bleed_mm,
                     'units': strip_count, 'price_per': float(p), 'cost_price_per': float(cp_click),
                     'markup_percentage': round(float((p - cp_click) / cp_click * 100) if cp_click > 0 else 0, 2),
                     'total': round(float(ci_total), 2),
+                    'supplier_id': ci.supplier_id, 'department_id': ci.department_id, 'is_internal': ci.is_internal,
                 })
 
         margin = Decimal(str(getattr(config, 'margin_percent', 0) or 0))
@@ -917,6 +924,7 @@ def _calculate_multi_roll(items_data, print_service_id, material_id, bleed_mm,
                 'unit': _mat.unit or 'm',
                 'price_per': _raw_sell,
                 'cost_price_per': float(_mat.unit_cost_price or _raw_sell),
+                'supplier_id': _mat_supplier_id,
                 'roll_width_mm': rw_mm,
                 'roll_length_fm': roll_length_fm,
                 'total': float(mat_cost.quantize(Decimal('0.01'))),
