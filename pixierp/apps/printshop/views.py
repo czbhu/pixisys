@@ -846,24 +846,31 @@ def _calculate_multi_roll(items_data, print_service_id, material_id, bleed_mm,
             if ci.calculation_type == 'area':
                 ci_total = p * total_area
                 svc_cost += ci_total
+                cp_area = Decimal(str(ci.cost_price or ci.selling_price or 0))
                 print_service_items.append({
                     'type': 'area', 'name': ci.name or 'Terület',
                     'area_m2_per': round(float(total_area), 4),
-                    'units': 1, 'price_per': float(p),
+                    'units': 1, 'price_per': float(p), 'cost_price_per': float(cp_area),
+                    'markup_percentage': round(float((p - cp_area) / cp_area * 100) if cp_area > 0 else 0, 2),
                     'total': round(float(ci_total), 2),
                 })
             elif ci.calculation_type == 'fixed':
                 svc_cost += p
+                cp_fix = Decimal(str(ci.cost_price or ci.selling_price or 0))
                 print_service_items.append({
                     'type': 'fixed', 'name': ci.name or 'Fix',
-                    'units': 1, 'price_per': float(p), 'total': float(p),
+                    'units': 1, 'price_per': float(p), 'cost_price_per': float(cp_fix),
+                    'markup_percentage': round(float((p - cp_fix) / cp_fix * 100) if cp_fix > 0 else 0, 2),
+                    'total': float(p),
                 })
             elif ci.calculation_type in ('click', 'unit'):
                 ci_total = p * Decimal(str(strip_count))
                 svc_cost += ci_total
+                cp_click = Decimal(str(ci.cost_price or ci.selling_price or 0))
                 print_service_items.append({
                     'type': 'click', 'name': ci.name or 'Click',
-                    'units': strip_count, 'price_per': float(p),
+                    'units': strip_count, 'price_per': float(p), 'cost_price_per': float(cp_click),
+                    'markup_percentage': round(float((p - cp_click) / cp_click * 100) if cp_click > 0 else 0, 2),
                     'total': round(float(ci_total), 2),
                 })
 
@@ -909,6 +916,7 @@ def _calculate_multi_roll(items_data, print_service_id, material_id, bleed_mm,
                 'name': _mat.name,
                 'unit': _mat.unit or 'm',
                 'price_per': _raw_sell,
+                'cost_price_per': float(_mat.unit_cost_price or _raw_sell),
                 'roll_width_mm': rw_mm,
                 'roll_length_fm': roll_length_fm,
                 'total': float(mat_cost.quantize(Decimal('0.01'))),
