@@ -1022,8 +1022,8 @@ const PrintShopPage: React.FC = () => {
             }
           }
         }
-        // Táblás anyagköltség (board_material_cost) – táblák száma + beszzállító
-        if (r4(bd.board_material_cost) > 0) {
+        // Táblás anyagköltség (board_material_cost) – táblák száma + beszzállító; multi-roll esetén a fallback kezeli
+        if (r4(bd.board_material_cost) > 0 && !bd._rollRows) {
           const boardsNeeded = bd.board_material_boards_needed ?? bd.boards_needed ?? 1;
           const pricePerBoard = r4(bd.board_material_price_per_board ?? (boardsNeeded > 0 ? bd.board_material_cost / boardsNeeded : bd.board_material_cost));
           const costPerBoard = r4(bd.board_material_cost_price_per_board ?? 0) || pricePerBoard;
