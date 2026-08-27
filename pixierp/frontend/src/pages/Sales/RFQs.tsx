@@ -2558,6 +2558,7 @@ const RFQs: React.FC = () => {
           description: d.description || '',
           _ps_mfg_id: d._ps_mfg_id || productId,
           _editor_state: d._editor_state || null,
+          formulas: { _price_from_cost_calc: true },
         }];
       });
     };
