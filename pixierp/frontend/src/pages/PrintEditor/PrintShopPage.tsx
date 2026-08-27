@@ -709,7 +709,6 @@ const PrintShopPage: React.FC = () => {
             markup_percent: cp > 0 ? Math.round((sp - cp) / cp * 100) : 0,
             is_internal: false, supplier: supId(mb.supplier_id), formulas: { _syncQty: false } });
         }
-        }
         for (const pi of (bd.print_service_items ?? [])) {
           const sp = r4(pi.price_per ?? 0); const cp = r4(pi.cost_price_per ?? pi.price_per ?? 0);
           costItems.push({ type: 'service', name: pi.name || bd.print_service_name || 'Nyomtatás',
@@ -1075,7 +1074,6 @@ const PrintShopPage: React.FC = () => {
             selling_unit_price: sp, selling_price: r4(mb.total),
             markup_percent: cp > 0 ? Math.round((sp - cp) / cp * 100) : 0,
             is_internal: false, supplier: supId(mb.supplier_id), formulas: { _syncQty: false } });
-        }
         }
         for (const pi of (bd.print_service_items ?? [])) {
           const sp = r4(pi.price_per ?? 0); const cp = r4(pi.cost_price_per ?? pi.price_per ?? 0);
