@@ -846,7 +846,7 @@ def _calculate_multi_roll(items_data, print_service_id, material_id, bleed_mm,
             if ci.calculation_type == 'area':
                 ci_total = p * total_area
                 svc_cost += ci_total
-                cp_area = Decimal(str(ci.cost_price or ci.selling_price or 0))
+                cp_area = Decimal(str(ci.unit_price or ci.selling_price or 0))
                 print_service_items.append({
                     'type': 'area', 'name': ci.name or 'Terület',
                     'area_m2_per': round(float(total_area), 4),
@@ -856,7 +856,7 @@ def _calculate_multi_roll(items_data, print_service_id, material_id, bleed_mm,
                 })
             elif ci.calculation_type == 'fixed':
                 svc_cost += p
-                cp_fix = Decimal(str(ci.cost_price or ci.selling_price or 0))
+                cp_fix = Decimal(str(ci.unit_price or ci.selling_price or 0))
                 print_service_items.append({
                     'type': 'fixed', 'name': ci.name or 'Fix',
                     'units': 1, 'price_per': float(p), 'cost_price_per': float(cp_fix),
@@ -866,7 +866,7 @@ def _calculate_multi_roll(items_data, print_service_id, material_id, bleed_mm,
             elif ci.calculation_type in ('click', 'unit'):
                 ci_total = p * Decimal(str(strip_count))
                 svc_cost += ci_total
-                cp_click = Decimal(str(ci.cost_price or ci.selling_price or 0))
+                cp_click = Decimal(str(ci.unit_price or ci.selling_price or 0))
                 print_service_items.append({
                     'type': 'click', 'name': ci.name or 'Click',
                     'units': strip_count, 'price_per': float(p), 'cost_price_per': float(cp_click),
