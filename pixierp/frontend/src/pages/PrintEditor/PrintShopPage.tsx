@@ -694,32 +694,6 @@ const PrintShopPage: React.FC = () => {
       const effectiveTotalForUnit = bd?._rollRows ? (bd.total ?? costItemsSellingTotal) : costItemsSellingTotal;
       const unitPrice = rfqTotalQty > 0 ? effectiveTotalForUnit / rfqTotalQty : 0;
       const isMultiRoll = !!(bd?._rollRows);
-      // Multi-size roll: build cost items from combined response when normal costItems are empty
-      if (isMultiRoll && costItems.length === 0) {
-        const mb = bd.material_breakdown;
-        if (mb && mb.total > 0) {
-          const sp = r4(mb.price_per ?? 0); const cp = r4(mb.cost_price_per ?? mb.price_per ?? 0);
-          const matUnit = mb.unit === 'm2' ? 'm²' : 'fm';
-          const matQty = mb.unit === 'm2'
-            ? r4((mb.roll_width_mm ?? 0) / 1000 * (mb.roll_length_fm ?? 0))
-            : r4(mb.roll_length_fm ?? 0);
-          costItems.push({ type: 'material', name: mb.name || 'Alapanyag',
-            quantity: matQty, unit: matUnit, cost_price: cp, unit_price: sp,
-            selling_unit_price: sp, selling_price: r4(mb.total),
-            markup_percent: cp > 0 ? Math.round((sp - cp) / cp * 100) : 0,
-            is_internal: false, supplier: supId(mb.supplier_id), formulas: { _syncQty: false } });
-        }
-        for (const pi of (bd.print_service_items ?? [])) {
-          const sp = r4(pi.price_per ?? 0); const cp = r4(pi.cost_price_per ?? pi.price_per ?? 0);
-          costItems.push({ type: 'service', name: pi.name || bd.print_service_name || 'Nyomtatás',
-            quantity: r4(pi.area_m2_per ?? pi.units ?? 1), unit: pi.type === 'area' ? 'm²' : 'db',
-            cost_price: cp, unit_price: sp,
-            selling_unit_price: sp, selling_price: r4(pi.total ?? 0),
-            markup_percent: r4(pi.markup_percentage ?? (cp > 0 ? (sp - cp) / cp * 100 : 0)),
-            is_internal: pi.is_internal ?? false, department: pi.department_id ?? null,
-            supplier: supId(pi.supplier_id), formulas: { _syncQty: false } });
-        }
-      }
       // Multi-size roll: 1 garnítúra = teljes összesített ár
       const rfqQty = isMultiRoll ? 1 : rfqTotalQty;
       const rfqUnit = isMultiRoll ? 'gar.' : 'db';
@@ -1022,14 +996,28 @@ const PrintShopPage: React.FC = () => {
             }
           }
         }
-        // Táblás anyagköltség (board_material_cost) – táblák száma + beszzállító; multi-roll esetén a fallback kezeli
-        if (r4(bd.board_material_cost) > 0 && !bd._rollRows) {
-          const boardsNeeded = bd.board_material_boards_needed ?? bd.boards_needed ?? 1;
-          const pricePerBoard = r4(bd.board_material_price_per_board ?? (boardsNeeded > 0 ? bd.board_material_cost / boardsNeeded : bd.board_material_cost));
-          const costPerBoard = r4(bd.board_material_cost_price_per_board ?? 0) || pricePerBoard;
-          const matTot = r4(bd.board_material_cost);
-          const matMarkup = costPerBoard > 0 ? Math.round((pricePerBoard / costPerBoard - 1) * 10000) / 100 : 0;
-          costItems.push({ type: 'material', name: bd.board_material_label ?? 'Alapanyag', quantity: boardsNeeded, unit: 'tábla', cost_price: costPerBoard, unit_price: pricePerBoard, selling_unit_price: pricePerBoard, selling_price: matTot, markup_percent: matMarkup, is_internal: false, supplier: supId(bd.board_material_supplier_id), formulas: { _syncQty: false } });
+        // Anyagköltség – multi-roll: material_breakdown mezőből, single-item: board_material_cost-ból
+        if (!costItems.some((ci: any) => ci.type === 'material')) {
+          const mb = bd.material_breakdown;
+          if (mb && r4(mb.total) > 0) {
+            const sp = r4(mb.price_per ?? 0); const cp = r4(mb.cost_price_per ?? mb.price_per ?? 0);
+            const matUnit = mb.unit === 'm2' ? 'm²' : 'fm';
+            const matQty = mb.unit === 'm2'
+              ? r4((mb.roll_width_mm ?? 0) / 1000 * (mb.roll_length_fm ?? 0))
+              : r4(mb.roll_length_fm ?? 0);
+            costItems.push({ type: 'material', name: mb.name || 'Alapanyag',
+              quantity: matQty || 1, unit: matUnit, cost_price: cp, unit_price: sp,
+              selling_unit_price: sp, selling_price: r4(mb.total),
+              markup_percent: cp > 0 ? Math.round((sp - cp) / cp * 100) : 0,
+              is_internal: false, supplier: supId(mb.supplier_id), formulas: { _syncQty: false } });
+          } else if (r4(bd.board_material_cost) > 0) {
+            const boardsNeeded = bd.board_material_boards_needed ?? bd.boards_needed ?? 1;
+            const pricePerBoard = r4(bd.board_material_price_per_board ?? (boardsNeeded > 0 ? bd.board_material_cost / boardsNeeded : bd.board_material_cost));
+            const costPerBoard = r4(bd.board_material_cost_price_per_board ?? 0) || pricePerBoard;
+            const matTot = r4(bd.board_material_cost);
+            const matMarkup = costPerBoard > 0 ? Math.round((pricePerBoard / costPerBoard - 1) * 10000) / 100 : 0;
+            costItems.push({ type: 'material', name: bd.board_material_label ?? 'Alapanyag', quantity: boardsNeeded, unit: 'tábla', cost_price: costPerBoard, unit_price: pricePerBoard, selling_unit_price: pricePerBoard, selling_price: matTot, markup_percent: matMarkup, is_internal: false, supplier: supId(bd.board_material_supplier_id), formulas: { _syncQty: false } });
+          }
         }
         for (const sb of (bd.service_breakdown ?? [])) {
           if (sb.items && sb.items.length > 0) {
@@ -1060,21 +1048,29 @@ const PrintShopPage: React.FC = () => {
       const effectiveTotalForUnit2 = bd?._rollRows ? (bd.total ?? sellingTotal) : sellingTotal;
       const unitPrice = totalQtyBd > 0 ? effectiveTotalForUnit2 / totalQtyBd : 0;
       const isMultiRollSave = !!(bd?._rollRows);
-      // Multi-size roll: build cost items from combined response when normal costItems are empty
-      if (isMultiRollSave && costItems.length === 0) {
-        const mb = bd.material_breakdown;
-        if (mb && mb.total > 0) {
+      // Anyagköltség – ha még nincs material item: multi-roll material_breakdown-ból, single-item board_material_cost-ból
+      if (!costItems.some((ci: any) => ci.type === 'material')) {
+        const mb = bd?.material_breakdown;
+        if (mb && r4(mb.total) > 0) {
           const sp = r4(mb.price_per ?? 0); const cp = r4(mb.cost_price_per ?? mb.price_per ?? 0);
           const matUnit = mb.unit === 'm2' ? 'm²' : 'fm';
           const matQty = mb.unit === 'm2'
             ? r4((mb.roll_width_mm ?? 0) / 1000 * (mb.roll_length_fm ?? 0))
             : r4(mb.roll_length_fm ?? 0);
           costItems.push({ type: 'material', name: mb.name || 'Alapanyag',
-            quantity: matQty, unit: matUnit, cost_price: cp, unit_price: sp,
+            quantity: matQty || 1, unit: matUnit, cost_price: cp, unit_price: sp,
             selling_unit_price: sp, selling_price: r4(mb.total),
             markup_percent: cp > 0 ? Math.round((sp - cp) / cp * 100) : 0,
             is_internal: false, supplier: supId(mb.supplier_id), formulas: { _syncQty: false } });
+        } else if (r4(bd?.board_material_cost) > 0) {
+          const boardsNeeded = bd.board_material_boards_needed ?? bd.boards_needed ?? 1;
+          const pricePerBoard = r4(bd.board_material_price_per_board ?? (boardsNeeded > 0 ? bd.board_material_cost / boardsNeeded : bd.board_material_cost));
+          const costPerBoard = r4(bd.board_material_cost_price_per_board ?? 0) || pricePerBoard;
+          costItems.push({ type: 'material', name: bd.board_material_label ?? 'Alapanyag', quantity: boardsNeeded, unit: 'tábla', cost_price: costPerBoard, unit_price: pricePerBoard, selling_unit_price: pricePerBoard, selling_price: r4(bd.board_material_cost), markup_percent: costPerBoard > 0 ? Math.round((pricePerBoard / costPerBoard - 1) * 10000) / 100 : 0, is_internal: false, supplier: supId(bd.board_material_supplier_id), formulas: { _syncQty: false } });
         }
+      }
+      // Multi-roll: ha print_service_items még nincsenek, add them
+      if (isMultiRollSave && !costItems.some((ci: any) => ci.type === 'service')) {
         for (const pi of (bd.print_service_items ?? [])) {
           const sp = r4(pi.price_per ?? 0); const cp = r4(pi.cost_price_per ?? pi.price_per ?? 0);
           costItems.push({ type: 'service', name: pi.name || bd.print_service_name || 'Nyomtatás',
