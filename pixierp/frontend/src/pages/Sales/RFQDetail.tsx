@@ -2159,7 +2159,9 @@ const RFQDetail: React.FC = () => {
         rfqId={id as any}
         rfqCurrency={activeCurrency}
         refreshTrigger={modalRefreshTrigger}
-      /> open={logsOpen} onCancel={() => setLogsOpen(false)} footer={null}>
+      />
+
+      <Modal title="Napló" open={logsOpen} onCancel={() => setLogsOpen(false)} footer={null}>
         <Table
           size="small"
           pagination={false}
