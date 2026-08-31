@@ -18,6 +18,58 @@ const tableCell = {
   border: '1px solid #ddd',
 };
 
+// Mobile card for an invoice line
+const LineCard = ({ line, idx, fmt, fmtQty }) => (
+  <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: '10px 12px', marginBottom: 8, background: '#fff', boxShadow: '0 1px 3px rgba(0,0,0,.06)' }}>
+    <div style={{ fontWeight: 600, marginBottom: 6, fontSize: 14 }}>
+      <span style={{ color: '#6b7280', marginRight: 6 }}>#{line.lineNumber || idx + 1}</span>
+      {line.description || '-'}
+    </div>
+    {(line.productCodes || []).length > 0 && (
+      <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 4 }}>Kód: {line.productCodes.join(', ')}</div>
+    )}
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '3px 12px', fontSize: 13 }}>
+      <div><span style={{ color: '#6b7280' }}>Menny: </span><strong>{fmtQty(line.qty)} {line.unit || ''}</strong></div>
+      <div><span style={{ color: '#6b7280' }}>ÁFA: </span><strong>{line.vatPct == null ? '-' : `${line.vatPct}%`}</strong></div>
+      <div><span style={{ color: '#6b7280' }}>Egységár: </span>{fmt(line.unitPrice)}</div>
+      <div><span style={{ color: '#6b7280' }}>Nettó: </span>{fmt(line.net)}</div>
+      <div><span style={{ color: '#6b7280' }}>ÁFA értéke: </span>{fmt(line.vat)}</div>
+      <div><span style={{ color: '#6b7280' }}>Bruttó: </span><strong>{fmt(line.gross)}</strong></div>
+    </div>
+  </div>
+);
+
+// Mobile card for an attachment
+const DocCard = ({ doc, resolveDocUrl, isPrintableDoc, printDocUrl, saveComment, deleteDoc, DOC_TYPE_LABEL, tableCell }) => {
+  const fileUrl = resolveDocUrl(doc.file);
+  const printable = isPrintableDoc(doc);
+  return (
+    <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: '10px 12px', marginBottom: 8, background: '#fff' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
+        <div>
+          <div style={{ fontWeight: 600, fontSize: 13 }}>{DOC_TYPE_LABEL[doc.type] || doc.type || '-'}</div>
+          <div style={{ fontSize: 11, color: '#9ca3af' }}>ID: {doc.id}</div>
+        </div>
+        <button type="button" onClick={() => deleteDoc(doc.id)} style={{ color: '#fff', background: '#c0392b', border: 'none', padding: '4px 10px', borderRadius: 4, fontSize: 13 }}>
+          Törlés
+        </button>
+      </div>
+      {fileUrl && <div style={{ marginBottom: 6 }}><a href={fileUrl} target="_blank" rel="noreferrer" style={{ fontSize: 13 }}>{doc.original_name || 'Megnyitás'}</a></div>}
+      {fileUrl && printable && (
+        <button type="button" onClick={() => printDocUrl(fileUrl)} style={{ border: '1px solid #cbd5e1', borderRadius: 4, padding: '4px 10px', background: '#fff', cursor: 'pointer', fontSize: 13, marginBottom: 6, display: 'block' }}>
+          Nyomtatás
+        </button>
+      )}
+      <input
+        defaultValue={doc.comment || ''}
+        placeholder="Megjegyzés"
+        onBlur={(e) => saveComment(doc, e.target.value)}
+        style={{ width: '100%', padding: '6px 8px', border: '1px solid #ddd', borderRadius: 4, fontSize: 13, boxSizing: 'border-box' }}
+      />
+    </div>
+  );
+};
+
 const DOC_TYPE_OPTIONS = [
   { value: 'IMAGE', label: 'számlakép' },
   { value: 'OTHER', label: 'egyéb' },
@@ -204,6 +256,14 @@ export default function IncomingInvoiceOpen() {
   const invoiceNumber = params.get('invoice_number') || '';
   const supplierTaxNumber = params.get('supplier_tax_number') || '';
   const externalOutgoing = String(params.get('external_outgoing') || '').toLowerCase() === '1' || String(params.get('external_outgoing') || '').toLowerCase() === 'true';
+
+  const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768);
+
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -521,7 +581,7 @@ export default function IncomingInvoiceOpen() {
           value={uploadComment}
           onChange={(e) => setUploadComment(e.target.value)}
           placeholder="Megjegyzés feltöltéshez"
-          style={{ minWidth: 280, padding: 6 }}
+          style={{ minWidth: isMobile ? '100%' : 280, padding: 6 }}
         />
         <button type="button" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
           {uploading ? 'Feltöltés…' : 'Fájl feltöltés'}
@@ -537,63 +597,85 @@ export default function IncomingInvoiceOpen() {
         Húzd ide a fájlokat feltöltéshez (DnD)
       </div>
 
-      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-        <thead>
-          <tr style={{ background: '#f3f4f6' }}>
-            <th style={tableCell}>ID</th>
-            <th style={tableCell}>Típus</th>
-            <th style={tableCell}>Link</th>
-            <th style={tableCell}>Nyomtatás</th>
-            <th style={tableCell}>Megjegyzés</th>
-            <th style={tableCell}>Törlés</th>
-          </tr>
-        </thead>
-        <tbody>
+      {isMobile ? (
+        <div>
           {docsLoading ? (
-            <tr><td colSpan={6} style={{ ...tableCell, textAlign: 'center' }}>Betöltés…</td></tr>
+            <div style={{ textAlign: 'center', color: '#6b7280', padding: 12 }}>Betöltés…</div>
           ) : docs.length === 0 ? (
-            <tr><td colSpan={6} style={{ ...tableCell, textAlign: 'center', color: '#6b7280' }}>Nincs feltöltött fájl</td></tr>
-          ) : docs.map((doc) => {
-            const fileUrl = resolveDocUrl(doc.file);
-            const printable = isPrintableDoc(doc);
-            return (
-              <tr key={doc.id}>
-                <td style={{ ...tableCell, fontSize: 12, wordBreak: 'break-all' }}>{doc.id}</td>
-                <td style={tableCell}>{DOC_TYPE_LABEL[doc.type] || doc.type || '-'}</td>
-                <td style={tableCell}>
-                  {fileUrl ? (
-                    <a href={fileUrl} target="_blank" rel="noreferrer">{doc.original_name || 'Megnyitás'}</a>
-                  ) : '-'}
-                </td>
-                <td style={{ ...tableCell, textAlign: 'center' }}>
-                  {fileUrl && printable ? (
-                    <button
-                      type="button"
-                      onClick={() => printDocUrl(fileUrl)}
-                      style={{ border: '1px solid #cbd5e1', borderRadius: 4, padding: '6px 10px', background: '#fff', cursor: 'pointer' }}
-                    >
-                      Nyomtatás
+            <div style={{ textAlign: 'center', color: '#6b7280', padding: 12 }}>Nincs feltöltött fájl</div>
+          ) : docs.map((doc) => (
+            <DocCard
+              key={doc.id}
+              doc={doc}
+              resolveDocUrl={resolveDocUrl}
+              isPrintableDoc={isPrintableDoc}
+              printDocUrl={printDocUrl}
+              saveComment={saveComment}
+              deleteDoc={deleteDoc}
+              DOC_TYPE_LABEL={DOC_TYPE_LABEL}
+              tableCell={tableCell}
+            />
+          ))}
+        </div>
+      ) : (
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr style={{ background: '#f3f4f6' }}>
+              <th style={tableCell}>ID</th>
+              <th style={tableCell}>Típus</th>
+              <th style={tableCell}>Link</th>
+              <th style={tableCell}>Nyomtatás</th>
+              <th style={tableCell}>Megjegyzés</th>
+              <th style={tableCell}>Törlés</th>
+            </tr>
+          </thead>
+          <tbody>
+            {docsLoading ? (
+              <tr><td colSpan={6} style={{ ...tableCell, textAlign: 'center' }}>Betöltés…</td></tr>
+            ) : docs.length === 0 ? (
+              <tr><td colSpan={6} style={{ ...tableCell, textAlign: 'center', color: '#6b7280' }}>Nincs feltöltött fájl</td></tr>
+            ) : docs.map((doc) => {
+              const fileUrl = resolveDocUrl(doc.file);
+              const printable = isPrintableDoc(doc);
+              return (
+                <tr key={doc.id}>
+                  <td style={{ ...tableCell, fontSize: 12, wordBreak: 'break-all' }}>{doc.id}</td>
+                  <td style={tableCell}>{DOC_TYPE_LABEL[doc.type] || doc.type || '-'}</td>
+                  <td style={tableCell}>
+                    {fileUrl ? (
+                      <a href={fileUrl} target="_blank" rel="noreferrer">{doc.original_name || 'Megnyitás'}</a>
+                    ) : '-'}
+                  </td>
+                  <td style={{ ...tableCell, textAlign: 'center' }}>
+                    {fileUrl && printable ? (
+                      <button
+                        type="button"
+                        onClick={() => printDocUrl(fileUrl)}
+                        style={{ border: '1px solid #cbd5e1', borderRadius: 4, padding: '6px 10px', background: '#fff', cursor: 'pointer' }}
+                      >
+                        Nyomtatás
+                      </button>
+                    ) : '-'}
+                  </td>
+                  <td style={tableCell}>
+                    <input
+                      defaultValue={doc.comment || ''}
+                      placeholder="Megjegyzés"
+                      onBlur={(e) => saveComment(doc, e.target.value)}
+                      style={{ width: '100%', padding: 6 }}
+                    />
+                  </td>
+                  <td style={{ ...tableCell, textAlign: 'center' }}>
+                    <button type="button" onClick={() => deleteDoc(doc.id)} style={{ color: '#fff', background: '#c0392b', border: 'none', padding: '6px 10px', borderRadius: 4 }}>
+                      Törlés
                     </button>
-                  ) : '-'}
-                </td>
-                <td style={tableCell}>
-                  <input
-                    defaultValue={doc.comment || ''}
-                    placeholder="Megjegyzés"
-                    onBlur={(e) => saveComment(doc, e.target.value)}
-                    style={{ width: '100%', padding: 6 }}
-                  />
-                </td>
-                <td style={{ ...tableCell, textAlign: 'center' }}>
-                  <button type="button" onClick={() => deleteDoc(doc.id)} style={{ color: '#fff', background: '#c0392b', border: 'none', padding: '6px 10px', borderRadius: 4 }}>
-                    Törlés
-                  </button>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
     </div>
   );
 
@@ -622,7 +704,7 @@ export default function IncomingInvoiceOpen() {
     <div style={{ padding: 20 }}>
       <h2 style={{ marginTop: 0 }}>Számla: {parsed.invoiceNumber || invoiceNumber || '-'}</h2>
 
-      <div style={{ display: 'grid', gridTemplateColumns: (externalOutgoing || parsed.customer?.name) ? '1fr 1fr 1fr' : '1fr 1fr', gap: 12, marginBottom: 12 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : ((externalOutgoing || parsed.customer?.name) ? '1fr 1fr 1fr' : '1fr 1fr'), gap: 12, marginBottom: 12 }}>
         <div style={cardStyle}>
           <div style={{ fontWeight: 700, marginBottom: 6 }}>Szállító</div>
           <div>{parsed.supplier?.name || '-'}</div>
@@ -648,6 +730,13 @@ export default function IncomingInvoiceOpen() {
         </div>
       </div>
 
+      {isMobile ? (
+        <div style={{ marginBottom: 12 }}>
+          {(parsed.lines || []).map((line, idx) => (
+            <LineCard key={`line-${idx}`} line={line} idx={idx} fmt={fmt} fmtQty={fmtQty} />
+          ))}
+        </div>
+      ) : (
       <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: 12 }}>
         <thead>
           <tr style={{ background: '#f3f4f6' }}>
@@ -680,10 +769,23 @@ export default function IncomingInvoiceOpen() {
           ))}
         </tbody>
       </table>
+      )}
 
       {(parsed.vatSummary || []).length > 0 && (
         <>
           <div style={{ fontWeight: 700, margin: '8px 0 6px' }}>ÁFA összesítő</div>
+          {isMobile ? (
+            <div style={{ marginBottom: 12 }}>
+              {parsed.vatSummary.map((row, idx) => (
+                <div key={`vat-${idx}`} style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 12px', marginBottom: 6, background: '#fff', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '3px 12px', fontSize: 13 }}>
+                  <div style={{ gridColumn: '1/-1', fontWeight: 600, marginBottom: 2 }}>ÁFA: {row.label || '-'}</div>
+                  <div><span style={{ color: '#6b7280' }}>Nettó: </span>{fmt(row.net)}</div>
+                  <div><span style={{ color: '#6b7280' }}>ÁFA összeg: </span>{fmt(row.vat)}</div>
+                  <div style={{ gridColumn: '1/-1' }}><span style={{ color: '#6b7280' }}>Bruttó: </span><strong>{fmt(row.gross)}</strong></div>
+                </div>
+              ))}
+            </div>
+          ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: 12 }}>
             <thead>
               <tr style={{ background: '#f3f4f6' }}>
@@ -704,6 +806,7 @@ export default function IncomingInvoiceOpen() {
               ))}
             </tbody>
           </table>
+          )}
         </>
       )}
 
