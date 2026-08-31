@@ -1154,8 +1154,15 @@ const PrintShopPage: React.FC = () => {
             rfqId, productId, autoName, saveQty,
             description, saveUnit, saveUnitPrice, 27, 0, 0,
             isMultiRollSave ? { _price_from_cost_calc: true as any } : {},
+            { _ps_mfg_id: productId },
           );
           setSavedRfqQriId(qri.id);
+          // Notify parent tab so it refreshes without a full reload
+          try {
+            const bc = new BroadcastChannel('printshop_rfq_updates');
+            bc.postMessage({ type: 'ITEM_UPDATED', rfqId, qriId: qri.id });
+            bc.close();
+          } catch {}
         } else {
           const { salesService: ss } = await import('../../services/salesService');
           await ss.updateQuoteItem(rfqId, savedRfqQriId, {
