@@ -97,8 +97,8 @@ interface ItemSelectorModalProps {
   saveRef?: React.MutableRefObject<{ save: (keepOpen: boolean) => Promise<void> } | null>;
   /** Callback to save an imposition snapshot at RFQ level (shows "Mentés az ajánlathoz" button in ImpositionHelperModal) */
   onImpositionSaveToRfq?: (snapshot: any, autoName: string) => void | Promise<void>;
-  /** Visual-only group discount percent to show alongside the selling price */
-  groupDiscountPct?: number;
+  /** When incremented, forces the manufacturing product data to reload (for real-time PrintShop updates) */
+  refreshTrigger?: number;
 }
 
 interface CostItem {
@@ -133,7 +133,7 @@ const { Search } = Input;
 
 const defaultVat = 27;
 
-export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defaultType = 'product', onCancel, onAdd, allowCreate = true, mode = 'add', initialSelection, initialValues, initialFormulas, customer, rfqId, rfqCurrency, initialManuPayload, quoteItemId, onManufacturingMarked, showCostTypeField, orderItems, expandCosts, renderInline = false, hideCodeField = false, saveRef, onImpositionSaveToRfq, groupDiscountPct = 0 }) => {
+export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defaultType = 'product', onCancel, onAdd, allowCreate = true, mode = 'add', initialSelection, initialValues, initialFormulas, customer, rfqId, rfqCurrency, initialManuPayload, quoteItemId, onManufacturingMarked, showCostTypeField, orderItems, expandCosts, renderInline = false, hideCodeField = false, saveRef, onImpositionSaveToRfq, groupDiscountPct = 0, refreshTrigger = 0 }) => {
   const navigate = useNavigate();
   const screens = Grid.useBreakpoint();
   const isMobile = !screens.md;
@@ -555,7 +555,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
       }
     };
     pickFromLists();
-  }, [open, products, manuProducts, services, initialSelection, mode, initialValues]);
+  }, [open, products, manuProducts, services, initialSelection, mode, initialValues, refreshTrigger]);
 
   // When editing an existing manufacturing item, fetch full product (incl. cost_items) and pre-fill the inline form.
   // Also runs when mode='add' with an existing ref_id (copy flow) — pre-fills the form but does NOT set manuCreatedId,

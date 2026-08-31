@@ -69,6 +69,7 @@ const RFQDetail: React.FC = () => {
   const [selectorOpen, setSelectorOpen] = useState(false);
   const [selectorType, setSelectorType] = useState<'product' | 'manufacturing' | 'service'>('product');
   const [editContext, setEditContext] = useState<null | { item: any }>(null);
+  const [modalRefreshTrigger, setModalRefreshTrigger] = useState(0);
   const itemSaveRef = useRef<{ save: (keepOpen: boolean) => Promise<void> } | null>(null);
   const [manufacturingFiles, setManufacturingFiles] = useState<any[]>([]);
   const [rfqPendingRemark, setRfqPendingRemark] = useState<string>('');
@@ -537,6 +538,7 @@ const RFQDetail: React.FC = () => {
               const updatedItem = (fresh.items || []).find((it: any) => it.id === qriId);
               if (updatedItem) {
                 setEditContext((ec: any) => ec?.item?.id === qriId ? { ...ec, item: updatedItem } : ec);
+                setModalRefreshTrigger((n) => n + 1);
               }
             }
           } catch {}
@@ -1815,6 +1817,7 @@ const RFQDetail: React.FC = () => {
             quoteItemId={editContext.item.id}
             onManufacturingMarked={refreshManufacturingFiles}
             groupDiscountPct={computeDetailItemDiscount(editContext.item)}
+            refreshTrigger={modalRefreshTrigger}
           />
         </div>
         )}
@@ -2155,7 +2158,7 @@ const RFQDetail: React.FC = () => {
         mode="add"
         rfqId={id as any}
         rfqCurrency={activeCurrency}
-      />
+        refreshTrigger={modalRefreshTrigger}
 
       <Modal title="Napló" open={logsOpen} onCancel={() => setLogsOpen(false)} footer={null}>
         <Table
