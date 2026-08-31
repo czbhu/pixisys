@@ -1583,7 +1583,7 @@ const Invoices = () => {
                 );
                 return (
               <React.Fragment key={invoice.id}>
-              <Tooltip title={getItemsTooltipContent(invoice)} placement="bottom" overlayStyle={{ maxWidth: 620 }} mouseEnterDelay={0.4}>
+              <Tooltip title={getItemsTooltipContent(invoice)} placement="top" overlayStyle={{ maxWidth: 620 }} mouseEnterDelay={0.4}>
               <TableRow
                 $storno={isSt}
                 $cancelled={isCancelled}
