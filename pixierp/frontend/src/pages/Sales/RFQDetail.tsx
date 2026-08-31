@@ -525,9 +525,21 @@ const RFQDetail: React.FC = () => {
     let bc: BroadcastChannel | null = null;
     try {
       bc = new BroadcastChannel('printshop_rfq_updates');
-      bc.onmessage = (e) => {
+      bc.onmessage = async (e) => {
         if (e.data?.type === 'ITEM_UPDATED' && String(e.data?.rfqId) === String(id)) {
-          refreshItems();
+          try {
+            const nid = rfqNumericIdRef.current || id;
+            const fresh = await salesService.getQuoteRequest(nid as any);
+            setRfq((prev: any) => prev ? { ...prev, items: fresh.items } : fresh);
+            // Sync open editContext so modal sees updated cost items and pricing
+            const qriId = e.data?.qriId;
+            if (qriId) {
+              const updatedItem = (fresh.items || []).find((it: any) => it.id === qriId);
+              if (updatedItem) {
+                setEditContext((ec: any) => ec?.item?.id === qriId ? { ...ec, item: updatedItem } : ec);
+              }
+            }
+          } catch {}
         }
       };
     } catch {}
