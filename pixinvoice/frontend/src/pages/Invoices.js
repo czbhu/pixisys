@@ -746,7 +746,6 @@ const Invoices = () => {
 
   const toggleMobileActionsForInvoice = React.useCallback((invoiceId) => {
     setMobileActionsInvoiceId((prev) => (prev === invoiceId ? null : invoiceId));
-    setOpenTooltipInvoiceId(null);
   }, []);
 
   const handleTooltipRowTouch = React.useCallback((invoiceId) => {
