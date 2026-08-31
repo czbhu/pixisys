@@ -231,6 +231,12 @@ const PrintShopPage: React.FC = () => {
       delete existing.itemId;
       localStorage.setItem(STORAGE_KEY, JSON.stringify(existing));
     } catch {}
+    // Clear saved rollRows so new items start fresh
+    try {
+      const es = JSON.parse(localStorage.getItem('pixierp_editor_state') || '{}');
+      delete es._rollRows;
+      localStorage.setItem('pixierp_editor_state', JSON.stringify(es));
+    } catch {}
   }, [fromRfq, editMfgId]);
 
   // Load printshop_params from the manufacturing product when editing
@@ -242,19 +248,22 @@ const PrintShopPage: React.FC = () => {
       if (saved && typeof saved === 'object') {
         const { price_breakdown: _pb, _editor_state: editorState, _click_state: _legacyCs, _custom_cost_items: savedCustomCosts, ...printParams } = saved;
         setParams(prev => ({ ...prev, ...printParams }));
-        // Egyedi költségek visszaállítása
         if (Array.isArray(savedCustomCosts) && savedCustomCosts.length > 0) {
           try { localStorage.setItem('pixierp_custom_cost_items', JSON.stringify(savedCustomCosts)); } catch {}
         }
-        // Kész termékek/utómunkák visszaállítása: pixierp_editor_state (selected_product_id + clickState) visszaírása
-        const stateToRestore = editorState || (_legacyCs ? { clickState: _legacyCs } : null);
-        if (stateToRestore && typeof stateToRestore === 'object' && Object.keys(stateToRestore).length > 0) {
+        // Merge editorState + _rollRows from printParams into pixierp_editor_state
+        const rollRowsToRestore = (printParams as any)._rollRows ?? editorState?._rollRows ?? null;
+        const stateToRestore: Record<string, any> = {
+          ...(editorState && typeof editorState === 'object' && Object.keys(editorState).length ? editorState : {}),
+          ...(rollRowsToRestore ? { _rollRows: rollRowsToRestore } : {}),
+          ...(_legacyCs ? { clickState: _legacyCs } : {}),
+        };
+        if (Object.keys(stateToRestore).length > 0) {
           try {
-            // Meglévő state-tel merge: csak a mentett mezőket írjuk felül
             const existing = JSON.parse(localStorage.getItem('pixierp_editor_state') || '{}');
             localStorage.setItem('pixierp_editor_state', JSON.stringify({ ...existing, ...stateToRestore }));
           } catch {}
-          setPanelKey(prev => prev + 1); // PrintParamsPanel újrabetöltés
+          setPanelKey(prev => prev + 1);
         }
       }
     }).catch(() => {});

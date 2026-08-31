@@ -496,11 +496,33 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
     const calcType = products.find(p => p.id === selectedProductId)?.calculator_type;
     if (calcType !== 'roll_print') return;
     if (rollRows.length === 0) {
+      // Restore from localStorage if saved (e.g. from a previous PrintShop session for this product)
+      try {
+        const stored = JSON.parse(localStorage.getItem('pixierp_editor_state') || '{}');
+        if (Array.isArray(stored._rollRows) && stored._rollRows.length > 0) {
+          setRollRows(stored._rollRows.map((r: any, idx: number) => ({
+            id: rollRowIdRef.current + idx, width_mm: r.width_mm, height_mm: r.height_mm, quantity: r.quantity,
+          })));
+          rollRowIdRef.current += stored._rollRows.length;
+          setRollRowsEnabled(true);
+          return;
+        }
+      } catch {}
       const id = rollRowIdRef.current++;
       setRollRows([{ id, width_mm: params.width_mm ?? 100, height_mm: params.height_mm ?? 100, quantity: params.quantity ?? 1 }]);
       setRollRowsEnabled(true);
     }
   }, [selectedProductId, products]); // eslint-disable-line
+
+  // Persist rollRows to localStorage so they survive panel remount / page reopen
+  useEffect(() => {
+    if (!rollRowsEnabled || rollRows.length === 0) return;
+    try {
+      const o = JSON.parse(localStorage.getItem('pixierp_editor_state') || '{}');
+      o._rollRows = rollRows.map(({ width_mm, height_mm, quantity }) => ({ width_mm, height_mm, quantity }));
+      localStorage.setItem('pixierp_editor_state', JSON.stringify(o));
+    } catch {}
+  }, [rollRows, rollRowsEnabled]);
 
   // Combined multi-row calculation for roll products — one combined API call
   useEffect(() => {
