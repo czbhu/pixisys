@@ -97,6 +97,8 @@ interface ItemSelectorModalProps {
   saveRef?: React.MutableRefObject<{ save: (keepOpen: boolean) => Promise<void> } | null>;
   /** Callback to save an imposition snapshot at RFQ level (shows "Mentés az ajánlathoz" button in ImpositionHelperModal) */
   onImpositionSaveToRfq?: (snapshot: any, autoName: string) => void | Promise<void>;
+  /** Visual-only group discount percent to show alongside the selling price */
+  groupDiscountPct?: number;
   /** When incremented, forces the manufacturing product data to reload (for real-time PrintShop updates) */
   refreshTrigger?: number;
 }
