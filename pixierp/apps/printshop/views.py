@@ -793,7 +793,7 @@ def _calculate_multi_roll(items_data, print_service_id, material_id, bleed_mm,
     bleed = float(bleed_mm or 0)
 
     try:
-        _mat = _Mat.objects.prefetch_related('materialsupplier_set').get(id=material_id)
+        _mat = _Mat.objects.prefetch_related('materialsupplier_set', 'cost_items').get(id=material_id)
         _svc = _Svc.objects.prefetch_related('cost_items').get(id=print_service_id)
     except Exception:
         return None
@@ -804,6 +804,12 @@ def _calculate_multi_roll(items_data, print_service_id, material_id, bleed_mm,
     _mat_sup = _mat.materialsupplier_set.first()
     if _mat_sup:
         _mat_supplier_id = _mat_sup.supplier_id
+
+    # Default pricing version: prefer '1. verzió', else first alphabetically
+    _mat_cost_items_qs = list(_mat.cost_items.filter(is_active=True))
+    _versions = sorted(set(ci.price_calculation_version for ci in _mat_cost_items_qs))
+    _default_version = next((v for v in _versions if '1.' in v or 'alap' in v.lower()), (_versions[0] if _versions else None))
+    _default_mat_cost_items = [ci for ci in _mat_cost_items_qs if ci.price_calculation_version == _default_version] if _default_version else []
 
     # Build per-item effective dimensions
     def _item_info(it, rw_mm, force_rot):
@@ -832,11 +838,52 @@ def _calculate_multi_roll(items_data, print_service_id, material_id, bleed_mm,
         if total_roll_mm <= 0:
             return None
         roll_length_fm = _math.ceil(total_roll_mm / 100) / 10
+        roll_area_m2 = roll_length_fm * (rw_mm / 1000)
 
-        if _mat.unit == 'm2':
-            mat_cost = Decimal(str(_raw_sell)) * Decimal(str(roll_length_fm)) * Decimal(str(rw_mm / 1000))
+        # Material cost from MaterialCostItem records (default pricing version)
+        mat_cost = Decimal('0')
+        material_cost_items = []
+        if _default_mat_cost_items:
+            for mci in _default_mat_cost_items:
+                pq = float(mci.price_quantity or 1)
+                sp = float(mci.selling_price or 0)
+                cp = float(mci.unit_price or mci.selling_price or 0)
+                mk = float(mci.markup_percentage or 0)
+                ct = mci.calculation_type
+                if ct == 'area':
+                    qty = roll_area_m2
+                    unit = 'm²'
+                elif ct in ('length', 'perimeter'):
+                    qty = roll_length_fm
+                    unit = 'fm'
+                elif ct == 'fixed':
+                    qty = 1
+                    unit = mci.unit or 'db'
+                else:
+                    qty = 1
+                    unit = mci.unit or 'db'
+                ci_total_sell = round(qty * sp / pq, 2)
+                ci_total_cost = round(qty * cp / pq, 2)
+                mat_cost += Decimal(str(ci_total_sell))
+                material_cost_items.append({
+                    'name': f"{_mat.name} - {mci.name}",
+                    'calculation_type': ct,
+                    'unit': unit,
+                    'quantity': round(qty, 4),
+                    'unit_price': round(cp / pq, 4),
+                    'selling_price': round(sp / pq, 4),
+                    'markup_percentage': mk,
+                    'total_sell': ci_total_sell,
+                    'total_cost': ci_total_cost,
+                    'supplier_id': mci.supplier_id,
+                    'is_internal': mci.is_internal,
+                })
         else:
-            mat_cost = Decimal(str(_raw_sell)) * Decimal(str(roll_length_fm))
+            # Fallback: use material unit_selling_price
+            if _mat.unit == 'm2':
+                mat_cost = Decimal(str(_raw_sell)) * Decimal(str(roll_area_m2))
+            else:
+                mat_cost = Decimal(str(_raw_sell)) * Decimal(str(roll_length_fm))
 
         # Area cost = sum of individual print areas (independent of layout)
         total_area = sum(
@@ -928,6 +975,7 @@ def _calculate_multi_roll(items_data, print_service_id, material_id, bleed_mm,
                 'roll_width_mm': rw_mm,
                 'roll_length_fm': roll_length_fm,
                 'total': float(mat_cost.quantize(Decimal('0.01'))),
+                'material_cost_items': material_cost_items,
             },
         }
 

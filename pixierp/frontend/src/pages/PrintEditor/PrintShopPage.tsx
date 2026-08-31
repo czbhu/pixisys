@@ -999,17 +999,29 @@ const PrintShopPage: React.FC = () => {
         // Anyagköltség – multi-roll: material_breakdown mezőből, single-item: board_material_cost-ból
         if (!costItems.some((ci: any) => ci.type === 'material')) {
           const mb = bd.material_breakdown;
-          if (mb && r4(mb.total) > 0) {
-            const sp = r4(mb.price_per ?? 0); const cp = r4(mb.cost_price_per ?? mb.price_per ?? 0);
-            const matUnit = mb.unit === 'm2' ? 'm²' : 'fm';
-            const matQty = mb.unit === 'm2'
-              ? r4((mb.roll_width_mm ?? 0) / 1000 * (mb.roll_length_fm ?? 0))
-              : r4(mb.roll_length_fm ?? 0);
-            costItems.push({ type: 'material', name: mb.name || 'Alapanyag',
-              quantity: matQty || 1, unit: matUnit, cost_price: cp, unit_price: sp,
-              selling_unit_price: sp, selling_price: r4(mb.total),
-              markup_percent: cp > 0 ? Math.round((sp - cp) / cp * 100) : 0,
-              is_internal: false, supplier: supId(mb.supplier_id), formulas: { _syncQty: false } });
+          if (mb && (mb.material_cost_items?.length || r4(mb.total) > 0)) {
+            if (mb.material_cost_items?.length) {
+              for (const mci of mb.material_cost_items) {
+                costItems.push({ type: 'material', name: mci.name,
+                  quantity: r4(mci.quantity || 1), unit: mci.unit || 'm²',
+                  cost_price: r4(mci.unit_price ?? 0), unit_price: r4(mci.selling_price ?? 0),
+                  selling_unit_price: r4(mci.selling_price ?? 0), selling_price: r4(mci.total_sell ?? 0),
+                  markup_percent: r4(mci.markup_percentage ?? 0),
+                  is_internal: mci.is_internal ?? false, supplier: supId(mci.supplier_id),
+                  formulas: { _syncQty: false } });
+              }
+            } else {
+              const sp = r4(mb.price_per ?? 0); const cp = r4(mb.cost_price_per ?? mb.price_per ?? 0);
+              const matUnit = mb.unit === 'm2' ? 'm²' : 'fm';
+              const matQty = mb.unit === 'm2'
+                ? r4((mb.roll_width_mm ?? 0) / 1000 * (mb.roll_length_fm ?? 0))
+                : r4(mb.roll_length_fm ?? 0);
+              costItems.push({ type: 'material', name: mb.name || 'Alapanyag',
+                quantity: matQty || 1, unit: matUnit, cost_price: cp, unit_price: sp,
+                selling_unit_price: sp, selling_price: r4(mb.total),
+                markup_percent: cp > 0 ? Math.round((sp - cp) / cp * 100) : 0,
+                is_internal: false, supplier: supId(mb.supplier_id), formulas: { _syncQty: false } });
+            }
           } else if (r4(bd.board_material_cost) > 0) {
             const boardsNeeded = bd.board_material_boards_needed ?? bd.boards_needed ?? 1;
             const pricePerBoard = r4(bd.board_material_price_per_board ?? (boardsNeeded > 0 ? bd.board_material_cost / boardsNeeded : bd.board_material_cost));
@@ -1048,20 +1060,32 @@ const PrintShopPage: React.FC = () => {
       const effectiveTotalForUnit2 = bd?._rollRows ? (bd.total ?? sellingTotal) : sellingTotal;
       const unitPrice = totalQtyBd > 0 ? effectiveTotalForUnit2 / totalQtyBd : 0;
       const isMultiRollSave = !!(bd?._rollRows);
-      // Anyagköltség – ha még nincs material item: multi-roll material_breakdown-ból, single-item board_material_cost-ból
+      // Anyagköltség – ha még nincs material item: material_cost_items > material_breakdown > board_material_cost
       if (!costItems.some((ci: any) => ci.type === 'material')) {
         const mb = bd?.material_breakdown;
-        if (mb && r4(mb.total) > 0) {
-          const sp = r4(mb.price_per ?? 0); const cp = r4(mb.cost_price_per ?? mb.price_per ?? 0);
-          const matUnit = mb.unit === 'm2' ? 'm²' : 'fm';
-          const matQty = mb.unit === 'm2'
-            ? r4((mb.roll_width_mm ?? 0) / 1000 * (mb.roll_length_fm ?? 0))
-            : r4(mb.roll_length_fm ?? 0);
-          costItems.push({ type: 'material', name: mb.name || 'Alapanyag',
-            quantity: matQty || 1, unit: matUnit, cost_price: cp, unit_price: sp,
-            selling_unit_price: sp, selling_price: r4(mb.total),
-            markup_percent: cp > 0 ? Math.round((sp - cp) / cp * 100) : 0,
-            is_internal: false, supplier: supId(mb.supplier_id), formulas: { _syncQty: false } });
+        if (mb && (mb.material_cost_items?.length || r4(mb.total) > 0)) {
+          if (mb.material_cost_items?.length) {
+            for (const mci of mb.material_cost_items) {
+              costItems.push({ type: 'material', name: mci.name,
+                quantity: r4(mci.quantity || 1), unit: mci.unit || 'm²',
+                cost_price: r4(mci.unit_price ?? 0), unit_price: r4(mci.selling_price ?? 0),
+                selling_unit_price: r4(mci.selling_price ?? 0), selling_price: r4(mci.total_sell ?? 0),
+                markup_percent: r4(mci.markup_percentage ?? 0),
+                is_internal: mci.is_internal ?? false, supplier: supId(mci.supplier_id),
+                formulas: { _syncQty: false } });
+            }
+          } else {
+            const sp = r4(mb.price_per ?? 0); const cp = r4(mb.cost_price_per ?? mb.price_per ?? 0);
+            const matUnit = mb.unit === 'm2' ? 'm²' : 'fm';
+            const matQty = mb.unit === 'm2'
+              ? r4((mb.roll_width_mm ?? 0) / 1000 * (mb.roll_length_fm ?? 0))
+              : r4(mb.roll_length_fm ?? 0);
+            costItems.push({ type: 'material', name: mb.name || 'Alapanyag',
+              quantity: matQty || 1, unit: matUnit, cost_price: cp, unit_price: sp,
+              selling_unit_price: sp, selling_price: r4(mb.total),
+              markup_percent: cp > 0 ? Math.round((sp - cp) / cp * 100) : 0,
+              is_internal: false, supplier: supId(mb.supplier_id), formulas: { _syncQty: false } });
+          }
         } else if (r4(bd?.board_material_cost) > 0) {
           const boardsNeeded = bd.board_material_boards_needed ?? bd.boards_needed ?? 1;
           const pricePerBoard = r4(bd.board_material_price_per_board ?? (boardsNeeded > 0 ? bd.board_material_cost / boardsNeeded : bd.board_material_cost));
