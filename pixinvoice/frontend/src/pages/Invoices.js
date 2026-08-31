@@ -510,6 +510,7 @@ const Invoices = () => {
   const [navLogModalOpen, setNavLogModalOpen] = useState(false);
   const [navLogInvoice, setNavLogInvoice] = useState(null);
   const [mobileActionsInvoiceId, setMobileActionsInvoiceId] = useState(null);
+  const [openTooltipInvoiceId, setOpenTooltipInvoiceId] = useState(null);
   const navigate = useNavigate();
   const headerSelectRef = React.useRef(null);
   const lastCheckedIndexRef = React.useRef(-1);
@@ -745,6 +746,12 @@ const Invoices = () => {
 
   const toggleMobileActionsForInvoice = React.useCallback((invoiceId) => {
     setMobileActionsInvoiceId((prev) => (prev === invoiceId ? null : invoiceId));
+    setOpenTooltipInvoiceId(null);
+  }, []);
+
+  const handleTooltipRowTouch = React.useCallback((invoiceId) => {
+    if (!isMobileViewport()) return;
+    setOpenTooltipInvoiceId((prev) => (prev === invoiceId ? null : invoiceId));
   }, []);
 
   const handleRowTouchTap = React.useCallback((event, invoiceId) => {
@@ -1583,14 +1590,21 @@ const Invoices = () => {
                 );
                 return (
               <React.Fragment key={invoice.id}>
-              <Tooltip title={getItemsTooltipContent(invoice)} placement="top" overlayStyle={{ maxWidth: 620 }} mouseEnterDelay={0.4}>
+              <Tooltip
+                title={getItemsTooltipContent(invoice)}
+                placement="top"
+                overlayStyle={{ maxWidth: 620 }}
+                mouseEnterDelay={0.4}
+                open={isMobileViewport() ? openTooltipInvoiceId === invoice.id : undefined}
+                onOpenChange={(vis) => { if (isMobileViewport() && !vis) setOpenTooltipInvoiceId(null); }}
+              >
               <TableRow
                 $storno={isSt}
                 $cancelled={isCancelled}
                 $paid={isPaid}
                 $unpaid={isUnpaid}
                 onContextMenu={(event) => handleRowContextMenu(event, invoice.id)}
-                onTouchEnd={(event) => handleRowTouchTap(event, invoice.id)}
+                onTouchEnd={(event) => { handleRowTouchTap(event, invoice.id); handleTooltipRowTouch(invoice.id); }}
               >
                 <TableCell>
                   <input
