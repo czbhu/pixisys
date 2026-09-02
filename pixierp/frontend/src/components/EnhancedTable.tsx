@@ -209,6 +209,8 @@ export interface EnhancedTableProps<T = any> extends Omit<TableProps<T>, 'compon
   noColumnManager?: boolean;
   /** Beépített kereső: érték */
   searchValue?: string;
+  /** Kereső mellett megjelenő extra elem (pl. beállítás gomb) */
+  searchExtra?: React.ReactNode;
   /** Beépített kereső: callback */
   onSearchChange?: (value: string) => void;
   /** Szerver oldali rendezés callback: key=oszlop kulcs, dir=irány vagy null ha törölt */
