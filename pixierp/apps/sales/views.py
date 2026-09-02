@@ -614,27 +614,38 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         except Exception:
             rp = None
 
-        # ?q=: szöveges keresés
+        # ?q=: szöveges keresés — ?search_field= szűkíti a mezőt (all/company/item_name/description/project/quote_number)
         q_param = (rp.get('q', '') or '').strip() if rp else ''
+        search_field = (rp.get('search_field', 'all') or 'all').strip() if rp else 'all'
         if q_param:
             from django.db.models import Q as _Q
+            FIELD_MAP = {
+                'company':      lambda t: _Q(company__name__icontains=t) | _Q(contacts__first_name__icontains=t) | _Q(contacts__last_name__icontains=t),
+                'item_name':    lambda t: _Q(items__item_name__icontains=t),
+                'description':  lambda t: _Q(items__description__icontains=t),
+                'project':      lambda t: _Q(project__name__icontains=t),
+                'quote_number': lambda t: _Q(number__icontains=t) | _Q(request_number__icontains=t),
+            }
             for term in q_param.split():
-                queryset = queryset.filter(
-                    _Q(number__icontains=term)
-                    | _Q(request_number__icontains=term)
-                    | _Q(title__icontains=term)
-                    | _Q(company__name__icontains=term)
-                    | _Q(contacts__first_name__icontains=term)
-                    | _Q(contacts__last_name__icontains=term)
-                    | _Q(items__item_name__icontains=term)
-                    | _Q(items__description__icontains=term)
-                    | _Q(status__icontains=term)
-                    | _Q(project__name__icontains=term)
-                    | _Q(owner__first_name__icontains=term)
-                    | _Q(owner__last_name__icontains=term)
-                    | _Q(created_by__first_name__icontains=term)
-                    | _Q(created_by__last_name__icontains=term)
-                ).distinct()
+                if search_field in FIELD_MAP:
+                    queryset = queryset.filter(FIELD_MAP[search_field](term)).distinct()
+                else:  # 'all'
+                    queryset = queryset.filter(
+                        _Q(number__icontains=term)
+                        | _Q(request_number__icontains=term)
+                        | _Q(title__icontains=term)
+                        | _Q(company__name__icontains=term)
+                        | _Q(contacts__first_name__icontains=term)
+                        | _Q(contacts__last_name__icontains=term)
+                        | _Q(items__item_name__icontains=term)
+                        | _Q(items__description__icontains=term)
+                        | _Q(status__icontains=term)
+                        | _Q(project__name__icontains=term)
+                        | _Q(owner__first_name__icontains=term)
+                        | _Q(owner__last_name__icontains=term)
+                        | _Q(created_by__first_name__icontains=term)
+                        | _Q(created_by__last_name__icontains=term)
+                    ).distinct()
 
         # ?status=new,quoted,...: státusz szűrő (vesszővel elválasztott lista)
         status_param = (rp.get('status', '') or '').strip() if rp else ''

@@ -245,6 +245,7 @@ function EnhancedTable<T extends object = any>({
   noColumnManager = false,
   searchValue,
   onSearchChange,
+  searchExtra,
   onSortChange,
   searchPlaceholder = 'Keresés...',
   disableCardLayout = false,
@@ -707,6 +708,7 @@ function EnhancedTable<T extends object = any>({
           style={{ flex: 1 }}
         />
       )}
+      {searchExtra}
       {colButton}
       {showCardSort && (
         <Space size={4}>

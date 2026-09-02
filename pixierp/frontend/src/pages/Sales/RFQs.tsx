@@ -7,7 +7,7 @@ import { Card, Table, Button, Space, Tag, Spin, Alert, message, Tooltip, Modal, 
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
 import type { UploadFile } from 'antd/es/upload/interface';
-import { PlusOutlined, EyeOutlined, SendOutlined, MailOutlined, EditOutlined, SearchOutlined, CopyOutlined, PlusCircleOutlined, ExclamationCircleOutlined, FileTextOutlined, DeleteOutlined, FilterOutlined, CameraOutlined, PictureOutlined, UploadOutlined, PaperClipOutlined, LeftOutlined, RightOutlined, ShoppingCartOutlined, HistoryOutlined, WarningOutlined, PrinterOutlined, UserSwitchOutlined, FolderAddOutlined, RocketOutlined, CarOutlined, CheckCircleOutlined, DollarOutlined } from '@ant-design/icons';
+import { PlusOutlined, EyeOutlined, SendOutlined, MailOutlined, EditOutlined, SearchOutlined, CopyOutlined, PlusCircleOutlined, ExclamationCircleOutlined, FileTextOutlined, DeleteOutlined, FilterOutlined, CameraOutlined, PictureOutlined, UploadOutlined, PaperClipOutlined, LeftOutlined, RightOutlined, ShoppingCartOutlined, HistoryOutlined, WarningOutlined, PrinterOutlined, UserSwitchOutlined, FolderAddOutlined, RocketOutlined, CarOutlined, CheckCircleOutlined, DollarOutlined, SettingOutlined } from '@ant-design/icons';
 import { isPdf, openPdfPreview } from '../../utils/pdfPreview';
 import { useNewRowTracker, newDotColumn } from '../../hooks/useNewRowTracker';
 import { useNavigate, useSearchParams } from 'react-router-dom'; // Add useSearchParams
@@ -174,6 +174,8 @@ const RFQs: React.FC = () => {
   const [sendPreview, setSendPreview] = useState<any | null>(null);
   const [query, setQuery] = useState(() => localStorage.getItem('rfqs_search_query') || '');
   const [debouncedQuery, setDebouncedQuery] = useState(query);
+  const [searchField, setSearchField] = useState<string>(() => localStorage.getItem('rfqs_search_field') || 'all');
+  const [searchSettingsOpen, setSearchSettingsOpen] = useState(false);
   const [sortOrdering, setSortOrdering] = useState<string | null>(null);
   const handleSearchChange = (v: string) => {
     setQuery(v);
@@ -799,6 +801,7 @@ const RFQs: React.FC = () => {
   const buildParams = React.useCallback((page: number, pageSize: number) => {
     const params: Record<string, string> = {};
     if (debouncedQuery?.trim()) params.q = debouncedQuery.trim();
+    if (searchField && searchField !== 'all') params.search_field = searchField;
     if (creatorFilter) params.creator = creatorFilter;
     if (projectFilter) params.project_id = String(projectFilter);
     if (sortOrdering) params.ordering = sortOrdering;
@@ -812,11 +815,11 @@ const RFQs: React.FC = () => {
       params.status = Array.from(expanded).join(',');
     }
     return params;
-  }, [debouncedQuery, creatorFilter, projectFilter, statusFilter, sortOrdering]); // eslint-disable-line
+  }, [debouncedQuery, creatorFilter, projectFilter, statusFilter, sortOrdering, searchField]); // eslint-disable-line
 
   const cacheKey = React.useCallback((page: number, pageSize: number) =>
-    `${page}|${pageSize}|${debouncedQuery}|${creatorFilter}|${projectFilter}|${statusFilter.join(',')}|${sortOrdering}`,
-  [debouncedQuery, creatorFilter, projectFilter, statusFilter, sortOrdering]); // eslint-disable-line
+    `${page}|${pageSize}|${debouncedQuery}|${creatorFilter}|${projectFilter}|${statusFilter.join(',')}|${sortOrdering}|${searchField}`,
+  [debouncedQuery, creatorFilter, projectFilter, statusFilter, sortOrdering, searchField]); // eslint-disable-line
 
   // Háttérben prefetchel egy oldalt (nem blokkol, eredményt cache-be rakja)
   const prefetchPage = React.useCallback((page: number, pageSize: number) => {
@@ -3773,7 +3776,41 @@ const RFQs: React.FC = () => {
             } else {
               setSortOrdering(null);
             }
-          }} searchPlaceholder="Keresés…" columns={itemsColumns as any} dataSource={flattenedItems} rowKey="uniqueId" pagination={{ pageSize: tablePageSize, current: tablePage, total: totalCount, showSizeChanger: true, pageSizeOptions: ['25','50','100'], onChange: (pg, sz) => { setTablePage(pg); tablePageRef.current = pg; setTablePageSize(sz); } }} size="small" cardBreakpoint={750} sticky={{ offsetScroll: 0 }} className="rfq-items-table" onRow={(r: any) => {
+          }} searchPlaceholder="Keresés…"
+          searchExtra={
+            <Popover
+              open={searchSettingsOpen}
+              onOpenChange={setSearchSettingsOpen}
+              trigger="click"
+              placement="bottomRight"
+              content={
+                <div style={{ minWidth: 200 }}>
+                  <div style={{ fontWeight: 600, marginBottom: 8, fontSize: 13 }}>Keresés mezője</div>
+                  {[
+                    { value: 'all', label: 'Mind' },
+                    { value: 'company', label: 'Ügyfél' },
+                    { value: 'item_name', label: 'Tétel neve' },
+                    { value: 'description', label: 'Leírás' },
+                    { value: 'project', label: 'Projekt' },
+                    { value: 'quote_number', label: 'Ajánlatszám' },
+                  ].map(opt => (
+                    <div key={opt.value} style={{ padding: '4px 0', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}
+                      onClick={() => { setSearchField(opt.value); localStorage.setItem('rfqs_search_field', opt.value); setSearchSettingsOpen(false); }}>
+                      <span style={{ width: 14, height: 14, borderRadius: '50%', border: `2px solid ${searchField === opt.value ? '#1677ff' : '#d9d9d9'}`, background: searchField === opt.value ? '#1677ff' : '#fff', display: 'inline-block', flexShrink: 0 }} />
+                      <span style={{ fontSize: 13, color: searchField === opt.value ? '#1677ff' : undefined, fontWeight: searchField === opt.value ? 600 : undefined }}>{opt.label}</span>
+                    </div>
+                  ))}
+                </div>
+              }
+            >
+              <Button
+                size="small"
+                icon={<SettingOutlined />}
+                title={`Keresési mező: ${({ all: 'Mind', company: 'Ügyfél', item_name: 'Tétel neve', description: 'Leírás', project: 'Projekt', quote_number: 'Ajánlatszám' } as any)[searchField] || searchField}`}
+                style={{ flexShrink: 0, color: searchField !== 'all' ? '#1677ff' : undefined, borderColor: searchField !== 'all' ? '#1677ff' : undefined }}
+              />
+            </Popover>
+          } columns={itemsColumns as any} dataSource={flattenedItems} rowKey="uniqueId" pagination={{ pageSize: tablePageSize, current: tablePage, total: totalCount, showSizeChanger: true, pageSizeOptions: ['25','50','100'], onChange: (pg, sz) => { setTablePage(pg); tablePageRef.current = pg; setTablePageSize(sz); } }} size="small" cardBreakpoint={750} sticky={{ offsetScroll: 0 }} className="rfq-items-table" onRow={(r: any) => {
           return { onDoubleClick: () => window.open(`/sales/rfqs/${r.rfq_number || r.rfq_id}`, '_blank'), style: { cursor: 'pointer' } };
         }}
         rowClassName={(r: any) => { const st = getDisplayStatus(r); return st !== 'new' ? `rfq-row-${st}` : ''; }} rowSelection={{ selectedRowKeys: bulkSelectedKeys, onChange: (keys) => setBulkSelectedKeys(keys), columnWidth: 32 }} expandable={{
