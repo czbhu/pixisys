@@ -7679,6 +7679,33 @@ class DeliveryNoteViewSet(viewsets.ModelViewSet):
         for oid in order_ids:
             CustomerOrder.sync_status_from_items(oid)
 
+        # Sync parent QuoteRequest status based on all linked CustomerOrders
+        try:
+            rfq_ids_to_sync = set()
+            for oid in order_ids:
+                if oid:
+                    rfq_id = CustomerOrder.objects.filter(id=oid).values_list('quote_request_id', flat=True).first()
+                    if rfq_id:
+                        rfq_ids_to_sync.add(rfq_id)
+            _STATUS_RANK2 = ['new', 'confirmed', 'in_production', 'ready', 'in_delivery', 'delivered', 'invoiced']
+            for rfq_id in rfq_ids_to_sync:
+                qr = QuoteRequest.objects.get(id=rfq_id)
+                if qr.status not in _STATUS_RANK2:
+                    continue
+                active_orders = list(qr.customer_orders.exclude(status='cancelled'))
+                if not active_orders:
+                    continue
+                order_statuses = [o.status for o in active_orders if o.status in _STATUS_RANK2]
+                if not order_statuses:
+                    continue
+                min_order_rank = min(_STATUS_RANK2.index(s) for s in order_statuses)
+                new_rfq_status = _STATUS_RANK2[min_order_rank]
+                if _STATUS_RANK2.index(new_rfq_status) > _STATUS_RANK2.index(qr.status):
+                    qr.status = new_rfq_status
+                    qr.save(update_fields=['status'])
+        except Exception:
+            pass
+
         # Napló bejegyzés az érintett RFQ-khoz
         try:
             rfq_ids: dict = {}

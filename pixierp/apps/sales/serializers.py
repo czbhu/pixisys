@@ -679,7 +679,7 @@ class QuoteRequestSerializer(serializers.ModelSerializer):
             return obj.status
         if obj.status in self._ORDER_STATUS_LABELS and obj.status not in ('invoiced', 'cancelled'):
             # Auto-promotálás csak ezekből a korai/rendszer-által-beállított státuszokból.
-            AUTO_PROMOTABLE = frozenset({'ordered', 'new', 'confirmed'})
+            AUTO_PROMOTABLE = frozenset({'ordered', 'new', 'confirmed', 'in_production', 'ready', 'in_delivery'})
             if obj.status in AUTO_PROMOTABLE:
                 min_status, _ = self._aggregate_order_status(obj)
                 if min_status and min_status not in ('new',):
@@ -713,7 +713,7 @@ class QuoteRequestSerializer(serializers.ModelSerializer):
         if getattr(obj, 'status_is_manual', False):
             return self._ORDER_STATUS_LABELS.get(obj.status) or self._RFQ_STATUS_LABELS.get(obj.status, obj.status)
         if obj.status in self._ORDER_STATUS_LABELS and obj.status not in ('invoiced', 'cancelled'):
-            AUTO_PROMOTABLE = frozenset({'ordered', 'new', 'confirmed'})
+            AUTO_PROMOTABLE = frozenset({'ordered', 'new', 'confirmed', 'in_production', 'ready', 'in_delivery'})
             if obj.status in AUTO_PROMOTABLE:
                 min_status, is_partial = self._aggregate_order_status(obj)
                 if min_status and min_status not in ('new',):
