@@ -23,7 +23,7 @@ const ClientPortal: React.FC = () => {
     } catch {
       localStorage.removeItem('portal_access_token');
       message.warning('A portál session lejárt, kérlek jelentkezz be újra');
-      navigate('/site');
+      navigate('/portal/login');
     } finally {
       setLoading(false);
     }
@@ -32,7 +32,7 @@ const ClientPortal: React.FC = () => {
   useEffect(() => {
     const token = localStorage.getItem('portal_access_token');
     if (!token) {
-      navigate('/site');
+      navigate('/portal/login');
       return;
     }
     load();
@@ -76,7 +76,7 @@ const ClientPortal: React.FC = () => {
           <Title level={3} style={{ margin: 0 }}>Kliens portál</Title>
           <Space>
             <Tag color="blue">{portalUser?.email || '-'}</Tag>
-            <Button onClick={() => navigate('/site')}>Publikus oldal</Button>
+            <Button onClick={() => navigate('/portal/login')}>← Bejelentkezés</Button>
             <Button onClick={handleLogout}>Kijelentkezés</Button>
           </Space>
         </Space>
@@ -97,8 +97,9 @@ const ClientPortal: React.FC = () => {
               columns={[
                 { title: 'Szám', key: 'number', render: (_: any, record: any) => record.number || record.request_number || '-' },
                 { title: 'Cím', dataIndex: 'title', key: 'title' },
-                { title: 'Státusz', dataIndex: 'status', key: 'status', width: 120 },
-              ]}
+                { title: 'Státusz', dataIndex: 'status', key: 'status', width: 120 },                { title: 'PDF', key: 'pdf', width: 80, render: (_: any, record: any) => record.number ? (
+                  <a href={`/api/v1/sales/quote-requests/${record.id || record.number}/pdf/`} target="_blank" rel="noreferrer">Letölt</a>
+                ) : '-' },              ]}
             />
           </Card>
         </Col>

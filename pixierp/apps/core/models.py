@@ -990,9 +990,10 @@ class ClientPortalUser(models.Model):
 
 class ClientPortalSession(models.Model):
     user = models.ForeignKey(ClientPortalUser, on_delete=models.CASCADE, related_name='sessions', verbose_name='Portál user')
-    token = models.UUIDField(default=uuid.uuid4, unique=True, db_index=True, editable=False)
+    token = models.CharField(max_length=255, unique=True, db_index=True, default='', editable=False)
     expires_at = models.DateTimeField(verbose_name='Lejárat')
     revoked_at = models.DateTimeField(null=True, blank=True, verbose_name='Visszavonva')
+    confirmed = models.BooleanField(default=True, verbose_name='Megerősítve (QR login esetén False)')
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

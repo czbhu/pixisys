@@ -3401,6 +3401,9 @@ class ClientPortalSessionMixin:
             return None
         if not session.is_active or not session.user.is_active:
             return None
+        # Magic link sessions must be confirmed before use as auth token
+        if getattr(session, 'confirmed', True) is False:
+            return None
         return session
 
 
@@ -3418,7 +3421,8 @@ class ClientPortalLoginView(APIView):
             return Response({'error': 'Hibás e-mail vagy jelszó'}, status=status.HTTP_401_UNAUTHORIZED)
 
         expires_at = timezone.now() + timedelta(days=7)
-        session = ClientPortalSession.objects.create(user=user, expires_at=expires_at)
+        import secrets as _sec
+        session = ClientPortalSession.objects.create(user=user, expires_at=expires_at, token=_sec.token_urlsafe(32))
         user.last_login = timezone.now()
         user.save(update_fields=['last_login'])
 
@@ -3453,6 +3457,56 @@ class ClientPortalLogoutView(APIView, ClientPortalSessionMixin):
             session.revoked_at = timezone.now()
             session.save(update_fields=['revoked_at'])
         return Response({'message': 'Kijelentkezve'})
+
+
+class ClientPortalMagicLinkView(APIView, ClientPortalSessionMixin):
+    """Generates a QR login token (magic link) for a portal user. Requires ERP staff auth."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        portal_user_id = request.data.get('portal_user_id')
+        if not portal_user_id:
+            return Response({'error': 'portal_user_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            portal_user = ClientPortalUser.objects.get(id=portal_user_id, is_active=True)
+        except ClientPortalUser.DoesNotExist:
+            return Response({'error': 'Portál felhasználó nem található'}, status=status.HTTP_404_NOT_FOUND)
+        import secrets as _secrets
+        magic_token = _secrets.token_urlsafe(32)
+        expires_at = timezone.now() + timedelta(hours=24)
+        # Store magic token as a pending (unconfirmed) session
+        session = ClientPortalSession.objects.create(
+            user=portal_user, expires_at=expires_at,
+            token=magic_token, confirmed=False,
+        )
+        frontend_url = getattr(settings, 'FRONTEND_BASE_URL', request.build_absolute_uri('/').rstrip('/'))
+        magic_url = f"{frontend_url}/portal/magic/{magic_token}"
+        return Response({'magic_url': magic_url, 'expires_at': expires_at, 'token': magic_token})
+
+
+class ClientPortalMagicLoginView(APIView):
+    """Validates a magic link token and creates an active session."""
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        token = (request.data.get('token') or '').strip()
+        if not token:
+            return Response({'error': 'Token kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            session = ClientPortalSession.objects.select_related('user').get(token=token)
+        except ClientPortalSession.DoesNotExist:
+            return Response({'error': 'Érvénytelen token'}, status=status.HTTP_401_UNAUTHORIZED)
+        if session.revoked_at or not session.user.is_active:
+            return Response({'error': 'Token lejárt vagy visszavonva'}, status=status.HTTP_401_UNAUTHORIZED)
+        if session.expires_at and session.expires_at < timezone.now():
+            return Response({'error': 'Token lejárt'}, status=status.HTTP_401_UNAUTHORIZED)
+        # Mark as confirmed and extend expiry
+        session.confirmed = True
+        session.expires_at = timezone.now() + timedelta(days=7)
+        session.save(update_fields=['confirmed', 'expires_at'])
+        session.user.last_login = timezone.now()
+        session.user.save(update_fields=['last_login'])
+        return Response({'token': str(session.token), 'user': ClientPortalUserSerializer(session.user).data})
 
 
 class ClientPortalDashboardView(APIView, ClientPortalSessionMixin):

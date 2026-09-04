@@ -69,7 +69,6 @@ const RFQDetail: React.FC = () => {
   const [selectorOpen, setSelectorOpen] = useState(false);
   const [selectorType, setSelectorType] = useState<'product' | 'manufacturing' | 'service'>('product');
   const [editContext, setEditContext] = useState<null | { item: any }>(null);
-  const [modalRefreshTrigger, setModalRefreshTrigger] = useState(0);
   const itemSaveRef = useRef<{ save: (keepOpen: boolean) => Promise<void> } | null>(null);
   const [manufacturingFiles, setManufacturingFiles] = useState<any[]>([]);
   const [rfqPendingRemark, setRfqPendingRemark] = useState<string>('');
@@ -106,92 +105,6 @@ const RFQDetail: React.FC = () => {
   const [companies, setCompanies] = useState<any[]>([]);
   const [contacts, setContacts] = useState<any[]>([]);
   const [currencyList, setCurrencyList] = useState<any[]>([]);
-  const [detailDiscountGroupList, setDetailDiscountGroupList] = useState<any[]>([]);
-  const _discountStorageKey = id ? `rfq_discount_mode_${id}` : null;
-  const [detailDiscountMode, setDetailDiscountMode] = useState<string>(() => {
-    try {
-      if (_discountStorageKey) {
-        const saved = localStorage.getItem(_discountStorageKey);
-        if (saved !== null) return saved; // previously set by user or auto-detect
-      }
-    } catch {}
-    return '__unset__'; // first visit – will be determined by items/company
-  });
-  const handleDiscountModeChange = (mode: string) => {
-    setDetailDiscountMode(mode);
-    try { if (_discountStorageKey) localStorage.setItem(_discountStorageKey, mode); } catch {}
-  };
-
-  // First-visit auto-detect: from saved items (how RFQ was created) then from company group
-  useEffect(() => {
-    if (detailDiscountMode !== '__unset__') return;
-    const hasItemDiscount = (rfq?.items || []).some((it: any) => Number(it.discount_percent || 0) > 0);
-    const hasCompanyGroup = !!(rfq?.company as any)?.discount_group;
-    const mode = (hasItemDiscount || hasCompanyGroup) ? 'company' : 'none';
-    setDetailDiscountMode(mode);
-    try { if (_discountStorageKey) localStorage.setItem(_discountStorageKey, mode); } catch {}
-  }, [rfq?.items, (rfq?.company as any)?.discount_group]); // eslint-disable-line
-
-  // Treat '__unset__' as 'none' for rendering
-  const effectiveDiscountMode = detailDiscountMode === '__unset__' ? 'none' : detailDiscountMode;
-
-  // Company's discount group info (from the serialized rfq.company fields)
-  const companyDiscountGroupId = (rfq?.company as any)?.discount_group ?? null;
-  const companyDiscountGroupName = (rfq?.company as any)?.discount_group_name ?? null;
-
-  // Resolve effective discount group ID
-  const detailEffectiveGroupId = useMemo(() => {
-    if (effectiveDiscountMode === 'none') return null;
-    if (effectiveDiscountMode === 'company') return companyDiscountGroupId;
-    return Number(effectiveDiscountMode) || null;
-  }, [effectiveDiscountMode, companyDiscountGroupId]);
-
-  const detailEffectiveGroup = useMemo(() =>
-    detailEffectiveGroupId ? detailDiscountGroupList.find((g: any) => g.id === detailEffectiveGroupId) ?? null : null,
-    [detailEffectiveGroupId, detailDiscountGroupList]);
-
-  const detailEffectiveRules = useMemo(() =>
-    (detailEffectiveGroup?.rules ?? []) as any[],
-    [detailEffectiveGroup]);
-
-  // Compute group discount for a single item (same logic as create form)
-  const computeDetailItemDiscount = (item: any) => {
-    if (!detailEffectiveRules.length) return 0;
-    const primaryType = item.item_type === 'service' ? 'service' : (item.item_type === 'material' ? 'material' : 'product');
-    const accepted = primaryType === 'product' ? ['product', 'material'] : [primaryType];
-    for (const rule of detailEffectiveRules) {
-      const { target_type, target_id, discount_type, discount_value } = rule;
-      if (!accepted.includes(target_type) && target_type !== 'material_group' && target_type !== 'service_group') continue;
-      const isAll = !target_id || String(target_id) === '__mind__';
-      const idMatches = isAll || Number(target_id) === Number(item.ref_id) || Number(target_id) === Number(item.product) || Number(target_id) === Number(item.service);
-      if (!idMatches) continue;
-      return discount_type === 'percent' ? Number(discount_value) : 0;
-    }
-    // Fallback: all-MIND rules
-    const mindRules = detailEffectiveRules.filter((r: any) => !r.target_id || String(r.target_id) === '__mind__');
-    if (mindRules.length === detailEffectiveRules.length && mindRules.length > 0) return Number(mindRules[0].discount_value || 0);
-    return 0;
-  };
-
-  const applyDetailDiscount = (items: any[]) => {
-    if (!items?.length) return items;
-    return items.map(item => {
-      const existingDiscPct = Number(item.discount_percent || 0);
-      if (existingDiscPct > 0) {
-        const origTotal = Number(item.net_unit_price || 0) * Number(item.quantity || 1);
-        const discTotal = Number(item.discounted_net_total || 0) || origTotal * (1 - existingDiscPct / 100);
-        return { ...item, _appliedDiscountPct: existingDiscPct, _originalNetTotal: origTotal, discounted_net_total: discTotal };
-      }
-      // Apply group discount for items without saved discount (old RFQs)
-      const groupPct = computeDetailItemDiscount(item);
-      if (groupPct > 0) {
-        const origTotal = Number(item.net_unit_price || 0) * Number(item.quantity || 1);
-        const discTotal = origTotal * (1 - groupPct / 100);
-        return { ...item, _appliedDiscountPct: groupPct, _originalNetTotal: origTotal, discounted_net_total: discTotal, _appliedDiscountLabel: detailEffectiveGroup?.name || '' };
-      }
-      return item;
-    });
-  };
   const [filePreviewOpen, setFilePreviewOpen] = useState(false);
   const [filePreviewTitle, setFilePreviewTitle] = useState('');
   const [filePreviewUrl, setFilePreviewUrl] = useState<string | null>(null);
@@ -223,8 +136,6 @@ const RFQDetail: React.FC = () => {
       ref_id: (editContext.item.product || editContext.item.manufacturing_product || editContext.item.service) as number,
       name: editContext.item.product_name || editContext.item.manufacturing_product_name || editContext.item.service_name || editContext.item.item_name,
       code: editContext.item.product_code || editContext.item.manufacturing_product_code || editContext.item.service_code || undefined,
-      manufacturing_product_printshop_params: editContext.item.manufacturing_product_printshop_params ?? null,
-      imposition_data: editContext.item.imposition_data ?? null,
     };
   }, [editContext?.item]);
 
@@ -327,15 +238,6 @@ const RFQDetail: React.FC = () => {
       }
 
       setCurrencyList(currRes as any);
-      // Load discount groups and preload discount mode from item discount_percent
-      try {
-        const dgRes = await api.get('/crm/discount-groups/', { params: { is_active: true, page_size: 200 } });
-        setDetailDiscountGroupList(dgRes.data?.results ?? dgRes.data ?? []);
-      } catch {}
-      const itemsWithDiscount = (rfqRes?.items || []).filter((it: any) => Number(it.discount_percent || 0) > 0);
-      if (itemsWithDiscount.length > 0) {
-        setDetailDiscountMode('company');
-      }
       const assignedContacts = Array.isArray(rfqRes?.contacts) ? [...rfqRes.contacts] : [];
       setContacts(assignedContacts);
 
@@ -519,34 +421,6 @@ const RFQDetail: React.FC = () => {
   useEffect(() => {
     load();
   }, [load]);
-
-  // Listen for PrintShop save notifications and refresh items automatically
-  useEffect(() => {
-    if (!id) return;
-    let bc: BroadcastChannel | null = null;
-    try {
-      bc = new BroadcastChannel('printshop_rfq_updates');
-      bc.onmessage = async (e) => {
-        if (e.data?.type === 'ITEM_UPDATED' && String(e.data?.rfqId) === String(id)) {
-          try {
-            const nid = rfqNumericIdRef.current || id;
-            const fresh = await salesService.getQuoteRequest(nid as any);
-            setRfq((prev: any) => prev ? { ...prev, items: fresh.items } : fresh);
-            // Sync open editContext so modal sees updated cost items and pricing
-            const qriId = e.data?.qriId;
-            if (qriId) {
-              const updatedItem = (fresh.items || []).find((it: any) => it.id === qriId);
-              if (updatedItem) {
-                setEditContext((ec: any) => ec?.item?.id === qriId ? { ...ec, item: updatedItem } : ec);
-                setModalRefreshTrigger((n) => n + 1);
-              }
-            }
-          } catch {}
-        }
-      };
-    } catch {}
-    return () => { try { bc?.close(); } catch {} };
-  }, [id, refreshItems]); // eslint-disable-line
 
   useEffect(() => {
     (async () => {
@@ -797,12 +671,6 @@ const RFQDetail: React.FC = () => {
         locked_exchange_rate: (payload as any).is_rate_locked ? ((payload as any).locked_exchange_rate ?? null) : null,
         cost_items_data: (payload as any).cost_items_data ?? undefined,
       };
-      // Merge group discount into discount_percent (same as create form withGroupDiscount)
-      const editGroupPct = editContext ? computeDetailItemDiscount(editContext.item) : 0;
-      if (editGroupPct > 0) {
-        const existing = Number(patch.discount_percent || 0);
-        patch.discount_percent = parseFloat(((1 - (1 - existing / 100) * (1 - editGroupPct / 100)) * 100).toFixed(4));
-      }
       if (payload.item_type === 'product') {
         patch.item_type = 'product';
         patch.product = payload.ref_id;
@@ -1748,29 +1616,11 @@ const RFQDetail: React.FC = () => {
           </Row>
 
           {/* ── Tételek ──────────────────────────────────────────────── */}
-          <div style={{ background: '#e6f4ff', border: '1px solid #91caff', borderRadius: '8px 8px 0 0', padding: '6px 12px 6px', marginBottom: 0, display: 'flex', alignItems: 'center', gap: 16 }}>
-            <span style={{ fontSize: 11, fontWeight: 600, color: '#0958d9', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Tételek</span>
-            <span style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', textTransform: 'none', letterSpacing: 0 }}>
-              <span style={{ fontWeight: 500, fontSize: 12, color: '#444' }}>Kedvezmény:</span>
-              <Select value={effectiveDiscountMode} onChange={handleDiscountModeChange} style={{ width: 180 }} size="small">
-                <Select.Option value="none">Nincs</Select.Option>
-                <Select.Option value="company">Cég alapú</Select.Option>
-                {detailDiscountGroupList.map((g: any) => (
-                  <Select.Option key={g.id} value={String(g.id)}>{g.name}</Select.Option>
-                ))}
-              </Select>
-              {effectiveDiscountMode === 'company' && (companyDiscountGroupName || detailEffectiveGroup?.name) && (
-                <span style={{ fontSize: 12, color: '#52c41a', fontWeight: 500 }}>→ {companyDiscountGroupName || detailEffectiveGroup?.name}</span>
-              )}
-              {effectiveDiscountMode === 'company' && !companyDiscountGroupName && !detailEffectiveGroup && (
-                <span style={{ fontSize: 12, color: '#999' }}>→ nincs beállítva</span>
-              )}
-            </span>
-          </div>
           {!editContext && (
-          <div style={{ background: '#e6f4ff', border: '1px solid #91caff', borderTop: 'none', borderRadius: '0 0 8px 8px', padding: '4px 12px 4px', marginBottom: 8 }}>
+          <div style={{ background: '#e6f4ff', border: '1px solid #91caff', borderRadius: 8, padding: '6px 12px 4px', marginBottom: 8 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: '#0958d9', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Tételek</div>
             <ItemsTable
-              items={applyDetailDiscount(rfq.items || [])}
+              items={rfq.items || []}
               onRefresh={refreshItems}
               quoteRequestId={id as any}
               currency={activeCurrency}
@@ -1816,8 +1666,6 @@ const RFQDetail: React.FC = () => {
             initialFormulas={editContext.item.formulas || {}}
             quoteItemId={editContext.item.id}
             onManufacturingMarked={refreshManufacturingFiles}
-            groupDiscountPct={computeDetailItemDiscount(editContext.item)}
-            refreshTrigger={modalRefreshTrigger}
           />
         </div>
         )}
@@ -2158,7 +2006,6 @@ const RFQDetail: React.FC = () => {
         mode="add"
         rfqId={id as any}
         rfqCurrency={activeCurrency}
-        refreshTrigger={modalRefreshTrigger}
       />
 
       <Modal title="Napló" open={logsOpen} onCancel={() => setLogsOpen(false)} footer={null}>

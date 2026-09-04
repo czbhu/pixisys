@@ -174,7 +174,11 @@ const RFQs: React.FC = () => {
   const [sendPreview, setSendPreview] = useState<any | null>(null);
   const [query, setQuery] = useState(() => localStorage.getItem('rfqs_search_query') || '');
   const [debouncedQuery, setDebouncedQuery] = useState(query);
-  const [searchField, setSearchField] = useState<string>(() => localStorage.getItem('rfqs_search_field') || 'all');
+  const [searchField, setSearchField] = useState<string>(() => {
+    const VALID_FIELDS = ['all', 'company', 'item_name', 'description', 'project', 'quote_number'];
+    const stored = localStorage.getItem('rfqs_search_field') || 'all';
+    return VALID_FIELDS.includes(stored) ? stored : 'all';
+  });
   const [searchSettingsOpen, setSearchSettingsOpen] = useState(false);
   const [sortOrdering, setSortOrdering] = useState<string | null>(null);
   const handleSearchChange = (v: string) => {

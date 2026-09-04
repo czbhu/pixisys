@@ -97,4 +97,29 @@ export const publicPortalService = {
     });
     return response.data;
   },
+
+  async requestMagicQR(email: string) {
+    const accessToken = localStorage.getItem('access_token');
+    // This is called from the portal login page — tries the staff-authenticated magic-link endpoint
+    // For self-service: try without auth first (backend may allow it if portal user exists)
+    const response = await publicApi.post('/public-site/portal/magic-link/', { email },
+      accessToken ? { headers: { Authorization: `Bearer ${accessToken}` } } : {}
+    );
+    return response.data;
+  },
+
+  async magicLogin(token: string) {
+    const response = await publicApi.post('/public-site/portal/magic-login/', { token });
+    return response.data;
+  },
+
+  async pollMagicToken(token: string) {
+    // Poll whether a magic link has been confirmed (scanned on mobile)
+    try {
+      const response = await publicApi.post('/public-site/portal/magic-login/', { token });
+      return response.data;
+    } catch {
+      return null;
+    }
+  },
 };
