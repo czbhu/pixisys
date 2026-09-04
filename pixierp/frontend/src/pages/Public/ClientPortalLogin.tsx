@@ -129,7 +129,7 @@ const ClientPortalLogin: React.FC = () => {
             ),
           },
           {
-            key: "register", label: "Regisztráció",
+            key: "register", label: "Regisztráció", disabled: true,
             children: <RegistrationForm onSuccess={(token) => { localStorage.setItem("portal_access_token", token); navigate("/portal", { replace: true }); }} />,
           },
         ]} />
