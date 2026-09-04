@@ -3407,6 +3407,67 @@ class ClientPortalSessionMixin:
         return session
 
 
+class ClientPortalSetContactPasswordView(APIView):
+    """ERP staff: generates a strong password for a CRM contact and creates/updates their portal user."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        import secrets as _sec, string as _str
+        contact_id = request.data.get('contact_id')
+        email = (request.data.get('email') or '').strip().lower()
+        custom_password = (request.data.get('password') or '').strip()
+
+        if not contact_id and not email:
+            return Response({'error': 'contact_id vagy email kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Resolve contact
+        try:
+            from apps.crm.models import Contact as CrmContact
+            if contact_id:
+                contact = CrmContact.objects.get(id=contact_id)
+                email = email or (contact.email or '').strip().lower()
+            else:
+                contact = CrmContact.objects.filter(email__iexact=email).first()
+        except CrmContact.DoesNotExist:
+            return Response({'error': 'Kapcsolattartó nem található'}, status=status.HTTP_404_NOT_FOUND)
+
+        if not email:
+            return Response({'error': 'A kapcsolattartónak nincs e-mail címe'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Generate strong password if not provided
+        if not custom_password:
+            alphabet = _str.ascii_letters + _str.digits + '!@#$%'
+            custom_password = ''.join(_sec.choice(alphabet) for _ in range(12))
+
+        # Find or create portal user
+        portal_user = ClientPortalUser.objects.filter(email__iexact=email).first()
+        if portal_user:
+            portal_user.set_password(custom_password)
+            if contact:
+                portal_user.contact = contact
+                portal_user.full_name = portal_user.full_name or (contact.full_name or contact.name or '')
+                if contact.company_id and not portal_user.company_id:
+                    portal_user.company_id = contact.company_id
+            portal_user.is_active = True
+            portal_user.save()
+        else:
+            name = ''
+            company = None
+            if contact:
+                name = contact.full_name or contact.name or ''
+                company = getattr(contact, 'company', None)
+            portal_user = ClientPortalUser(email=email, full_name=name, contact=contact, company=company, is_active=True)
+            portal_user.set_password(custom_password)
+            portal_user.save()
+
+        return Response({
+            'email': email,
+            'password': custom_password,
+            'portal_user_id': portal_user.id,
+            'is_new': not bool(ClientPortalUser.objects.filter(email__iexact=email, id__lt=portal_user.id).exists()),
+        })
+
+
 class ClientPortalLoginView(APIView):
     permission_classes = [AllowAny]
 

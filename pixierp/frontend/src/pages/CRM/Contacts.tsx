@@ -27,6 +27,8 @@ import {
     AppstoreOutlined,
     UnorderedListOutlined,
     ExclamationCircleOutlined,
+    KeyOutlined,
+    CopyOutlined,
 } from '@ant-design/icons';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { crmService } from '../../services/crmService';
@@ -92,6 +94,9 @@ const Contacts: React.FC = () => {
     const [isViewModalVisible, setIsViewModalVisible] = useState(false);
     const [editingContact, setEditingContact] = useState<Contact | null>(null);
     const [viewingContact, setViewingContact] = useState<Contact | null>(null);
+    const [portalPasswordContact, setPortalPasswordContact] = useState<Contact | null>(null);
+    const [portalPasswordResult, setPortalPasswordResult] = useState<{ email: string; password: string } | null>(null);
+    const [portalPasswordLoading, setPortalPasswordLoading] = useState(false);
     const [contactParam, setContactParam] = useState<string | null>(null);
     const [form] = Form.useForm();
     const [initialFormSnapshot, setInitialFormSnapshot] = useState('');
@@ -283,6 +288,28 @@ const Contacts: React.FC = () => {
         }
     };
 
+    const handleSetPortalPassword = async (contact: Contact) => {
+        if (!contact.email) { message.warning('A kapcsolattartónak nincs e-mail címe!'); return; }
+        setPortalPasswordContact(contact);
+        setPortalPasswordResult(null);
+    };
+
+    const generatePortalPassword = async () => {
+        if (!portalPasswordContact) return;
+        setPortalPasswordLoading(true);
+        try {
+            const res = await fetch('/api/v1/public-site/portal/set-contact-password/', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('access_token') || ''}` },
+                body: JSON.stringify({ contact_id: portalPasswordContact.id, email: portalPasswordContact.email }),
+            });
+            const data = await res.json();
+            if (!res.ok) { message.error(data.error || 'Hiba'); return; }
+            setPortalPasswordResult({ email: data.email, password: data.password });
+        } catch { message.error('Hálózati hiba'); }
+        finally { setPortalPasswordLoading(false); }
+    };
+
     const handleDelete = (contact: Contact) => {
         Modal.confirm({
             title: `Biztosan törli ${contact.full_name || contact.name}?`,
@@ -411,6 +438,7 @@ const Contacts: React.FC = () => {
                                 actions={[
                                     <EyeOutlined key="view" onClick={() => showViewModal(item)} />,
                                     <EditOutlined key="edit" onClick={() => showEditModal(item)} />,
+                                    <KeyOutlined key="portal" title="Portal jelszó" onClick={() => handleSetPortalPassword(item)} style={{ color: item.email ? '#1677ff' : '#d9d9d9' }} />,
                                     <DeleteOutlined key="delete" onClick={() => handleDelete(item)} />,
                                 ]}
                             >
@@ -442,6 +470,7 @@ const Contacts: React.FC = () => {
                             actions={[
                                 <Button key="view" type="link" icon={<EyeOutlined />} onClick={() => showViewModal(item)}>Megtekintés</Button>,
                                 <Button key="edit" type="link" icon={<EditOutlined />} onClick={() => showEditModal(item)}>Szerkesztés</Button>,
+                                <Button key="portal" type="link" icon={<KeyOutlined />} onClick={() => handleSetPortalPassword(item)} disabled={!item.email}>Portal jelszó</Button>,
                                 <Button key="delete" danger type="link" icon={<DeleteOutlined />} onClick={() => handleDelete(item)}>Törlés</Button>,
                             ]}
                         >
@@ -613,6 +642,43 @@ const Contacts: React.FC = () => {
                         <Descriptions.Item label="Osztály">{viewingContact.department || '-'}</Descriptions.Item>
                         <Descriptions.Item label="Elsődleges">{viewingContact.is_primary ? 'Igen' : 'Nem'}</Descriptions.Item>
                     </Descriptions>
+                )}
+            </Modal>
+            </Modal>
+
+            {/* Portal jelszó modal */}
+            <Modal
+                open={!!portalPasswordContact}
+                onCancel={() => { setPortalPasswordContact(null); setPortalPasswordResult(null); }}
+                title={<><KeyOutlined style={{ color: '#1677ff', marginRight: 8 }} />Portal jelszó – {portalPasswordContact?.full_name || portalPasswordContact?.name}</>}
+                footer={portalPasswordResult ? [
+                    <Button key="copy" icon={<CopyOutlined />} onClick={() => { navigator.clipboard.writeText(`E-mail: ${portalPasswordResult.email}\nJelszó: ${portalPasswordResult.password}`); message.success('Vágólapra másolva'); }}>Másolás</Button>,
+                    <Button key="close" type="primary" onClick={() => { setPortalPasswordContact(null); setPortalPasswordResult(null); }}>Bezárás</Button>,
+                ] : [
+                    <Button key="cancel" onClick={() => setPortalPasswordContact(null)}>Mégse</Button>,
+                    <Button key="generate" type="primary" icon={<KeyOutlined />} loading={portalPasswordLoading} onClick={generatePortalPassword}>Jelszó generálása</Button>,
+                ]}
+            >
+                {portalPasswordResult ? (
+                    <div>
+                        <div style={{ background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 8, padding: '12px 16px', marginBottom: 12 }}>
+                            <div style={{ marginBottom: 6 }}><strong>E-mail:</strong> {portalPasswordResult.email}</div>
+                            <div><strong>Jelszó:</strong> <code style={{ fontSize: 16, letterSpacing: 2 }}>{portalPasswordResult.password}</code></div>
+                        </div>
+                        <div style={{ color: '#888', fontSize: 13 }}>
+                            Ezzel az e-mail + jelszó kombinációval tud bejelentkezni a{' '}
+                            <a href="/portal/login" target="_blank" rel="noreferrer">/portal/login</a> oldalon.
+                        </div>
+                    </div>
+                ) : (
+                    <div style={{ color: '#555' }}>
+                        <div style={{ marginBottom: 8 }}>
+                            <strong>E-mail:</strong> {portalPasswordContact?.email || '–'}
+                        </div>
+                        <div style={{ color: '#888', fontSize: 13 }}>
+                            A rendszer erős, véletlenszerű jelszót generál, és beállítja a portál belépéshez. Ha már volt portál fiókja, felülírja a jelszót.
+                        </div>
+                    </div>
                 )}
             </Modal>
         </Card>

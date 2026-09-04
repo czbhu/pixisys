@@ -65,6 +65,7 @@ urlpatterns = [
     path('tickets/public/<uuid:token>/reply/', views.PublicTicketReplyView.as_view(), name='public-ticket-reply'),
     path('public-site/config/', views.PublicSiteConfigView.as_view(), name='public-site-config'),
     path('public-sites/resolve/', views.PublicSiteResolveView.as_view(), name='public-site-resolve'),
+    path('public-site/portal/set-contact-password/', views.ClientPortalSetContactPasswordView.as_view(), name='client-portal-set-contact-password'),
     path('public-site/portal/login/', views.ClientPortalLoginView.as_view(), name='client-portal-login'),
     path('public-site/portal/register/', views.ClientPortalRegisterView.as_view(), name='client-portal-register'),
     path('public-site/portal/lookup-company/', views.ClientPortalCompanyLookupView.as_view(), name='client-portal-lookup-company'),
