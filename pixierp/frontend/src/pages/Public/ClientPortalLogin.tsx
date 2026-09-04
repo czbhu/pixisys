@@ -94,6 +94,7 @@ const ClientPortalLogin: React.FC = () => {
   useEffect(() => {
     pollRef.current = setInterval(async () => {
       try {
+        const res = await publicPortalService.qrPoll(qrSessionId!);
         if (res?.status === "approved" && res.token) {
           stopPolling(); setQrStatus("approved");
           localStorage.setItem("portal_access_token", res.token);
