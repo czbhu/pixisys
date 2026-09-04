@@ -3445,7 +3445,8 @@ class ClientPortalSetContactPasswordView(APIView):
             portal_user.set_password(custom_password)
             if contact:
                 portal_user.contact = contact
-                portal_user.full_name = portal_user.full_name or (contact.full_name or contact.name or '')
+                _contact_name = getattr(contact, 'name', None) or ' '.join(filter(None, [getattr(contact, 'first_name', ''), getattr(contact, 'last_name', '')])) or ''
+                portal_user.full_name = portal_user.full_name or _contact_name
                 if contact.company_id and not portal_user.company_id:
                     portal_user.company_id = contact.company_id
             portal_user.is_active = True
@@ -3454,7 +3455,7 @@ class ClientPortalSetContactPasswordView(APIView):
             name = ''
             company = None
             if contact:
-                name = contact.full_name or contact.name or ''
+                name = getattr(contact, 'name', None) or ' '.join(filter(None, [getattr(contact, 'first_name', ''), getattr(contact, 'last_name', '')])) or ''
                 company = getattr(contact, 'company', None)
             portal_user = ClientPortalUser(email=email, full_name=name, contact=contact, company=company, is_active=True)
             portal_user.set_password(custom_password)
