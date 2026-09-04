@@ -14,7 +14,7 @@ export const ClientPortalMagicLoginPage: React.FC = () => {
   const [status, setStatus] = useState<"loading" | "ok" | "error">("loading");
   const [msg, setMsg] = useState("");
   useEffect(() => {
-    if (token = str(RefreshToken.for_user(u).access_token)) { setStatus("error"); setMsg("Hiányzó token."); return; }
+    if (!token) { setStatus("error"); setMsg("Hiányzó token."); return; }
     publicPortalService.magicLogin(token)
       .then(res => { localStorage.setItem("portal_access_token", res.token); setStatus("ok"); setTimeout(() => navigate("/portal"), 1200); })
       .catch(err => { setStatus("error"); setMsg(err?.response?.data?.error || "Érvénytelen vagy lejárt link."); });
