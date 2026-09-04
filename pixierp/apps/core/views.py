@@ -3460,11 +3460,38 @@ class ClientPortalSetContactPasswordView(APIView):
             portal_user.set_password(custom_password)
             portal_user.save()
 
+        # Optionally send the password by email
+        send_email = bool(request.data.get('send_email'))
+        email_sent = False
+        email_error = None
+        if send_email:
+            try:
+                from django.core.mail import send_mail
+                frontend_url = getattr(settings, 'FRONTEND_BASE_URL', 'https://e.pixisys.eu')
+                send_mail(
+                    subject='Portál bejelentkezési adatok',
+                    message=(
+                        f'Kedves {portal_user.full_name or email}!\n\n'
+                        f'Az alábbi adatokkal tud bejelentkezni a kliens portálra:\n\n'
+                        f'Portál URL: {frontend_url}/portal/login\n'
+                        f'E-mail: {email}\n'
+                        f'Jelszó: {custom_password}\n\n'
+                        f'Kérjük, változtassa meg a jelszavát az első bejelentkezés után!\n'
+                    ),
+                    from_email=getattr(settings, 'DEFAULT_FROM_EMAIL', 'noreply@pixisys.hu'),
+                    recipient_list=[email],
+                    fail_silently=False,
+                )
+                email_sent = True
+            except Exception as e:
+                email_error = str(e)
+
         return Response({
             'email': email,
             'password': custom_password,
             'portal_user_id': portal_user.id,
-            'is_new': not bool(ClientPortalUser.objects.filter(email__iexact=email, id__lt=portal_user.id).exists()),
+            'email_sent': email_sent,
+            'email_error': email_error,
         })
 
 

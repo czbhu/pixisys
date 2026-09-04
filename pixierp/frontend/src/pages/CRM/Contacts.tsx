@@ -77,6 +77,50 @@ const defaultContactValues = {
     is_receipt: false,
 };
 
+const PortalPasswordSection: React.FC<{ contact: any }> = ({ contact }) => {
+    const [loading, setLoading] = useState(false);
+    const [result, setResult] = useState<{ email: string; password: string; email_sent?: boolean; email_error?: string | null } | null>(null);
+    const [sendEmail, setSendEmail] = useState(true);
+
+    const generate = async () => {
+        setLoading(true);
+        try {
+            const res = await fetch('/api/v1/public-site/portal/set-contact-password/', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('access_token') || ''}` },
+                body: JSON.stringify({ contact_id: contact.id, email: contact.email, send_email: sendEmail }),
+            });
+            const data = await res.json();
+            if (!res.ok) { message.error(data.error || 'Hiba'); return; }
+            setResult(data);
+            if (data.email_sent) message.success('Jelszó elküldve e-mailben!');
+            else if (sendEmail && data.email_error) message.warning('Jelszó generálva, de az e-mail küldés sikertelen: ' + data.email_error);
+        } catch { message.error('Hálózati hiba'); }
+        finally { setLoading(false); }
+    };
+
+    if (result) return (
+        <div style={{ background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 8, padding: '10px 14px', marginBottom: 8 }}>
+            <div style={{ marginBottom: 4 }}><strong>E-mail:</strong> {result.email}</div>
+            <div style={{ marginBottom: 6 }}><strong>Jelszó:</strong> <code style={{ fontSize: 15, letterSpacing: 1 }}>{result.password}</code>
+                <Button size="small" type="link" icon={<CopyOutlined />} onClick={() => { navigator.clipboard.writeText(result.password); message.success('Másolva'); }} style={{ marginLeft: 4 }} />
+            </div>
+            {result.email_sent && <div style={{ color: '#52c41a', fontSize: 12 }}>✓ Jelszó elküldve: {result.email}</div>}
+            <Button size="small" style={{ marginTop: 6 }} onClick={() => setResult(null)}>Új jelszó generálása</Button>
+        </div>
+    );
+
+    return (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+            <Switch size="small" checked={sendEmail} onChange={setSendEmail} />
+            <Typography.Text style={{ fontSize: 13 }}>Küldés e-mailben ({contact.email})</Typography.Text>
+            <Button size="small" type="primary" ghost icon={<KeyOutlined />} loading={loading} onClick={generate}>
+                Jelszó generálása
+            </Button>
+        </div>
+    );
+};
+
 const Contacts: React.FC = () => {
     const location = useLocation();
     const navigate = useNavigate();
@@ -619,6 +663,12 @@ const Contacts: React.FC = () => {
                             </Form.Item>
                         </Col>
                     </Row>
+                    {editingContact?.email && (
+                        <>
+                            <Divider orientation="left"><KeyOutlined style={{ marginRight: 6 }} />Portal jelszó</Divider>
+                            <PortalPasswordSection contact={editingContact} />
+                        </>
+                    )}
                 </Form>
             </Modal>
 
