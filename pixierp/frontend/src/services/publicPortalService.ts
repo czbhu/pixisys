@@ -100,11 +100,24 @@ export const publicPortalService = {
 
   async requestMagicQR(email: string) {
     const accessToken = localStorage.getItem('access_token');
-    // This is called from the portal login page — tries the staff-authenticated magic-link endpoint
-    // For self-service: try without auth first (backend may allow it if portal user exists)
     const response = await publicApi.post('/public-site/portal/magic-link/', { email },
       accessToken ? { headers: { Authorization: `Bearer ${accessToken}` } } : {}
     );
+    return response.data;
+  },
+
+  async qrCreate() {
+    const response = await publicApi.post('/public-site/portal/qr-create/', {});
+    return response.data;
+  },
+
+  async qrPoll(sessionId: string) {
+    const response = await publicApi.get(`/public-site/portal/qr-poll/?session_id=${sessionId}`);
+    return response.data;
+  },
+
+  async forgotPassword(email: string) {
+    const response = await publicApi.post('/public-site/portal/forgot-password/', { email });
     return response.data;
   },
 

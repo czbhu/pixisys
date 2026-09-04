@@ -25,7 +25,7 @@ import PublicDeliveryNote from './pages/Public/PublicDeliveryNote';
 import PublicTicket from './pages/Public/PublicTicket';
 import PublicSite from './pages/Public/PublicSite';
 import ClientPortal from './pages/Public/ClientPortal';
-import ClientPortalLogin, { ClientPortalMagicLoginPage } from './pages/Public/ClientPortalLogin';
+import ClientPortalLogin, { ClientPortalMagicLoginPage, ClientPortalForgotPassword } from './pages/Public/ClientPortalLogin';
 import KioskPage from './pages/Public/KioskPage';
 import SiteManagement from './pages/SiteManagement/SiteManagement';
 import SiteManagementPreview from './pages/SiteManagement/SiteManagementPreview';
@@ -277,6 +277,7 @@ function AppContent() {
         <Route path="/site" element={<PublicSite />} />
         <Route path="/portal" element={<ClientPortal />} />
         <Route path="/portal/login" element={<ClientPortalLogin />} />
+        <Route path="/portal/forgot-password" element={<ClientPortalForgotPassword />} />
         <Route path="/portal/magic/:token" element={<ClientPortalMagicLoginPage />} />
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
@@ -380,6 +381,7 @@ function AppContent() {
             <Route path="/site" element={<PublicSite />} />
             <Route path="/portal" element={<ClientPortal />} />
             <Route path="/portal/login" element={<ClientPortalLogin />} />
+            <Route path="/portal/forgot-password" element={<ClientPortalForgotPassword />} />
             <Route path="/portal/magic/:token" element={<ClientPortalMagicLoginPage />} />
             <Route path="/kiosk" element={<KioskPage />} />
             <Route path="/hr/*" element={<HRModule />} />

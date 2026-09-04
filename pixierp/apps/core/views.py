@@ -3495,7 +3495,23 @@ class ClientPortalMagicLoginView(APIView):
         try:
             session = ClientPortalSession.objects.select_related('user').get(token=token)
         except ClientPortalSession.DoesNotExist:
-            return Response({'error': 'Érvénytelen token'}, status=status.HTTP_401_UNAUTHORIZED)
+            # Check if it's a QR cache token (pending QR scan)
+            from django.core.cache import cache
+            state = cache.get(f'portal_qr_{token}')
+            if state is None:
+                return Response({'error': 'Érvénytelen token'}, status=status.HTTP_401_UNAUTHORIZED)
+            email = state.get('email', '')
+            user = ClientPortalUser.objects.filter(email__iexact=email, is_active=True).first() if email else None
+            if not user:
+                return Response({'error': 'Portál felhasználó nem található ehhez az e-mail címhez'}, status=status.HTTP_401_UNAUTHORIZED)
+            import secrets as _secrets2
+            session_token = _secrets2.token_urlsafe(32)
+            sess = ClientPortalSession.objects.create(user=user, token=session_token, expires_at=timezone.now() + timedelta(days=7), confirmed=True)
+            user.last_login = timezone.now()
+            user.save(update_fields=['last_login'])
+            # Mark QR as approved so polling endpoint can return it
+            cache.set(f'portal_qr_{token}', {'status': 'approved', 'session_token': session_token}, timeout=60)
+            return Response({'token': session_token, 'user': ClientPortalUserSerializer(user).data})
         if session.revoked_at or not session.user.is_active:
             return Response({'error': 'Token lejárt vagy visszavonva'}, status=status.HTTP_401_UNAUTHORIZED)
         if session.expires_at and session.expires_at < timezone.now():
@@ -3507,6 +3523,75 @@ class ClientPortalMagicLoginView(APIView):
         session.user.last_login = timezone.now()
         session.user.save(update_fields=['last_login'])
         return Response({'token': str(session.token), 'user': ClientPortalUserSerializer(session.user).data})
+
+
+class ClientPortalQRCreateView(APIView):
+    """Creates a QR login session for portal — returns a URL to encode as QR."""
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        import secrets as _secrets
+        token = _secrets.token_urlsafe(32)
+        expires_at = timezone.now() + timedelta(minutes=5)
+        # We store email hint from request to validate later
+        email_hint = (request.data.get('email') or '').strip().lower()
+        # Store as unconfirmed session without user yet (user=None not possible due to FK)
+        # Instead, store pending QR token in cache/temp store using session token as key
+        # Use a special "pending QR" approach: store in a simple dict-like cache
+        from django.core.cache import cache
+        cache.set(f'portal_qr_{token}', {'status': 'pending', 'email': email_hint}, timeout=300)
+        frontend_url = getattr(settings, 'FRONTEND_BASE_URL', request.build_absolute_uri('/').rstrip('/'))
+        qr_url = f"{frontend_url}/portal/magic/{token}"
+        return Response({'qr_data': qr_url, 'session_id': token, 'expires_in': 300})
+
+
+class ClientPortalQRPollView(APIView):
+    """Polls whether a QR token has been scanned and approved."""
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        from django.core.cache import cache
+        session_id = (request.query_params.get('session_id') or '').strip()
+        if not session_id:
+            return Response({'status': 'expired'})
+        state = cache.get(f'portal_qr_{session_id}')
+        if not state:
+            return Response({'status': 'expired'})
+        if state.get('status') == 'approved':
+            cache.delete(f'portal_qr_{session_id}')
+            return Response({'status': 'approved', 'token': state.get('session_token')})
+        return Response({'status': state.get('status', 'pending')})
+
+
+class ClientPortalForgotPasswordView(APIView):
+    """Sends a password reset email for portal users."""
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        email = (request.data.get('email') or '').strip().lower()
+        if not email:
+            return Response({'error': 'E-mail cím kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        user = ClientPortalUser.objects.filter(email__iexact=email, is_active=True).first()
+        if user:
+            import secrets as _secrets
+            reset_token = _secrets.token_urlsafe(32)
+            from django.core.cache import cache
+            cache.set(f'portal_pw_reset_{reset_token}', {'user_id': user.id}, timeout=3600)
+            frontend_url = getattr(settings, 'FRONTEND_BASE_URL', request.build_absolute_uri('/').rstrip('/'))
+            reset_url = f"{frontend_url}/portal/reset-password/{reset_token}"
+            try:
+                from django.core.mail import send_mail
+                send_mail(
+                    subject='Portál jelszó visszaállítás',
+                    message=f'Jelszó visszaállításhoz nyisd meg ezt a linket (1 órán belül érvényes):\n\n{reset_url}',
+                    from_email=getattr(settings, 'DEFAULT_FROM_EMAIL', 'noreply@pixisys.hu'),
+                    recipient_list=[email],
+                    fail_silently=True,
+                )
+            except Exception:
+                pass
+        # Always return OK to prevent email enumeration
+        return Response({'message': 'Ha az e-mail cím regisztrált, küldtünk egy visszaállító linket.'})
 
 
 class ClientPortalDashboardView(APIView, ClientPortalSessionMixin):

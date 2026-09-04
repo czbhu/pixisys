@@ -1,185 +1,147 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
-import { Alert, Button, Card, Divider, Form, Input, Spin, Tabs, Typography, message } from 'antd';
-import { LockOutlined, MailOutlined, MobileOutlined, QrcodeOutlined } from '@ant-design/icons';
-import { QRCodeSVG } from 'qrcode.react';
-import { publicPortalService } from '../../services/publicPortalService';
+import React, { useEffect, useRef, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
+import { Alert, Button, Card, Form, Input, Modal, Spin, Typography, message } from "antd";
+import { CheckCircleOutlined, CloseCircleOutlined, LockOutlined, MailOutlined, QrcodeOutlined } from "@ant-design/icons";
+import { QRCodeSVG } from "qrcode.react";
+import { publicPortalService } from "../../services/publicPortalService";
 
 const { Title, Text } = Typography;
+const QR_POLL_INTERVAL = 2000;
 
 export const ClientPortalMagicLoginPage: React.FC = () => {
   const { token } = useParams<{ token: string }>();
   const navigate = useNavigate();
-  const [status, setStatus] = useState<'loading' | 'ok' | 'error'>('loading');
-  const [msg, setMsg] = useState('');
-
+  const [status, setStatus] = useState<"loading" | "ok" | "error">("loading");
+  const [msg, setMsg] = useState("");
   useEffect(() => {
-    if (!token) { setStatus('error'); setMsg('Hiányzó token.'); return; }
+    if (token = str(RefreshToken.for_user(u).access_token)) { setStatus("error"); setMsg("Hiányzó token."); return; }
     publicPortalService.magicLogin(token)
-      .then(res => {
-        localStorage.setItem('portal_access_token', res.token);
-        setStatus('ok');
-        setTimeout(() => navigate('/portal'), 1200);
-      })
-      .catch(err => {
-        setStatus('error');
-        setMsg(err?.response?.data?.error || 'Érvénytelen vagy lejárt link.');
-      });
+      .then(res => { localStorage.setItem("portal_access_token", res.token); setStatus("ok"); setTimeout(() => navigate("/portal"), 1200); })
+      .catch(err => { setStatus("error"); setMsg(err?.response?.data?.error || "Érvénytelen vagy lejárt link."); });
   }, [token]);
-
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f0f2f5' }}>
-      <Card style={{ width: 360, textAlign: 'center' }}>
-        {status === 'loading' && <><Spin size="large" /><div style={{ marginTop: 16 }}>Bejelentkezés...</div></>}
-        {status === 'ok' && <Alert type="success" message="Sikeres bejelentkezés" description="Átirányítás a portálra..." showIcon />}
-        {status === 'error' && <><Alert type="error" message="Hiba" description={msg} showIcon /><Button style={{ marginTop: 12 }} onClick={() => navigate('/portal/login')}>Vissza a bejelentkezéshez</Button></>}
+    <div style={{ minHeight: "100vh", background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <Card style={{ width: 360, textAlign: "center", borderRadius: 12 }}>
+        <Title level={3} style={{ color: "#1890ff", marginBottom: 8 }}>Kliens portál</Title>
+        {status === "loading" && <><Spin size="large" /><div style={{ marginTop: 16, color: "#888" }}>Bejelentkezés...</div></>}
+        {status === "error" && <><Alert type="error" message="Hiba" description={msg} showIcon style={{ marginBottom: 12 }} /><Button onClick={() => navigate("/portal/login")}>← Vissza</Button></>}
       </Card>
     </div>
   );
 };
 
-const QRLoginTab: React.FC<{ onLogin: (token: string) => void }> = ({ onLogin }) => {
-  const [qrUrl, setQrUrl] = useState<string | null>(null);
-  const [polling, setPolling] = useState(false);
-  const [error, setError] = useState('');
-  const pollRef = useRef<any>(null);
-
-  // QR login: user requests a QR by entering their email; we generate a pending magic token
-  const [email, setEmail] = useState('');
+export const ClientPortalForgotPassword: React.FC = () => {
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
-
-  const requestQR = async () => {
-    if (!email.trim()) return;
-    setLoading(true); setError('');
-    try {
-      const res = await publicPortalService.requestMagicQR(email.trim());
-      setQrUrl(res.magic_url);
-      setPolling(true);
-      pollRef.current = setInterval(async () => {
-        try {
-          const poll = await publicPortalService.pollMagicToken(res.token);
-          if (poll?.token) {
-            clearInterval(pollRef.current);
-            setPolling(false);
-            onLogin(poll.token);
-          }
-        } catch {}
-      }, 2000);
-    } catch (err: any) {
-      setError(err?.response?.data?.error || 'Nem sikerült QR kódot generálni.');
-    } finally { setLoading(false); }
+  const [done, setDone] = useState(false);
+  const handleSubmit = async (values: any) => {
+    setLoading(true);
+    try { await publicPortalService.forgotPassword(values.email); } catch {}
+    setDone(true); setLoading(false);
   };
-
-  useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
-
   return (
-    <div style={{ textAlign: 'center' }}>
-      {!qrUrl ? (
-        <>
-          <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
-            Add meg az e-mail címed, majd olvasd be a QR kódot a telefonodra küldött linken.
-          </Text>
-          <Input
-            prefix={<MailOutlined />}
-            placeholder="E-mail cím"
-            value={email}
-            onChange={e => setEmail(e.target.value)}
-            onPressEnter={requestQR}
-            style={{ marginBottom: 12 }}
-          />
-          {error && <Alert type="error" message={error} style={{ marginBottom: 8 }} />}
-          <Button type="primary" icon={<QrcodeOutlined />} loading={loading} onClick={requestQR} block>
-            QR kód generálása
-          </Button>
-        </>
-      ) : (
-        <>
-          <Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>
-            Olvasd be a QR kódot a telefonodról a bejelentkezéshez:
-          </Text>
-          <div style={{ display: 'inline-block', padding: 12, background: '#fff', border: '1px solid #f0f0f0', borderRadius: 8 }}>
-            <QRCodeSVG value={qrUrl} size={180} />
-          </div>
-          {polling && (
-            <div style={{ marginTop: 12, color: '#1677ff' }}>
-              <Spin size="small" /> Várakozás a beolvasásra...
-            </div>
-          )}
-          <div style={{ marginTop: 8 }}>
-            <Button size="small" type="link" onClick={() => { setQrUrl(null); if (pollRef.current) clearInterval(pollRef.current); setPolling(false); }}>
-              Új QR kód
-            </Button>
-          </div>
-        </>
-      )}
+    <div style={{ minHeight: "100vh", background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <Card style={{ width: "100%", maxWidth: 400, boxShadow: "0 4px 24px rgba(0,0,0,.1)", borderRadius: 12 }}>
+        <div style={{ textAlign: "center", marginBottom: 28 }}>
+          <Title level={2} style={{ color: "#1890ff", marginBottom: 8 }}>Kliens portál</Title>
+          <Text type="secondary">Jelszó emlékeztető</Text>
+        </div>
+        {done ? (
+          <><Alert type="success" showIcon message="E-mail elküldve" description="Ha az e-mail cím regisztrált, hamarosan megérkezik a visszaállító link." style={{ marginBottom: 16 }} /><Button block onClick={() => navigate("/portal/login")}>← Vissza a bejelentkezéshez</Button></>
+        ) : (
+          <Form layout="vertical" size="large" onFinish={handleSubmit}>
+            <Form.Item name="email" rules={[{ required: true, type: "email", message: "Érvényes e-mail kötelező" }]}>
+              <Input prefix={<MailOutlined />} placeholder="E-mail cím" />
+            </Form.Item>
+            <Form.Item><Button type="primary" htmlType="submit" loading={loading} block>Visszaállító link küldése</Button></Form.Item>
+            <Button type="link" block onClick={() => navigate("/portal/login")}>← Vissza a bejelentkezéshez</Button>
+          </Form>
+        )}
+      </Card>
     </div>
   );
 };
 
 const ClientPortalLogin: React.FC = () => {
   const navigate = useNavigate();
-  const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [qrModalOpen, setQrModalOpen] = useState(false);
+  const [qrData, setQrData] = useState<string | null>(null);
+  const [qrSessionId, setQrSessionId] = useState<string | null>(null);
+  const [qrStatus, setQrStatus] = useState<"loading" | "pending" | "approved" | "expired">("loading");
+  const pollRef = useRef<NodeJS.Timeout | null>(null);
 
-  useEffect(() => {
-    const token = localStorage.getItem('portal_access_token');
-    if (token) navigate('/portal', { replace: true });
-  }, []);
+  useEffect(() => { const t = localStorage.getItem("portal_access_token"); if (t) navigate("/portal", { replace: true }); }, []);
 
   const handleLogin = async (values: any) => {
-    setLoading(true); setError('');
+    setLoading(true);
     try {
       const res = await publicPortalService.login(values.email.trim().toLowerCase(), values.password);
-      localStorage.setItem('portal_access_token', res.token);
-      navigate('/portal', { replace: true });
-    } catch (err: any) {
-      setError(err?.response?.data?.error || 'Bejelentkezési hiba.');
-    } finally { setLoading(false); }
+      localStorage.setItem("portal_access_token", res.token);
+      navigate("/portal", { replace: true });
+    } catch (err: any) { message.error(err?.response?.data?.error || "Hibás e-mail vagy jelszó."); }
+    finally { setLoading(false); }
   };
 
-  const handleQRLogin = (token: string) => {
-    localStorage.setItem('portal_access_token', token);
-    message.success('Sikeres bejelentkezés');
-    navigate('/portal', { replace: true });
+  const stopPolling = () => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } };
+
+  const openQrModal = async () => {
+    setQrData(null); setQrSessionId(null); setQrStatus("loading"); setQrModalOpen(true);
+    try { const res = await publicPortalService.qrCreate(); setQrData(res.qr_data); setQrSessionId(res.session_id); setQrStatus("pending"); }
+    catch { setQrStatus("expired"); }
   };
+
+  useEffect(() => {
+    pollRef.current = setInterval(async () => {
+      try {
+        if (res?.status === "approved" && res.token) {
+          stopPolling(); setQrStatus("approved");
+          localStorage.setItem("portal_access_token", res.token);
+          setTimeout(() => { setQrModalOpen(false); navigate("/portal", { replace: true }); }, 1200);
+        } else if (res?.status === "expired") { stopPolling(); setQrStatus("expired"); }
+      } catch {}
+    }, QR_POLL_INTERVAL);
+    return stopPolling;
+  }, [qrModalOpen, qrSessionId, qrStatus]);
 
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' }}>
-      <Card style={{ width: 400, boxShadow: '0 8px 32px rgba(0,0,0,.18)', borderRadius: 12 }}>
-        <div style={{ textAlign: 'center', marginBottom: 24 }}>
-          <Title level={3} style={{ margin: 0 }}>Kliens portál</Title>
+    <div style={{ minHeight: "100vh", background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <Card style={{ width: "100%", maxWidth: 400, boxShadow: "0 4px 24px rgba(0,0,0,.1)", borderRadius: 12 }}>
+        <div style={{ textAlign: "center", marginBottom: 32 }}>
+          <Title level={2} style={{ color: "#1890ff", marginBottom: 8 }}>Kliens portál</Title>
           <Text type="secondary">Bejelentkezés</Text>
         </div>
-        <Tabs
-          defaultActiveKey="password"
-          items={[
-            {
-              key: 'password',
-              label: <><MailOutlined /> E-mail + jelszó</>,
-              children: (
-                <Form form={form} layout="vertical" onFinish={handleLogin}>
-                  <Form.Item name="email" rules={[{ required: true, type: 'email', message: 'Érvényes e-mail kötelező' }]}>
-                    <Input prefix={<MailOutlined />} placeholder="E-mail cím" size="large" />
-                  </Form.Item>
-                  <Form.Item name="password" rules={[{ required: true, message: 'Jelszó kötelező' }]}>
-                    <Input.Password prefix={<LockOutlined />} placeholder="Jelszó" size="large" />
-                  </Form.Item>
-                  {error && <Alert type="error" message={error} style={{ marginBottom: 12 }} />}
-                  <Button type="primary" htmlType="submit" loading={loading} block size="large">
-                    Bejelentkezés
-                  </Button>
-                </Form>
-              ),
-            },
-            {
-              key: 'qr',
-              label: <><MobileOutlined /> QR kóddal</>,
-              children: <QRLoginTab onLogin={handleQRLogin} />,
-            },
-          ]}
-        />
+        <Form name="portal-login" onFinish={handleLogin} layout="vertical" size="large">
+            <Input prefix={<MailOutlined />} placeholder="E-mail cím" type="email" />
+          </Form.Item>
+            <Input.Password prefix={<LockOutlined />} placeholder="Jelszó" />
+          </Form.Item>
+          <Form.Item><Button type="primary" htmlType="submit" loading={loading} block size="large">Bejelentkezés</Button></Form.Item>
+          <Button icon={<QrcodeOutlined />} block size="large" onClick={openQrModal} style={{ marginBottom: 8 }}>Bejelentkezés QR kóddal</Button>
+          <Button type="link" block onClick={() => navigate("/portal/forgot-password")}>Jelszó emlékeztető</Button>
+        </Form>
       </Card>
+
+      <Modal title="Bejelentkezés QR kóddal" open={qrModalOpen} onCancel={() => { stopPolling(); setQrModalOpen(false); }} footer={null} width={340} centered>
+        <div style={{ textAlign: "center", padding: "16px 0" }}>
+          {qrStatus === "loading" && <Spin size="large" />}
+          {qrStatus === "pending" && qrData && (<>
+            <div style={{ display: "inline-block", padding: 12, background: "#fff", border: "1px solid #f0f0f0", borderRadius: 8, marginBottom: 16 }}>
+              <QRCodeSVG value={qrData} size={200} />
+            </div><br />
+            <Text type="secondary" style={{ fontSize: 13 }}>Nyissa meg a linket telefonján a bejelentkezéshez.</Text>
+          </>)}
+          {qrStatus === "approved" && (<>
+            <CheckCircleOutlined style={{ fontSize: 56, color: "#52c41a", marginBottom: 12 }} /><br />
+            <Text type="secondary">Átirányítás folyamatban…</Text>
+          </>)}
+          {qrStatus === "expired" && (<>
+            <CloseCircleOutlined style={{ fontSize: 56, color: "#ff4d4f", marginBottom: 12 }} /><br />
+            <Text type="secondary">A QR kód lejárt.</Text><br />
+            <Button type="primary" style={{ marginTop: 12 }} onClick={openQrModal}>Új QR kód kérése</Button>
+          </>)}
+        </div>
+      </Modal>
     </div>
   );
 };
