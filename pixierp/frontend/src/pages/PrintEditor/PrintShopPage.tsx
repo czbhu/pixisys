@@ -1163,7 +1163,7 @@ const PrintShopPage: React.FC = () => {
             rfqId, productId, autoName, saveQty,
             description, saveUnit, saveUnitPrice, 27, 0, 0,
             isMultiRollSave ? { _price_from_cost_calc: true as any } : {},
-            { _ps_mfg_id: productId } as any,
+            ({ _ps_mfg_id: productId } as any),
           );
           setSavedRfqQriId(qri.id);
           // Notify parent tab so it refreshes without a full reload
