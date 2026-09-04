@@ -3407,6 +3407,32 @@ class ClientPortalSessionMixin:
         return session
 
 
+class ClientPortalLoginView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        email = (request.data.get('email') or '').strip().lower()
+        password = request.data.get('password') or ''
+        if not email or not password:
+            return Response({'error': 'E-mail és jelszó kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+
+        user = ClientPortalUser.objects.filter(email__iexact=email, is_active=True).first()
+        if not user or not user.check_password(password):
+            return Response({'error': 'Hibás e-mail vagy jelszó'}, status=status.HTTP_401_UNAUTHORIZED)
+
+        import secrets as _sec
+        expires_at = timezone.now() + timedelta(days=7)
+        session = ClientPortalSession.objects.create(user=user, expires_at=expires_at, token=_sec.token_urlsafe(32))
+        user.last_login = timezone.now()
+        user.save(update_fields=['last_login'])
+
+        return Response({
+            'token': str(session.token),
+            'expires_at': session.expires_at,
+            'user': ClientPortalUserSerializer(user).data,
+        })
+
+
 class ClientPortalCompanyLookupView(APIView):
     """NAV adatbázisból lekéri a cég adatait az adószám első 8 jegye alapján."""
     permission_classes = [AllowAny]
