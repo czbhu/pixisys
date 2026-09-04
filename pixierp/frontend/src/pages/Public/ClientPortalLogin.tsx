@@ -112,8 +112,10 @@ const ClientPortalLogin: React.FC = () => {
           <Text type="secondary">Bejelentkezés</Text>
         </div>
         <Form name="portal-login" onFinish={handleLogin} layout="vertical" size="large">
+          <Form.Item name="email" rules={[{ required: true, message: "Kérjük, adja meg az e-mail címet!" }, { type: "email", message: "Érvényes e-mail szükséges!" }]}>
             <Input prefix={<MailOutlined />} placeholder="E-mail cím" type="email" />
           </Form.Item>
+          <Form.Item name="password" rules={[{ required: true, message: "Kérjük, adja meg a jelszót!" }]}>
             <Input.Password prefix={<LockOutlined />} placeholder="Jelszó" />
           </Form.Item>
           <Form.Item><Button type="primary" htmlType="submit" loading={loading} block size="large">Bejelentkezés</Button></Form.Item>
