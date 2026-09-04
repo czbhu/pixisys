@@ -644,7 +644,6 @@ const Contacts: React.FC = () => {
                     </Descriptions>
                 )}
             </Modal>
-            </Modal>
 
             {/* Portal jelszó modal */}
             <Modal
