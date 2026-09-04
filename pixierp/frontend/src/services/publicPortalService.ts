@@ -121,6 +121,16 @@ export const publicPortalService = {
     return response.data;
   },
 
+  async register(payload: { email: string; full_name: string; password: string; phone?: string; is_company?: boolean; company_name?: string; tax_number?: string; company_address?: string }) {
+    const response = await publicApi.post('/public-site/portal/register/', payload);
+    return response.data;
+  },
+
+  async lookupCompany(taxNumber: string) {
+    const response = await publicApi.post('/public-site/portal/lookup-company/', { tax_number: taxNumber });
+    return response.data;
+  },
+
   async magicLogin(token: string) {
     const response = await publicApi.post('/public-site/portal/magic-login/', { token });
     return response.data;

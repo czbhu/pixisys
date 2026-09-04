@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Alert, Button, Card, Form, Input, Modal, Spin, Typography, message } from "antd";
-import { CheckCircleOutlined, CloseCircleOutlined, LockOutlined, MailOutlined, QrcodeOutlined } from "@ant-design/icons";
+import { Alert, Button, Card, Divider, Form, Input, Modal, Radio, Spin, Tabs, Typography, message } from "antd";
+import { BankOutlined, CheckCircleOutlined, CloseCircleOutlined, LockOutlined, MailOutlined, PhoneOutlined, QrcodeOutlined, SearchOutlined, UserOutlined } from "@ant-design/icons";
 import { QRCodeSVG } from "qrcode.react";
 import { publicPortalService } from "../../services/publicPortalService";
 
@@ -107,22 +107,32 @@ const ClientPortalLogin: React.FC = () => {
 
   return (
     <div style={{ minHeight: "100vh", background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-      <Card style={{ width: "100%", maxWidth: 400, boxShadow: "0 4px 24px rgba(0,0,0,.1)", borderRadius: 12 }}>
-        <div style={{ textAlign: "center", marginBottom: 32 }}>
-          <Title level={2} style={{ color: "#1890ff", marginBottom: 8 }}>Kliens portál</Title>
-          <Text type="secondary">Bejelentkezés</Text>
+      <Card style={{ width: "100%", maxWidth: 440, boxShadow: "0 4px 24px rgba(0,0,0,.1)", borderRadius: 12 }}>
+        <div style={{ textAlign: "center", marginBottom: 24 }}>
+          <Title level={2} style={{ color: "#1890ff", marginBottom: 4 }}>Kliens portál</Title>
         </div>
-        <Form name="portal-login" onFinish={handleLogin} layout="vertical" size="large">
-          <Form.Item name="email" rules={[{ required: true, message: "Kérjük, adja meg az e-mail címet!" }, { type: "email", message: "Érvényes e-mail szükséges!" }]}>
-            <Input prefix={<MailOutlined />} placeholder="E-mail cím" type="email" />
-          </Form.Item>
-          <Form.Item name="password" rules={[{ required: true, message: "Kérjük, adja meg a jelszót!" }]}>
-            <Input.Password prefix={<LockOutlined />} placeholder="Jelszó" />
-          </Form.Item>
-          <Form.Item><Button type="primary" htmlType="submit" loading={loading} block size="large">Bejelentkezés</Button></Form.Item>
-          <Button icon={<QrcodeOutlined />} block size="large" onClick={openQrModal} style={{ marginBottom: 8 }}>Bejelentkezés QR kóddal</Button>
-          <Button type="link" block onClick={() => navigate("/portal/forgot-password")}>Jelszó emlékeztető</Button>
-        </Form>
+        <Tabs defaultActiveKey="login" centered items={[
+          {
+            key: "login", label: "Bejelentkezés",
+            children: (
+              <Form name="portal-login" onFinish={handleLogin} layout="vertical" size="large">
+                <Form.Item name="email" rules={[{ required: true, message: "Kérjük, adja meg az e-mail címet!" }, { type: "email", message: "Érvényes e-mail szükséges!" }]}>
+                  <Input prefix={<MailOutlined />} placeholder="E-mail cím" type="email" />
+                </Form.Item>
+                <Form.Item name="password" rules={[{ required: true, message: "Kérjük, adja meg a jelszót!" }]}>
+                  <Input.Password prefix={<LockOutlined />} placeholder="Jelszó" />
+                </Form.Item>
+                <Form.Item><Button type="primary" htmlType="submit" loading={loading} block size="large">Bejelentkezés</Button></Form.Item>
+                <Button icon={<QrcodeOutlined />} block size="large" onClick={openQrModal} style={{ marginBottom: 8 }}>Bejelentkezés QR kóddal</Button>
+                <Button type="link" block onClick={() => navigate("/portal/forgot-password")}>Jelszó emlékeztető</Button>
+              </Form>
+            ),
+          },
+          {
+            key: "register", label: "Regisztráció",
+            children: <RegistrationForm onSuccess={(token) => { localStorage.setItem("portal_access_token", token); navigate("/portal", { replace: true }); }} />,
+          },
+        ]} />
       </Card>
 
       <Modal title="Bejelentkezés QR kóddal" open={qrModalOpen} onCancel={() => { stopPolling(); setQrModalOpen(false); }} footer={null} width={340} centered>
@@ -136,6 +146,7 @@ const ClientPortalLogin: React.FC = () => {
           </>)}
           {qrStatus === "approved" && (<>
             <CheckCircleOutlined style={{ fontSize: 56, color: "#52c41a", marginBottom: 12 }} /><br />
+            <Text strong style={{ fontSize: 15 }}>Sikeres bejelentkezés!</Text><br />
             <Text type="secondary">Átirányítás folyamatban…</Text>
           </>)}
           {qrStatus === "expired" && (<>
@@ -146,6 +157,106 @@ const ClientPortalLogin: React.FC = () => {
         </div>
       </Modal>
     </div>
+  );
+};
+
+const RegistrationForm: React.FC<{ onSuccess: (token: string) => void }> = ({ onSuccess }) => {
+  const [form] = Form.useForm();
+  const [loading, setLoading] = useState(false);
+  const [isCompany, setIsCompany] = useState(false);
+  const [taxLookup, setTaxLookup] = useState<{ loading: boolean; data: any | null; error: string }>({ loading: false, data: null, error: "" });
+
+  const lookupTax = async () => {
+    const tax = (form.getFieldValue("tax_number") || "").replace(/\D/g, "").slice(0, 8);
+    if (tax.length < 8) { message.warning("Az adószám első 8 számjegyét add meg!"); return; }
+    setTaxLookup({ loading: true, data: null, error: "" });
+    try {
+      const res = await publicPortalService.lookupCompany(tax);
+      if (res.success && res.data) {
+        const d = res.data;
+        const name = d.name || d.taxpayerName || d.company_name || "";
+        const address = [d.city || d.telepules, d.address || d.utca].filter(Boolean).join(", ");
+        form.setFieldsValue({ company_name: name, company_address: address });
+        setTaxLookup({ loading: false, data: d, error: "" });
+        message.success("Cég megtalálva: " + name);
+      } else {
+        setTaxLookup({ loading: false, data: null, error: res.error || "Nem található" });
+      }
+    } catch (err: any) {
+      setTaxLookup({ loading: false, data: null, error: err?.response?.data?.error || "NAV lekérdezés sikertelen" });
+    }
+  };
+
+  const handleSubmit = async (values: any) => {
+    setLoading(true);
+    try {
+      const res = await publicPortalService.register({
+        email: values.email,
+        full_name: values.full_name,
+        password: values.password,
+        phone: values.phone || "",
+        is_company: isCompany,
+        company_name: isCompany ? (values.company_name || "") : "",
+        tax_number: isCompany ? (values.tax_number || "") : "",
+        company_address: isCompany ? (values.company_address || "") : "",
+      });
+      message.success("Sikeres regisztráció!");
+      onSuccess(res.token);
+    } catch (err: any) {
+      message.error(err?.response?.data?.error || "Regisztrációs hiba.");
+    } finally { setLoading(false); }
+  };
+
+  return (
+    <Form form={form} layout="vertical" size="large" onFinish={handleSubmit}>
+      <Form.Item name="full_name" label="Teljes név" rules={[{ required: true, message: "Kötelező" }]}>
+        <Input prefix={<UserOutlined />} placeholder="Teljes név" />
+      </Form.Item>
+      <Form.Item name="email" label="E-mail cím" rules={[{ required: true, type: "email", message: "Érvényes e-mail szükséges" }]}>
+        <Input prefix={<MailOutlined />} placeholder="E-mail cím" />
+      </Form.Item>
+      <Form.Item name="phone" label="Telefonszám">
+        <Input prefix={<PhoneOutlined />} placeholder="+36 ..." />
+      </Form.Item>
+      <Form.Item name="password" label="Jelszó" rules={[{ required: true, min: 6, message: "Legalább 6 karakter" }]}>
+        <Input.Password prefix={<LockOutlined />} placeholder="Jelszó (min. 6 karakter)" />
+      </Form.Item>
+      <Form.Item name="password2" label="Jelszó megerősítése" dependencies={["password"]}
+        rules={[{ required: true, message: "Kötelező" }, ({ getFieldValue }) => ({ validator(_, v) { return !v || getFieldValue("password") === v ? Promise.resolve() : Promise.reject("A jelszavak nem egyeznek"); } })]}>
+        <Input.Password prefix={<LockOutlined />} placeholder="Jelszó megerősítése" />
+      </Form.Item>
+
+      <Divider style={{ margin: "12px 0" }} />
+      <Form.Item label="Ügyfél típusa">
+        <Radio.Group value={isCompany ? "company" : "private"} onChange={e => setIsCompany(e.target.value === "company")} optionType="button" buttonStyle="solid">
+          <Radio.Button value="private"><UserOutlined /> Magánszemély</Radio.Button>
+          <Radio.Button value="company"><BankOutlined /> Cég</Radio.Button>
+        </Radio.Group>
+      </Form.Item>
+
+      {isCompany && (<>
+        <Form.Item label="Adószám (első 8 jegy)" name="tax_number" extra="Magyar cég esetén az adószám első 8 számjegye">
+          <Input.Search
+            placeholder="pl. 12345678"
+            maxLength={11}
+            enterButton={<><SearchOutlined /> NAV keresés</>}
+            loading={taxLookup.loading}
+            onSearch={lookupTax}
+          />
+        </Form.Item>
+        {taxLookup.error && <Alert type="warning" message={taxLookup.error} showIcon style={{ marginBottom: 12 }} />}
+        <Form.Item name="company_name" label="Cégnév" rules={[{ required: true, message: "Kötelező" }]}>
+          <Input prefix={<BankOutlined />} placeholder="Cég neve" />
+        </Form.Item>
+        <Form.Item name="company_address" label="Cím">
+          <Input placeholder="Cím" />
+        </Form.Item>
+      </>)}
+
+      <Form.Item style={{ marginTop: 8 }}>
+        <Button type="primary" htmlType="submit" loading={loading} block>Regisztráció</Button>
+      </Form.Item>
+    </Form>
   );
 };
 

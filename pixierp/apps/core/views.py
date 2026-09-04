@@ -3407,7 +3407,88 @@ class ClientPortalSessionMixin:
         return session
 
 
-class ClientPortalLoginView(APIView):
+class ClientPortalCompanyLookupView(APIView):
+    """NAV adatbázisból lekéri a cég adatait az adószám első 8 jegye alapján."""
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        tax_number = ''.join(filter(str.isdigit, request.data.get('tax_number') or ''))[:8]
+        if len(tax_number) < 8:
+            return Response({'error': 'Az adószám első 8 számjegye szükséges'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            from apps.finance.views import PixinvoiceClient
+            import requests as _req
+            client = PixinvoiceClient()
+            data = client.lookup_taxpayer(tax_number)
+            return Response({'success': True, 'data': data})
+        except Exception as e:
+            return Response({'success': False, 'error': str(e)}, status=status.HTTP_502_BAD_GATEWAY)
+
+
+class ClientPortalRegisterView(APIView):
+    """Regisztráció a kliens portálra. Magánszemélynek vagy cégnek."""
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        from django.contrib.auth.hashers import make_password as _make_pw
+        email = (request.data.get('email') or '').strip().lower()
+        full_name = (request.data.get('full_name') or '').strip()
+        password = request.data.get('password') or ''
+        phone = (request.data.get('phone') or '').strip()
+        is_company = bool(request.data.get('is_company'))
+        company_name = (request.data.get('company_name') or '').strip()
+        tax_number = (request.data.get('tax_number') or '').strip()
+        company_address = (request.data.get('company_address') or '').strip()
+
+        if not email or not full_name or not password:
+            return Response({'error': 'Név, e-mail és jelszó kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        if len(password) < 6:
+            return Response({'error': 'A jelszónak legalább 6 karakter hosszúnak kell lennie'}, status=status.HTTP_400_BAD_REQUEST)
+        if ClientPortalUser.objects.filter(email__iexact=email).exists():
+            return Response({'error': 'Ez az e-mail cím már regisztrált'}, status=status.HTTP_400_BAD_REQUEST)
+
+        crm_company = None
+        crm_contact = None
+        try:
+            from apps.crm.models import Company as CrmCompany, Contact as CrmContact
+            # Find or create CRM company
+            if is_company and company_name:
+                tax_digits = ''.join(filter(str.isdigit, tax_number))
+                if tax_digits:
+                    crm_company = CrmCompany.objects.filter(tax_number__startswith=tax_digits[:8]).first()
+                if not crm_company:
+                    crm_company = CrmCompany.objects.filter(name__iexact=company_name).first()
+                if not crm_company:
+                    crm_company = CrmCompany.objects.create(
+                        name=company_name,
+                        tax_number=tax_number or '',
+                        is_customer=True,
+                    )
+            # Find or create CRM contact
+            name_parts = full_name.split(' ', 1)
+            first_name = name_parts[0] if len(name_parts) > 1 else ''
+            last_name = name_parts[-1]
+            crm_contact = CrmContact.objects.filter(email__iexact=email).first()
+            if not crm_contact:
+                crm_contact = CrmContact.objects.create(
+                    first_name=first_name,
+                    last_name=last_name,
+                    email=email,
+                    phone=phone,
+                    company=crm_company,
+                )
+        except Exception:
+            pass  # CRM failure doesn't block registration
+
+        portal_user = ClientPortalUser(email=email, full_name=full_name, company=crm_company, contact=crm_contact, is_active=True)
+        portal_user.set_password(password)
+        portal_user.save()
+
+        # Auto-login: create session
+        import secrets as _secrets
+        expires_at = timezone.now() + timedelta(days=7)
+        session = ClientPortalSession.objects.create(user=portal_user, token=_secrets.token_urlsafe(32), expires_at=expires_at)
+        return Response({'token': session.token, 'user': ClientPortalUserSerializer(portal_user).data}, status=status.HTTP_201_CREATED)
     permission_classes = [AllowAny]
 
     def post(self, request):
