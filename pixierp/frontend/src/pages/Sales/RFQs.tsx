@@ -1893,8 +1893,7 @@ const RFQs: React.FC = () => {
               }
             }
             // Pass formulas so that _price_from_cost_calc is preserved on the copied item
-            const createdItem = await salesService.addRfqManufacturingItem(rfqId, manuRefId, it.name || '', it.quantity, it.description || '', it.unit, it.net_unit_price, it.vat_rate, (it as any).discount_percent, (it as any).discount_amount, (it as any).formulas || {},
-              (it as any)._ps_mfg_id ? { _ps_mfg_id: (it as any)._ps_mfg_id } : undefined);
+            const createdItem = await salesService.addRfqManufacturingItem(rfqId, manuRefId, it.name || '', it.quantity, it.description || '', it.unit, it.net_unit_price, it.vat_rate, (it as any).discount_percent, (it as any).discount_amount, (it as any).formulas || {});
             if (createdItem?.id && it.files?.length) {
               for (const f of it.files) {
                 const key = (f as any)?.uid || (f as any)?.name;
