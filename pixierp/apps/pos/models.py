@@ -3,7 +3,7 @@ from django.contrib.auth import get_user_model
 
 from apps.finance.models import CashRegister
 from apps.hr.models import Employee
-from apps.warehouse.models import MaterialGroup
+from apps.warehouse.models import MaterialGroup, Warehouse
 
 
 User = get_user_model()
@@ -27,6 +27,13 @@ class POSTerminal(models.Model):
         blank=True,
         related_name='pos_terminals',
         verbose_name='Termék kategóriák'
+    )
+    warehouses = models.ManyToManyField(
+        Warehouse,
+        blank=True,
+        related_name='pos_terminals',
+        verbose_name='Raktárak',
+        help_text='Ha üres, minden raktárban lévő termék megjelenik. Ha meg van adva, csak az itt felsorolt raktár(ak)ban lévő készlettel rendelkező termékek jelennek meg.',
     )
     authorized_employees = models.ManyToManyField(
         Employee,

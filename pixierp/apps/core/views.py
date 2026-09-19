@@ -3412,7 +3412,15 @@ class ClientPortalSetContactPasswordView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        import secrets as _sec, string as _str
+        import secrets as _sec, string as _str, traceback as _tb
+        try:
+            return self._handle(request, _sec, _str)
+        except Exception as e:
+            import logging
+            logging.getLogger('django').error('ClientPortalSetContactPasswordView error: %s\n%s', e, _tb.format_exc())
+            return Response({'error': str(e), 'detail': _tb.format_exc()}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def _handle(self, request, _sec, _str):
         contact_id = request.data.get('contact_id')
         email = (request.data.get('email') or '').strip().lower()
         custom_password = (request.data.get('password') or '').strip()
@@ -3420,12 +3428,20 @@ class ClientPortalSetContactPasswordView(APIView):
         if not contact_id and not email:
             return Response({'error': 'contact_id vagy email kötelező'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Resolve contact
+        # Resolve contact — contact_id may be an integer PK or a PixInvoice UUID (external_id)
         try:
             from apps.crm.models import Contact as CrmContact
             if contact_id:
-                contact = CrmContact.objects.get(id=contact_id)
-                email = email or (contact.email or '').strip().lower()
+                try:
+                    contact = CrmContact.objects.get(id=int(contact_id))
+                except (ValueError, TypeError):
+                    # UUID external_id from PixInvoice
+                    contact = CrmContact.objects.filter(external_id=str(contact_id)).first()
+                    if not contact:
+                        # No local record — proceed with just the email
+                        contact = None
+                email = email or (contact.email if contact else None) or ''
+                email = email.strip().lower()
             else:
                 contact = CrmContact.objects.filter(email__iexact=email).first()
         except CrmContact.DoesNotExist:
@@ -3467,23 +3483,45 @@ class ClientPortalSetContactPasswordView(APIView):
         email_error = None
         if send_email:
             try:
-                from django.core.mail import send_mail
+                from django.core.mail import get_connection, EmailMultiAlternatives
                 frontend_url = getattr(settings, 'FRONTEND_BASE_URL', 'https://e.pixisys.eu')
-                send_mail(
-                    subject='Portál bejelentkezési adatok',
-                    message=(
-                        f'Kedves {portal_user.full_name or email}!\n\n'
-                        f'Az alábbi adatokkal tud bejelentkezni a kliens portálra:\n\n'
-                        f'Portál URL: {frontend_url}/portal/login\n'
-                        f'E-mail: {email}\n'
-                        f'Jelszó: {custom_password}\n\n'
-                        f'Kérjük, változtassa meg a jelszavát az első bejelentkezés után!\n'
-                    ),
-                    from_email=getattr(settings, 'DEFAULT_FROM_EMAIL', 'noreply@pixisys.hu'),
-                    recipient_list=[email],
-                    fail_silently=False,
+                body = (
+                    f'Kedves {portal_user.full_name or email}!\n\n'
+                    f'Az alábbi adatokkal tud bejelentkezni a kliens portálra:\n\n'
+                    f'Portál URL: {frontend_url}/portal/login\n'
+                    f'E-mail: {email}\n'
+                    f'Jelszó: {custom_password}\n\n'
+                    f'Kérjük, változtassa meg a jelszavát az első bejelentkezés után!\n'
                 )
+                email_config = EmailServerConfig.objects.filter(is_active=True).first()
+                if not email_config:
+                    raise Exception('Nincs aktív e-mail szerver konfiguráció')
+                connection = get_connection(
+                    backend='django.core.mail.backends.smtp.EmailBackend',
+                    host=email_config.smtp_host,
+                    port=email_config.smtp_port,
+                    username=email_config.smtp_username,
+                    password=email_config.smtp_password,
+                    use_tls=email_config.smtp_use_tls,
+                    use_ssl=email_config.smtp_use_ssl,
+                    fail_silently=False,
+                    timeout=10,
+                )
+                from_email = f'{email_config.from_name} <{email_config.from_email}>' if email_config.from_name else email_config.from_email
+                msg = EmailMultiAlternatives(
+                    subject='Portál bejelentkezési adatok',
+                    body=body,
+                    from_email=from_email,
+                    to=[email],
+                    connection=connection,
+                )
+                msg.send()
                 email_sent = True
+                try:
+                    from apps.core.email_utils import archive_to_imap_sent
+                    archive_to_imap_sent(email_config, msg)
+                except Exception:
+                    pass
             except Exception as e:
                 email_error = str(e)
 
@@ -3497,6 +3535,7 @@ class ClientPortalSetContactPasswordView(APIView):
 
 
 class ClientPortalLoginView(APIView):
+    authentication_classes = []
     permission_classes = [AllowAny]
 
     def post(self, request):
@@ -3524,6 +3563,7 @@ class ClientPortalLoginView(APIView):
 
 class ClientPortalCompanyLookupView(APIView):
     """NAV adatbázisból lekéri a cég adatait az adószám első 8 jegye alapján."""
+    authentication_classes = []
     permission_classes = [AllowAny]
 
     def post(self, request):
@@ -3542,6 +3582,7 @@ class ClientPortalCompanyLookupView(APIView):
 
 class ClientPortalRegisterView(APIView):
     """Regisztráció a kliens portálra. Magánszemélynek vagy cégnek."""
+    authentication_classes = []
     permission_classes = [AllowAny]
 
     def post(self, request):
@@ -3630,6 +3671,7 @@ class ClientPortalRegisterView(APIView):
 
 
 class ClientPortalMeView(APIView, ClientPortalSessionMixin):
+    authentication_classes = []
     permission_classes = [AllowAny]
 
     def get(self, request):
@@ -3645,6 +3687,7 @@ class ClientPortalMeView(APIView, ClientPortalSessionMixin):
 
 
 class ClientPortalLogoutView(APIView, ClientPortalSessionMixin):
+    authentication_classes = []
     permission_classes = [AllowAny]
 
     def post(self, request):
@@ -3653,6 +3696,158 @@ class ClientPortalLogoutView(APIView, ClientPortalSessionMixin):
             session.revoked_at = timezone.now()
             session.save(update_fields=['revoked_at'])
         return Response({'message': 'Kijelentkezve'})
+
+
+class ClientPortalAdminLoginView(APIView):
+    """ERP admin impersonates a portal user — no portal password needed."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        email = (request.data.get('email') or '').strip().lower()
+        if not email:
+            return Response({'error': 'E-mail kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        portal_user = ClientPortalUser.objects.filter(email__iexact=email, is_active=True).first()
+        if not portal_user:
+            return Response({'error': 'Nem található aktív portál felhasználó ezzel az e-mail címmel.'}, status=status.HTTP_404_NOT_FOUND)
+        import secrets as _sec
+        session = ClientPortalSession.objects.create(
+            user=portal_user,
+            expires_at=timezone.now() + timedelta(days=7),
+            token=_sec.token_urlsafe(32),
+            confirmed=True,
+        )
+        return Response({
+            'token': str(session.token),
+            'expires_at': session.expires_at,
+            'user': ClientPortalUserSerializer(portal_user).data,
+        })
+
+
+class ClientPortalUserSearchView(APIView):
+    """Admin search across portal users and CRM contacts by name or email."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        q = (request.query_params.get('q') or '').strip().lower()
+        results = []
+        seen_emails = set()
+
+        # 1. Existing portal users (highest priority)
+        qs = ClientPortalUser.objects.filter(is_active=True)
+        if q:
+            from django.db.models import Q as _Q
+            qs = qs.filter(_Q(email__icontains=q) | _Q(full_name__icontains=q))
+        for u in qs.order_by('email')[:20]:
+            seen_emails.add(u.email.lower())
+            results.append({
+                'email': u.email,
+                'label': f'{u.full_name} <{u.email}>' if u.full_name else u.email,
+                'full_name': u.full_name,
+                'has_portal_user': True,
+            })
+
+        # 2. CRM contacts with email (supplement up to 20 total)
+        if len(results) < 20:
+            from apps.crm.models import Contact as CrmContact
+            from django.db.models import Q as _Q
+            contact_qs = CrmContact.objects.exclude(email__isnull=True).exclude(email='')
+            if q:
+                contact_qs = contact_qs.filter(_Q(email__icontains=q) | _Q(name__icontains=q) | _Q(first_name__icontains=q) | _Q(last_name__icontains=q))
+            for c in contact_qs.select_related('company').order_by('name')[:30]:
+                email = (c.email or '').strip().lower()
+                if not email or email in seen_emails:
+                    continue
+                seen_emails.add(email)
+                label = c.name or f'{c.first_name} {c.last_name}'.strip()
+                if c.company:
+                    label = f'{label} ({c.company.name})'
+                label = f'{label} <{c.email}>'
+                results.append({
+                    'email': c.email,
+                    'label': label,
+                    'full_name': c.name or f'{c.first_name} {c.last_name}'.strip(),
+                    'has_portal_user': False,
+                })
+                if len(results) >= 20:
+                    break
+
+        return Response(results)
+
+
+class PortalPrintPresetsView(APIView):
+    """Public: size presets and materials for the portal print calculator."""
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        from apps.printshop.models import PrintSizePreset, PrintMaterial
+        presets = list(PrintSizePreset.objects.filter(is_active=True).order_by('sort_order', 'name').values(
+            'id', 'name', 'width_mm', 'height_mm',
+        ))
+        materials = list(PrintMaterial.objects.filter(is_active=True).order_by('name').values(
+            'id', 'name',
+        ))
+        return Response({'presets': presets, 'materials': materials})
+
+
+class PortalCalculatePriceView(APIView, ClientPortalSessionMixin):
+    """Portal price calculation — same engine as ERP, minus cost breakdown, plus company discount."""
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        from apps.printshop.views import _calculate_price
+        from apps.printshop.models import PrintPricingConfig
+        d = request.data
+        try:
+            config = PrintPricingConfig.get_config()
+            breakdown = _calculate_price(
+                width_mm=float(d.get('width_mm', 148)),
+                height_mm=float(d.get('height_mm', 210)),
+                quantity=int(d.get('quantity', 100)),
+                sides=str(d.get('sides', '1')),
+                side1_mode=str(d.get('side1_mode', 'color')),
+                side2_mode=str(d.get('side2_mode', 'none')),
+                binding=str(d.get('binding', 'cut')),
+                folding_count=int(d.get('folding_count', 0)),
+                config=config,
+                material_id=d.get('material_id') or None,
+            )
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        total = float(breakdown.get('total', 0))
+        unit_price = float(breakdown.get('unit_price', 0))
+        qty = int(breakdown.get('quantity', d.get('quantity', 100)))
+
+        # Apply company discount from portal session
+        discount_pct = 0.0
+        session = self.get_portal_session(request)
+        if session and session.user.company_id:
+            try:
+                from apps.crm.models import DiscountGroup
+                groups = DiscountGroup.objects.filter(
+                    is_active=True, members=session.user.company_id,
+                ).prefetch_related('rules')
+                for grp in groups:
+                    for rule in grp.rules.filter(discount_type='percent'):
+                        v = float(rule.discount_value)
+                        if v > discount_pct:
+                            discount_pct = v
+            except Exception:
+                pass
+
+        discounted_total = round(total * (1 - discount_pct / 100), 2)
+        discounted_unit_price = round(discounted_total / qty, 2) if qty else 0
+
+        return Response({
+            'total': round(total, 2),
+            'unit_price': round(unit_price, 2),
+            'quantity': qty,
+            'discount_percent': discount_pct,
+            'discounted_total': discounted_total,
+            'discounted_unit_price': discounted_unit_price,
+        })
 
 
 class ClientPortalMagicLinkView(APIView, ClientPortalSessionMixin):
@@ -3682,6 +3877,7 @@ class ClientPortalMagicLinkView(APIView, ClientPortalSessionMixin):
 
 class ClientPortalMagicLoginView(APIView):
     """Validates a magic link token and creates an active session."""
+    authentication_classes = []
     permission_classes = [AllowAny]
 
     def post(self, request):
@@ -3723,6 +3919,7 @@ class ClientPortalMagicLoginView(APIView):
 
 class ClientPortalQRCreateView(APIView):
     """Creates a QR login session for portal — returns a URL to encode as QR."""
+    authentication_classes = []
     permission_classes = [AllowAny]
 
     def post(self, request):
@@ -3743,6 +3940,7 @@ class ClientPortalQRCreateView(APIView):
 
 class ClientPortalQRPollView(APIView):
     """Polls whether a QR token has been scanned and approved."""
+    authentication_classes = []
     permission_classes = [AllowAny]
 
     def get(self, request):
@@ -3761,6 +3959,7 @@ class ClientPortalQRPollView(APIView):
 
 class ClientPortalForgotPasswordView(APIView):
     """Sends a password reset email for portal users."""
+    authentication_classes = []
     permission_classes = [AllowAny]
 
     def post(self, request):
@@ -3791,6 +3990,7 @@ class ClientPortalForgotPasswordView(APIView):
 
 
 class ClientPortalDashboardView(APIView, ClientPortalSessionMixin):
+    authentication_classes = []
     permission_classes = [AllowAny]
 
     def get(self, request):
@@ -3842,6 +4042,7 @@ class ClientPortalDashboardView(APIView, ClientPortalSessionMixin):
 
 
 class ClientPortalTicketCreateView(APIView, ClientPortalSessionMixin):
+    authentication_classes = []
     permission_classes = [AllowAny]
 
     def post(self, request):
@@ -4419,3 +4620,257 @@ def new_records_view(request):
         'seen_ids': list(seen_ids),
         'previous_visit': prev_visit.isoformat() if prev_visit else None,
     })
+
+
+# ── Translation API ───────────────────────────────────────────────────────────
+
+SUPPORTED_LANGUAGES = {
+    'hu': 'Magyar',
+    'en': 'English',
+    'de': 'Deutsch',
+    'ro': 'Română',
+    'sk': 'Slovenčina',
+    'cs': 'Čeština',
+    'hr': 'Hrvatski',
+    'pl': 'Polski',
+    'uk': 'Українська',
+    'sr': 'Srpski',
+    'sl': 'Slovenščina',
+}
+
+
+def _translate_with_mymemory(text, source='hu', target='en'):
+    """Translate using MyMemory free API (1000 words/day without key)."""
+    import urllib.request
+    import urllib.parse
+    import json as _json
+    if not text or not text.strip():
+        return text
+    url = (
+        'https://api.mymemory.translated.net/get?q='
+        + urllib.parse.quote(text[:500])
+        + f'&langpair={source}|{target}'
+    )
+    try:
+        with urllib.request.urlopen(url, timeout=5) as resp:
+            data = _json.loads(resp.read())
+        t = data.get('responseData', {}).get('translatedText', '')
+        return t if t and t.upper() != 'QUERY LENGTH LIMIT EXCEDEED' else text
+    except Exception:
+        return text
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def translate_texts_view(request):
+    """
+    POST { texts: ["string1", ...], target: "en" }
+    Returns { "string1": "translated1", ... }
+    Caches results in TranslationCache.
+    """
+    from .models import TranslationCache
+    texts = request.data.get('texts', [])
+    target = request.data.get('target', 'en')
+    if target == 'hu' or not texts:
+        return Response({t: t for t in texts})
+
+    result = {}
+    missing = []
+
+    # Check cache first
+    existing = TranslationCache.objects.filter(
+        source_text__in=texts, target_language=target
+    ).values_list('source_text', 'translated_text')
+    cached = dict(existing)
+    for t in texts:
+        if t in cached:
+            result[t] = cached[t]
+        else:
+            missing.append(t)
+
+    # Translate missing ones (batch: join with |||, split result)
+    BATCH_SEP = ' ||| '
+    BATCH_SIZE = 10
+    for i in range(0, len(missing), BATCH_SIZE):
+        batch = missing[i:i + BATCH_SIZE]
+        joined = BATCH_SEP.join(batch)
+        translated_joined = _translate_with_mymemory(joined, 'hu', target)
+        parts = translated_joined.split(BATCH_SEP)
+        # Fallback: if split count mismatch, translate individually
+        if len(parts) != len(batch):
+            parts = [_translate_with_mymemory(t, 'hu', target) for t in batch]
+        for src, tgt in zip(batch, parts):
+            result[src] = tgt.strip()
+            # Save to cache
+            TranslationCache.objects.update_or_create(
+                source_text=src, target_language=target,
+                defaults={'translated_text': tgt.strip()}
+            )
+
+    return Response(result)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def supported_languages_view(request):
+    return Response(SUPPORTED_LANGUAGES)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def all_translations_view(request):
+    """GET ?lang=en — returns all cached translations for a language."""
+    from .models import TranslationCache
+    lang = request.query_params.get('lang', 'en')
+    if lang == 'hu':
+        return Response({})
+    qs = TranslationCache.objects.filter(target_language=lang).values_list('source_text', 'translated_text')
+    return Response(dict(qs))
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def source_strings_view(request):
+    """GET — all unique source strings ever seen across all languages."""
+    from .models import TranslationCache
+    sources = (
+        TranslationCache.objects.values_list('source_text', flat=True)
+        .distinct().order_by('source_text')
+    )
+    return Response(list(sources))
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def translation_entries_view(request):
+    """GET ?lang=en — full list for PO editor: translated + untranslated source strings."""
+    from .models import TranslationCache
+    lang = request.query_params.get('lang', 'en')
+    # All source strings seen in this language
+    translated_qs = TranslationCache.objects.filter(target_language=lang).values('id', 'source_text', 'translated_text', 'updated_at')
+    translated = {e['source_text']: e for e in translated_qs}
+    # Also include source strings from other languages so editor can add missing ones
+    all_sources = list(
+        TranslationCache.objects.values_list('source_text', flat=True).distinct().order_by('source_text')
+    )
+    result = []
+    for src in all_sources:
+        if src in translated:
+            e = translated[src]
+            result.append({
+                'id': e['id'],
+                'source': src,
+                'translation': e['translated_text'],
+                'status': 'translated',
+                'updated_at': e['updated_at'],
+            })
+        else:
+            result.append({
+                'id': None,
+                'source': src,
+                'translation': '',
+                'status': 'missing',
+                'updated_at': None,
+            })
+    return Response(result)
+
+
+@api_view(['PUT', 'DELETE'])
+@permission_classes([IsAuthenticated])
+def update_translation_view(request):
+    """
+    PUT { source, target_lang, translation } — save/update one translation.
+    DELETE { source, target_lang } — remove one translation.
+    """
+    from .models import TranslationCache
+    source = request.data.get('source', '').strip()
+    target_lang = request.data.get('target_lang', '').strip()
+    if not source or not target_lang:
+        return Response({'error': 'source and target_lang required'}, status=400)
+    if request.method == 'DELETE':
+        source = request.data.get('source', '').strip()
+        if source == '__all__':
+            TranslationCache.objects.filter(target_language=target_lang).delete()
+        else:
+            TranslationCache.objects.filter(source_text=source, target_language=target_lang).delete()
+        return Response({'ok': True})
+    translation = request.data.get('translation', '').strip()
+    obj, _ = TranslationCache.objects.update_or_create(
+        source_text=source, target_language=target_lang,
+        defaults={'translated_text': translation},
+    )
+    return Response({'id': obj.id, 'source': source, 'translation': translation, 'status': 'translated'})
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def portal_cart_quote_view(request):
+    """
+    Receives a cart and creates a quote-request email + optional portal ticket.
+    POST { items: [{code, name, quantity, unit, unit_price, currency}],
+           contact_name, contact_email, contact_phone, notes, slug }
+    """
+    items = request.data.get('items', [])
+    contact_name = request.data.get('contact_name', '').strip()
+    contact_email = request.data.get('contact_email', '').strip()
+    contact_phone = request.data.get('contact_phone', '').strip()
+    notes = request.data.get('notes', '').strip()
+    slug = request.data.get('slug', '')
+
+    if not items or not contact_name or not contact_email:
+        return Response({'error': 'Hiányzó kötelező mezők (items, contact_name, contact_email)'}, status=400)
+
+    # Build text summary
+    lines = [f"Árajánlatkérés - {slug or 'webshop'}",
+             f"Kapcsolat: {contact_name} | {contact_email}" + (f" | {contact_phone}" if contact_phone else ""),
+             ""]
+    total = 0
+    for it in items:
+        qty = it.get('quantity', 1)
+        price = it.get('unit_price') or 0
+        subtotal = qty * price
+        total += subtotal
+        lines.append(f"  - {it.get('name', '?')} [{it.get('code', '')}]  {qty} {it.get('unit', 'db')}  "
+                     + (f"→ {price:,.0f} {it.get('currency', 'HUF')}/db = {subtotal:,.0f} {it.get('currency', 'HUF')}" if price else ""))
+    if total:
+        lines.append(f"\nVárható összeg: {total:,.0f} Ft + ÁFA")
+    if notes:
+        lines.append(f"\nMegjegyzés: {notes}")
+
+    body = "\n".join(lines)
+
+    # Try to send email using Django's email backend
+    try:
+        from django.core.mail import send_mail
+        from django.conf import settings
+        recipient = getattr(settings, 'DEFAULT_FROM_EMAIL', 'info@pixisys.eu')
+        send_mail(
+            subject=f"Árajánlatkérés – {contact_name}",
+            message=body,
+            from_email=recipient,
+            recipient_list=[recipient],
+            fail_silently=False,
+        )
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Cart quote email failed: {e}")
+
+    # Also create a portal support ticket if portal user is authenticated
+    try:
+        from apps.core.models import ClientPortalUser
+        token = request.headers.get('Authorization', '').replace('Bearer ', '').strip()
+        if token:
+            portal_user = ClientPortalUser.objects.filter(portal_token=token).first()
+            if portal_user:
+                from apps.core.models import SupportTicket
+                SupportTicket.objects.create(
+                    title=f"Árajánlatkérés – {contact_name}",
+                    body_html=body.replace('\n', '<br>'),
+                    requester_email=contact_email,
+                    requester_name=contact_name,
+                    contact=portal_user.contact if hasattr(portal_user, 'contact') else None,
+                )
+    except Exception:
+        pass
+
+    return Response({'ok': True, 'message': 'Árajánlatkérés elküldve. Hamarosan felvesszük a kapcsolatot!'})

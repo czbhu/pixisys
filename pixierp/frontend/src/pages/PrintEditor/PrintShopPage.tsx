@@ -2,8 +2,9 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
   Typography, message, Button, Select, Modal, Result, Tooltip,
-  Tag, Space, Row, Col, Switch, Input, Alert, InputNumber,
+  Tag, Space, Row, Col, Switch, Input, Alert, InputNumber, Checkbox, Spin,
 } from 'antd';
+import { TagsOutlined } from '@ant-design/icons';
 import NumInput from '../../components/NumInput';
 import {
   LockOutlined, UnlockOutlined, ShoppingOutlined, UserOutlined,
@@ -16,13 +17,27 @@ import { useAuth } from '../../contexts/AuthContext';
 import api from '../../services/api';
 import { PrintParams } from './components/Step1Params';
 import PrintParamsPanel, { PriceBreakdown, CustomCostItemPanel } from './components/PrintParamsPanel';
+import PortalPrintWizard from './components/PortalPrintWizard';
 import Step3OrderSummary from './components/Step3OrderSummary';
 import PrintCommentView, { clearPdfFromIDB } from './components/PrintCommentView';
 import MaterialNeedsPanel from './components/MaterialNeedsPanel';
 import Step2CanvasEditor, { CanvasEditorHandle } from './components/Step2CanvasEditor';
+import PrintCatalogContent from './PrintCatalogContent';
+import 'react-quill/dist/quill.snow.css';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
+
+const VAT = 1.27;
+const fmtHuf = (n: number) => Math.round(n).toLocaleString('hu-HU') + ' Ft';
+
+interface BulkTier {
+  qty: number;
+  total: number | null;
+  unit_price: number | null;
+  loading: boolean;
+  selected: boolean;
+}
 
 interface Company { id: number; name: string; }
 interface Contact { id: number; first_name: string; last_name: string; company?: number; }
@@ -46,10 +61,10 @@ const PARAMS_PANEL_W_MAX = 560;
 const COLLAPSED_W = 28;
 
 const DEFAULT_PARAMS: PrintParams = {
-  product_name: 'A5 Szórólap',
-  width_mm: 148,
-  height_mm: 210,
-  quantity: 100,
+  product_name: '',
+  width_mm: 0,
+  height_mm: 0,
+  quantity: 1,
   sides: '1',
   side1_mode: 'color',
   side2_mode: 'none',
@@ -63,14 +78,14 @@ const DEFAULT_PARAMS: PrintParams = {
 
 const STORAGE_KEY = 'pixierp_printshop_state';
 
-const PrintShopPage: React.FC = () => {
+const PrintShopPage: React.FC<{ portalMode?: boolean }> = ({ portalMode = false }) => {
   const { user } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const hasPrintShopPerm = Array.isArray(user?.permissions) && user.permissions.some(
     (p: any) => (p.resource === 'printshop.shop' || p.resource === 'printshop.sheet') && p.allowed !== false
   );
-  const isAdmin = !!(user?.is_staff || user?.is_superuser || hasPrintShopPerm);
+  const isAdmin = portalMode ? false : !!(user?.is_staff || user?.is_superuser || hasPrintShopPerm);
 
   const [leftPanelOpen, setLeftPanelOpen] = useState(true);
   const [previewPanelOpen, setPreviewPanelOpen] = useState(true);
@@ -107,11 +122,30 @@ const PrintShopPage: React.FC = () => {
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
   }, []);
-  const [viewMode, setViewMode] = useState<'canvas' | 'pdf'>(
-    new URLSearchParams(location.search).get('mode') === 'pdf' ? 'pdf' : 'canvas'
+  const [viewMode, setViewMode] = useState<'canvas' | 'pdf' | 'samples'>(
+    portalMode ? 'samples' : (new URLSearchParams(location.search).get('mode') === 'pdf' ? 'pdf' : 'canvas')
   );
   const canvasRef = useRef<CanvasEditorHandle>(null);
   const [templateCategoryIds, setTemplateCategoryIds] = useState<number[]>([]);
+  const [portalSelectedProductId, setPortalSelectedProductId] = useState<number | null>(null);
+  const [portalProductInfo, setPortalProductInfo] = useState<{ gallery: { id: number; image_url: string }[]; public_description: string; youtube_url: string } | null>(null);
+  const [portalSlideIdx, setPortalSlideIdx] = useState(0);
+
+  useEffect(() => {
+    if (!portalMode || !portalSelectedProductId) { setPortalProductInfo(null); setPortalSlideIdx(0); return; }
+    Promise.all([
+      api.get('/manufacturing/product-template-gallery/', { params: { product: portalSelectedProductId } }),
+      api.get(`/manufacturing/product-templates/${portalSelectedProductId}/`),
+    ]).then(([galRes, ptRes]) => {
+      const gallery = (galRes.data?.results ?? galRes.data ?? []).filter((t: any) => t.image_url);
+      setPortalProductInfo({
+        gallery,
+        public_description: ptRes.data?.public_description ?? '',
+        youtube_url: ptRes.data?.youtube_url ?? '',
+      });
+      setPortalSlideIdx(0);
+    }).catch(() => {});
+  }, [portalSelectedProductId, portalMode]); // eslint-disable-line
   const initialDesignRef = useRef<{ d1: any; d2: any; sheets?: Array<{ d1: any; d2: any }> } | null>((() => {
     try {
       const s = localStorage.getItem(STORAGE_KEY);
@@ -133,7 +167,13 @@ const PrintShopPage: React.FC = () => {
   const [params, setParams] = useState<PrintParams>(() => {
     try {
       const s = localStorage.getItem(STORAGE_KEY);
-      if (s) return JSON.parse(s).params ?? DEFAULT_PARAMS;
+      if (s) {
+        const stored = JSON.parse(s).params;
+        if (stored) {
+          // On fresh page load: reset size/quantity/material/name; keep other settings
+          return { ...DEFAULT_PARAMS, ...stored, width_mm: 0, height_mm: 0, quantity: 1, material_id: null, product_name: '' };
+        }
+      }
     } catch {}
     return DEFAULT_PARAMS;
   });
@@ -167,13 +207,17 @@ const PrintShopPage: React.FC = () => {
     try { const s = localStorage.getItem(STORAGE_KEY); if (s) { const v = JSON.parse(s).itemId; return v ?? null; } } catch {} return null;
   });
   const [priceBreakdown, setPriceBreakdown] = useState<PriceBreakdown | null>(null);
-  // Ref always mirrors state so save handlers read the latest value regardless of render timing
   const priceBreakdownRef = React.useRef<PriceBreakdown | null>(null);
   priceBreakdownRef.current = priceBreakdown;
   const handlePriceChange = React.useCallback((bd: PriceBreakdown | null) => {
     setPriceBreakdown(bd);
     priceBreakdownRef.current = bd;
   }, []);
+  const [bulkSelectedTiers, setBulkSelectedTiers] = useState<{ qty: number; unit_price: number; total: number; label: string }[]>([]);
+  const [customProductName, setCustomProductName] = useState('');
+  const [templateProductName, setTemplateProductName] = useState(''); // set by PrintParamsPanel on product load
+  const [catalogOpen, setCatalogOpen] = useState(false);
+  const [catalogPreloadId, setCatalogPreloadId] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [rfqSaving, setRfqSaving] = useState(false);
   // fromRfq mód: folyamatos mentés támogatása (Mentés / Bezárás gombok)
@@ -194,13 +238,25 @@ const PrintShopPage: React.FC = () => {
   const [orderModalOpen, setOrderModalOpen] = useState(false);
   const [pdfCacheCleared, setPdfCacheCleared] = useState(false);
 
-  // Clear cached PDF before mounting the PDF view to avoid loading a stale file.
+  // Clear cached PDF and stale rollRows/size state on mount
   useEffect(() => {
     let alive = true;
     (async () => {
       await clearPdfFromIDB();
       if (alive) setPdfCacheCleared(true);
     })();
+    // Clear saved rollRows and rollRowsEnabled so multi-row panel starts fresh
+    try {
+      const o = JSON.parse(localStorage.getItem('pixierp_editor_state') || '{}');
+      delete o._rollRows;
+      // Also clear service selections so they don't persist across separate jobs
+      if (!new URLSearchParams(window.location.search).get('edit_mfg_id')) {
+        delete o.selectedServices1;
+        delete o.selectedServices2;
+        delete o.selectedFinishingServices;
+      }
+      localStorage.setItem('pixierp_editor_state', JSON.stringify(o));
+    } catch {}
     return () => { alive = false; };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -246,7 +302,7 @@ const PrintShopPage: React.FC = () => {
     manufacturingService.getProduct(editMfgId).then(product => {
       const saved = (product as any).printshop_params;
       if (saved && typeof saved === 'object') {
-        const { price_breakdown: _pb, _editor_state: editorState, _click_state: _legacyCs, _custom_cost_items: savedCustomCosts, ...printParams } = saved;
+        const { price_breakdown: _pb, _editor_state: editorState, _click_state: _legacyCs, _custom_cost_items: savedCustomCosts, product_name: _savedName, ...printParams } = saved;
         setParams(prev => ({ ...prev, ...printParams }));
         if (Array.isArray(savedCustomCosts) && savedCustomCosts.length > 0) {
           try { localStorage.setItem('pixierp_custom_cost_items', JSON.stringify(savedCustomCosts)); } catch {}
@@ -549,10 +605,16 @@ const PrintShopPage: React.FC = () => {
 
       // Név: terméknév, méret, mennyiség
       const rfqTotalQtyP1 = bd?._rollRows ? (bd._rollRows as any[]).reduce((s: number, r: any) => s + r.quantity, 0) : params.quantity;
-      const isMultiRoll1 = !!(bd?._rollRows);
-      const autoName = params.product_name && params.product_name.trim()
-        ? `${params.product_name.trim()}, ${isMultiRoll1 ? '1 gar.' : rfqTotalQtyP1 + ' db'}`
-        : `${params.width_mm}×${params.height_mm}mm, ${isMultiRoll1 ? '1 gar.' : rfqTotalQtyP1 + ' db'}, íves nyomtatás`;
+      const _rollRowsArr1 = Array.isArray(bd?._rollRows) ? (bd._rollRows as any[]) : [];
+      const isMultiRoll1 = _rollRowsArr1.length >= 2;
+      const _dimStr1 = _rollRowsArr1.length > 0
+        ? _rollRowsArr1.map((r: any) => `${r.width_mm}×${r.height_mm}`).join(' + ') + ' mm'
+        : `${params.width_mm}×${params.height_mm} mm`;
+      // Use custom name if typed; otherwise auto-format: product name – dimensions
+      const _baseName1 = customProductName.trim() || params.product_name.trim() || templateProductName.trim();
+      const autoName = _baseName1
+        ? `${_baseName1}${isMultiRoll1 ? ', 1 gar.' : ' – ' + _dimStr1}`
+        : `${_dimStr1}, íves nyomtatás`;
 
       // Nyomtatási forma szöveges leírása
       const printSvcLine = bd?.print_service_name_1
@@ -702,7 +764,7 @@ const PrintShopPage: React.FC = () => {
       // For multi-row roll: use combined total from bd, costItems may only reflect first row
       const effectiveTotalForUnit = bd?._rollRows ? (bd.total ?? costItemsSellingTotal) : costItemsSellingTotal;
       const unitPrice = rfqTotalQty > 0 ? effectiveTotalForUnit / rfqTotalQty : 0;
-      const isMultiRoll = !!(bd?._rollRows);
+      const isMultiRoll = Array.isArray(bd?._rollRows) && bd._rollRows.length >= 2;
       // Multi-size roll: 1 garnítúra = teljes összesített ár
       const rfqQty = isMultiRoll ? 1 : rfqTotalQty;
       const rfqUnit = isMultiRoll ? 'gar.' : 'db';
@@ -833,9 +895,16 @@ const PrintShopPage: React.FC = () => {
       const bd = (priceBreakdownRef.current ?? priceBreakdown) as any;
       const totalQtyBd = bd?._rollRows ? (bd._rollRows as any[]).reduce((s: number, r: any) => s + r.quantity, 0) : params.quantity;
 
-      const autoName = params.product_name && params.product_name.trim()
-        ? `${params.product_name.trim()}, ${bd?._rollRows ? '1 gar.' : totalQtyBd + ' db'}`
-        : `${params.width_mm}×${params.height_mm}mm, ${bd?._rollRows ? '1 gar.' : totalQtyBd + ' db'}, íves nyomtatás`;
+      const _rollRowsArr = Array.isArray(bd?._rollRows) ? (bd._rollRows as any[]) : [];
+      const _isMultiRow = _rollRowsArr.length >= 2;
+      const _dimStr = _rollRowsArr.length > 0
+        ? _rollRowsArr.map((r: any) => `${r.width_mm}×${r.height_mm}`).join(' + ') + ' mm'
+        : `${params.width_mm}×${params.height_mm} mm`;
+      // Use custom name if typed; otherwise auto-format: product name – dimensions
+      const _baseName = customProductName.trim() || params.product_name.trim() || templateProductName.trim();
+      const autoName = _baseName
+        ? `${_baseName}${_isMultiRow ? ', 1 gar.' : ' – ' + _dimStr}`
+        : `${_dimStr}, íves nyomtatás`;
 
       const isBoardProduct = !!(bd?.print_service_name);  // táblás UV ha print_service_name van (nem _1/_2)
       const isRollProduct = !!(bd?.is_roll_mode);  // tekercses nyomtatás
@@ -1068,7 +1137,7 @@ const PrintShopPage: React.FC = () => {
       const sellingTotal = costItems.reduce((s: number, ci: any) => s + (Number(ci.selling_price) || 0), 0);
       const effectiveTotalForUnit2 = bd?._rollRows ? (bd.total ?? sellingTotal) : sellingTotal;
       const unitPrice = totalQtyBd > 0 ? effectiveTotalForUnit2 / totalQtyBd : 0;
-      const isMultiRollSave = !!(bd?._rollRows);
+      const isMultiRollSave = Array.isArray(bd?._rollRows) && bd._rollRows.length >= 2;
       // Anyagköltség – ha még nincs material item: material_cost_items > material_breakdown > board_material_cost
       if (!costItems.some((ci: any) => ci.type === 'material')) {
         const mb = bd?.material_breakdown;
@@ -1157,8 +1226,8 @@ const PrintShopPage: React.FC = () => {
 
       // Ajánlat tétel: első mentésnél hozza létre, további mentéseknél frissíti az árat
       if (rfqId) {
+        const { salesService: ss } = await import('../../services/salesService');
         if (!savedRfqQriId) {
-          const { salesService: ss } = await import('../../services/salesService');
           const qri = await ss.addRfqManufacturingItem(
             rfqId, productId, autoName, saveQty,
             description, saveUnit, saveUnitPrice, 27, 0, 0,
@@ -1167,6 +1236,18 @@ const PrintShopPage: React.FC = () => {
               : { _ps_mfg_id: String(productId) },
           );
           setSavedRfqQriId(qri.id);
+          // Kijelölt tömegtételek mentése külön tételként
+          if (bulkSelectedTiers.length > 0) {
+            await Promise.all(bulkSelectedTiers.map(tier =>
+              ss.addRfqManufacturingItem(
+                rfqId, productId,
+                autoName,
+                tier.qty, description, saveUnit,
+                Math.round(tier.unit_price * 100) / 100, 27, 0, 0,
+                { _ps_mfg_id: String(productId) },
+              )
+            ));
+          }
           // Notify parent tab so it refreshes without a full reload
           try {
             const bc = new BroadcastChannel('printshop_rfq_updates');
@@ -1174,7 +1255,6 @@ const PrintShopPage: React.FC = () => {
             bc.close();
           } catch {}
         } else {
-          const { salesService: ss } = await import('../../services/salesService');
           await ss.updateQuoteItem(rfqId, savedRfqQriId, {
             item_name: autoName,
             description,
@@ -1203,6 +1283,12 @@ const PrintShopPage: React.FC = () => {
           unit: saveUnit,
           net_unit_price: saveUnitPrice,
           description,
+          // Include selected bulk tiers so the RFQ modal adds them as separate items
+          bulk_tiers: bulkSelectedTiers.length > 0 ? bulkSelectedTiers.map(t => ({
+            qty: t.qty,
+            unit_price: Math.round(t.unit_price * 100) / 100,
+            label: t.label,
+          })) : undefined,
         }, window.location.origin);
       }
 
@@ -1311,13 +1397,29 @@ const PrintShopPage: React.FC = () => {
         borderBottom: '1px solid #e8e8e8', display: 'flex',
         alignItems: 'center', padding: '0 16px', gap: 12,
       }}>
-        <Title level={5} style={{ margin: 0 }}>Nyomdai megrendelés</Title>
-        <Text type="secondary" style={{ fontSize: 12 }}>PDF feltöltés · Kalkuláció · Megrendelés</Text>
-        <Tooltip title="Termékkatalógus böngészése">
-          <Button size="small" icon={<AppstoreOutlined />} onClick={() => navigate('/print-catalog')}>
-            Katalógus
-          </Button>
-        </Tooltip>
+        {portalMode && (
+          <Button size="small" icon={<LeftOutlined />} onClick={() => navigate('/portal')} type="text" />
+        )}
+        <Title level={5} style={{ margin: 0 }}>
+          {portalMode ? 'Nyomdai kalkulátor' : 'Nyomdai megrendelés'}
+        </Title>
+        {portalMode && (
+          <Tooltip title="Termékkatalógus böngészése">
+            <Button size="small" icon={<AppstoreOutlined />} onClick={() => setCatalogOpen(true)}>
+              Katalógus
+            </Button>
+          </Tooltip>
+        )}
+        {!portalMode && (
+          <Text type="secondary" style={{ fontSize: 12 }}>PDF feltöltés · Kalkuláció · Megrendelés</Text>
+        )}
+        {!portalMode && (
+          <Tooltip title="Termékkatalógus böngészése">
+            <Button size="small" icon={<AppstoreOutlined />} onClick={() => navigate('/print-catalog')}>
+              Katalógus
+            </Button>
+          </Tooltip>
+        )}
         <div style={{ flex: 1 }} />
         {/* Lock controls — admin sees toggles */}
         {isAdmin && orderId && itemId ? (
@@ -1497,6 +1599,7 @@ const PrintShopPage: React.FC = () => {
 
       {/* Body */}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+        <>
         {/* Left params panel — collapsible */}
         <div style={{
           width: !previewPanelOpen ? undefined : (leftPanelOpen ? paramsPanelW : COLLAPSED_W),
@@ -1526,7 +1629,14 @@ const PrintShopPage: React.FC = () => {
           </div>
           {leftPanelOpen ? (
             <>
-              <div style={{ flex: 1, overflowY: 'auto' }}>
+              <div style={{ flex: 1, overflowY: 'auto', background: portalMode ? '#fafafa' : '#fff' }}>
+                {portalMode ? (
+                  <PortalPrintWizard
+                    onPriceChange={p => handlePriceChange(p as any)}
+                    onProductIdChange={setPortalSelectedProductId}
+                    preloadProductId={catalogPreloadId}
+                  />
+                ) : (
                 <PrintParamsPanel
                   key={panelKey}
                   params={params}
@@ -1536,9 +1646,16 @@ const PrintShopPage: React.FC = () => {
                   onServicesChange={(s1, s2) => { panelServicesRef.current = { s1, s2 }; }}
                   onCustomCostChange={(items) => { panelCustomCostRef.current = items; }}
                   isAdmin={isAdmin}
+                  onBulkTiersChange={setBulkSelectedTiers}
+                  onProductIdChange={setPortalSelectedProductId}
+                  onCustomNameChange={setCustomProductName}
+                  onProductNameChange={setTemplateProductName}
+                  bypassMaterialValidation={!!editMfgId}
                 />
-                <MaterialNeedsPanel priceBreakdown={priceBreakdown} />
+                )}
+                {!portalMode && <MaterialNeedsPanel priceBreakdown={priceBreakdown} />}
               </div>
+              {!portalMode && (
               <div style={{ padding: '0 12px 16px', flexShrink: 0 }}>
                 {fromRfq ? (
                   <Row gutter={8}>
@@ -1586,6 +1703,7 @@ const PrintShopPage: React.FC = () => {
                 </Row>
                 )}
               </div>
+              )}
             </>
           ) : (
             <div
@@ -1642,25 +1760,33 @@ const PrintShopPage: React.FC = () => {
             {previewPanelOpen && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, overflow: 'hidden' }}>
                 <Text strong style={{ fontSize: 11, color: '#888', whiteSpace: 'nowrap' }}>
-                  {viewMode === 'canvas' ? 'VÁSZON SZERKESZTŐ' : 'PREVIEW & KOMMENT'}
+                  {portalMode ? (viewMode === 'samples' ? 'TERMÉKLEÍRÁS' : 'PREVIEW & KOMMENT') : (viewMode === 'canvas' ? 'VÁSZON SZERKESZTŐ' : 'PREVIEW & KOMMENT')}
                 </Text>
-                {/* Mode toggle buttons */}
-                <Button
-                  size="small"
-                  type={viewMode === 'canvas' ? 'primary' : 'default'}
-                  onClick={() => setViewMode('canvas')}
-                  style={{ fontSize: 11, padding: '0 8px' }}
-                >
-                  Vászon
-                </Button>
-                <Button
-                  size="small"
-                  type={viewMode === 'pdf' ? 'primary' : 'default'}
-                  onClick={() => setViewMode('pdf')}
-                  style={{ fontSize: 11, padding: '0 8px' }}
-                >
-                  PDF
-                </Button>
+                {/* Portal mode: Termékleírás / PDF toggle */}
+                {portalMode ? (
+                  <>
+                    <Button size="small" type={viewMode === 'samples' ? 'primary' : 'default'}
+                      onClick={() => setViewMode('samples')} style={{ fontSize: 11, padding: '0 8px' }}>
+                      Leírás
+                    </Button>
+                    <Button size="small" type={viewMode === 'pdf' ? 'primary' : 'default'}
+                      onClick={() => setViewMode('pdf')} style={{ fontSize: 11, padding: '0 8px' }}>
+                      Preview & Komment
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    {/* Mode toggle buttons */}
+                    <Button size="small" type={viewMode === 'canvas' ? 'primary' : 'default'}
+                      onClick={() => setViewMode('canvas')} style={{ fontSize: 11, padding: '0 8px' }}>
+                      Vászon
+                    </Button>
+                    <Button size="small" type={viewMode === 'pdf' ? 'primary' : 'default'}
+                      onClick={() => setViewMode('pdf')} style={{ fontSize: 11, padding: '0 8px' }}>
+                      PDF
+                    </Button>
+                  </>
+                )}
                 {/* Ratio controls — only visible in PDF mode */}
                 {viewMode === 'pdf' && (
                   <Tooltip title="PDF méretarány. Pl. 1:10 = a PDF 10× kicsinyített, 2:1 = a PDF 2× nagyított. A TrimBox méreteket ezzel számolja át.">
@@ -1699,7 +1825,79 @@ const PrintShopPage: React.FC = () => {
           </div>
           {previewPanelOpen ? (
             <div style={{ flex: 1, overflow: 'hidden', minWidth: 0 }}>
-              {viewMode === 'canvas' ? (
+              {viewMode === 'samples' ? (
+                <div style={{ height: '100%', overflowY: 'auto', background: '#fafafa' }}>
+                  {!portalSelectedProductId ? (
+                    <div style={{ textAlign: 'center', color: '#aaa', paddingTop: 60 }}>
+                      <div style={{ fontSize: 40, marginBottom: 12 }}>📄</div>
+                      <div>Válasszon terméket a leírás megtekintéséhez</div>
+                    </div>
+                  ) : !portalProductInfo ? (
+                    <div style={{ textAlign: 'center', paddingTop: 60 }}><Spin /></div>
+                  ) : (
+                    <div style={{ maxWidth: 680, margin: '0 auto', padding: '24px 20px 40px' }}>
+
+                      {/* Image carousel */}
+                      {portalProductInfo.gallery.length > 0 && (
+                        <div style={{ marginBottom: 28, borderRadius: 12, overflow: 'hidden', background: '#f0f2f5', position: 'relative' }}>
+                          <div style={{ position: 'relative', width: '100%', paddingTop: '56%', background: '#fff' }}>
+                            <img
+                              src={portalProductInfo.gallery[portalSlideIdx]?.image_url}
+                              alt=""
+                              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain', padding: 12 }}
+                            />
+                          </div>
+                          {portalProductInfo.gallery.length > 1 && (
+                            <>
+                              <button
+                                onClick={() => setPortalSlideIdx(i => (i - 1 + portalProductInfo.gallery.length) % portalProductInfo.gallery.length)}
+                                style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', background: 'rgba(0,0,0,.4)', border: 'none', borderRadius: '50%', width: 32, height: 32, color: '#fff', cursor: 'pointer', fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>‹</button>
+                              <button
+                                onClick={() => setPortalSlideIdx(i => (i + 1) % portalProductInfo.gallery.length)}
+                                style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'rgba(0,0,0,.4)', border: 'none', borderRadius: '50%', width: 32, height: 32, color: '#fff', cursor: 'pointer', fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>›</button>
+                              <div style={{ position: 'absolute', bottom: 8, left: 0, right: 0, display: 'flex', justifyContent: 'center', gap: 6 }}>
+                                {portalProductInfo.gallery.map((_, i) => (
+                                  <button key={i} onClick={() => setPortalSlideIdx(i)}
+                                    style={{ width: 8, height: 8, borderRadius: '50%', border: 'none', cursor: 'pointer', padding: 0, background: i === portalSlideIdx ? '#1677ff' : 'rgba(0,0,0,.25)' }} />
+                                ))}
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      )}
+
+                      {/* HTML description */}
+                      {portalProductInfo.public_description ? (
+                        <div
+                          className="ql-editor"
+                          style={{ padding: 0, fontSize: 15, lineHeight: 1.7, color: '#222', marginBottom: 24 }}
+                          dangerouslySetInnerHTML={{ __html: portalProductInfo.public_description }}
+                        />
+                      ) : (
+                        <div style={{ color: '#aaa', textAlign: 'center', padding: '24px 0', marginBottom: 24 }}>
+                          Ehhez a termékhez még nincs publikus leírás.
+                        </div>
+                      )}
+
+                      {/* YouTube embed */}
+                      {portalProductInfo.youtube_url && (() => {
+                        const ytId = portalProductInfo.youtube_url.match(/(?:v=|youtu\.be\/|embed\/)([\w-]{11})/)?.[1];
+                        return ytId ? (
+                          <div style={{ position: 'relative', paddingTop: '56.25%', borderRadius: 10, overflow: 'hidden', background: '#000' }}>
+                            <iframe
+                              src={`https://www.youtube.com/embed/${ytId}`}
+                              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 'none' }}
+                              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                              allowFullScreen
+                              title="Termék videó"
+                            />
+                          </div>
+                        ) : null;
+                      })()}
+                    </div>
+                  )}
+                </div>
+              ) : viewMode === 'canvas' ? (
                 <Step2CanvasEditor
                   ref={canvasRef}
                   params={params}
@@ -1745,9 +1943,8 @@ const PrintShopPage: React.FC = () => {
             </div>
           )}
         </div>
+        </>
       </div>
-
-      {/* Order summary modal */}
       <Modal
         open={orderModalOpen}
         title="Megrendelés összefoglalója"
@@ -1766,6 +1963,23 @@ const PrintShopPage: React.FC = () => {
           saving={saving}
           onBack={() => setOrderModalOpen(false)}
           onConfirm={handleConfirmOrder}
+        />
+      </Modal>
+
+      {/* Portal catalog modal */}
+      <Modal
+        open={catalogOpen}
+        onCancel={() => setCatalogOpen(false)}
+        footer={null}
+        width="90vw"
+        style={{ top: 24, padding: 0 }}
+        styles={{ body: { height: '80vh', padding: 0, overflow: 'hidden' } }}
+        title={null}
+        closable
+        destroyOnClose
+      >
+        <PrintCatalogContent
+          onSelectProduct={id => { setCatalogPreloadId(id); setCatalogOpen(false); }}
         />
       </Modal>
     </div>

@@ -330,6 +330,10 @@ class ManufacturingProductSerializer(serializers.ModelSerializer):
         cost_items_data = validated_data.pop('cost_items', None)
         allowed_companies_ids = validated_data.pop('allowed_companies', None)
         allowed_contacts_ids = validated_data.pop('allowed_contacts', None)
+
+        # Preserve printshop_params when not explicitly provided in the request
+        if 'printshop_params' not in self.initial_data:
+            validated_data.pop('printshop_params', None)
         
         # DEBUG LOGGING TO FILE
         import datetime
@@ -648,7 +652,7 @@ class ProductTemplateSerializer(serializers.ModelSerializer):
     class Meta:
         model = ProductTemplate
         fields = [
-            'id', 'name', 'code', 'description',
+            'id', 'name', 'code', 'description', 'public_description', 'youtube_url',
             'category', 'category_name',
             'calculator_type',
             'image', 'image_url',
@@ -866,3 +870,20 @@ class ProductTemplateSerializer(serializers.ModelSerializer):
             for d in discounts_data:
                 ProductTemplateQuantityDiscount.objects.create(product=instance, **d)
         return instance
+
+
+class ProductTemplateGalleryImageSerializer(serializers.ModelSerializer):
+    image_url = serializers.SerializerMethodField()
+
+    class Meta:
+        from .models import ProductTemplateGalleryImage
+        model = ProductTemplateGalleryImage
+        fields = ['id', 'product', 'image', 'image_url', 'sort_order', 'created_at']
+        read_only_fields = ['id', 'created_at', 'image_url']
+
+    def get_image_url(self, obj):
+        request = self.context.get('request')
+        if obj.image and hasattr(obj.image, 'url'):
+            url = obj.image.url
+            return request.build_absolute_uri(url) if request else url
+        return None

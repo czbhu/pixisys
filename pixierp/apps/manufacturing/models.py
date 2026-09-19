@@ -1546,6 +1546,16 @@ class ProductTemplate(models.Model):
         verbose_name="Katalógus kép",
         help_text="A termékkatalógus oldalon megjelenő kép.",
     )
+    public_description = models.TextField(
+        blank=True, default='',
+        verbose_name="Publikus leírás (HTML)",
+        help_text="A portálon megjelenő formázott termékleírás (HTML formátumban).",
+    )
+    youtube_url = models.CharField(
+        max_length=500, blank=True, default='',
+        verbose_name="YouTube videó URL",
+        help_text="Opcionális YouTube videó URL a publikus termékleíráshoz.",
+    )
     service_group = models.ForeignKey(
         ServiceGroup,
         on_delete=models.SET_NULL,
@@ -1570,6 +1580,26 @@ class ProductTemplate(models.Model):
         if self.is_protected:
             raise ValueError("Védett terméksablon nem törölhető.")
         super().delete(*args, **kwargs)
+
+
+def _product_template_gallery_path(instance, filename):
+    return f'manufacturing/product_templates/{instance.product_id}/gallery/{filename}'
+
+
+class ProductTemplateGalleryImage(models.Model):
+    """Termék sablon galéria kép – több kép, sorrendezhetők."""
+    product = models.ForeignKey(ProductTemplate, on_delete=models.CASCADE, related_name='gallery_images', verbose_name="Termék sablon")
+    image = models.ImageField(upload_to=_product_template_gallery_path, verbose_name="Kép")
+    sort_order = models.PositiveIntegerField(default=0, verbose_name="Sorrend")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Termék galéria kép"
+        verbose_name_plural = "Termék galéria képek"
+        ordering = ['sort_order', 'id']
+
+    def __str__(self):
+        return f"{self.product.name} – kép #{self.sort_order}"
 
 
 class ProductTemplateSize(models.Model):

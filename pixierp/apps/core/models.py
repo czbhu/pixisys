@@ -1232,3 +1232,21 @@ class UserPageVisit(models.Model):
         unique_together = ('user', 'page_key')
         verbose_name = 'Oldallátogatás'
         verbose_name_plural = 'Oldallátogatások'
+
+
+class TranslationCache(models.Model):
+    """Cached translations to avoid repeated API calls."""
+    source_text = models.TextField()
+    target_language = models.CharField(max_length=10)
+    translated_text = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('source_text', 'target_language')
+        verbose_name = 'Fordítás cache'
+        verbose_name_plural = 'Fordítás cache'
+        indexes = [models.Index(fields=['target_language'])]
+
+    def __str__(self):
+        return f"{self.source_text[:40]} → {self.target_language}"

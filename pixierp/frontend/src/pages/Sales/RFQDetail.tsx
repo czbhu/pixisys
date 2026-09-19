@@ -163,6 +163,9 @@ const RFQDetail: React.FC = () => {
 
   const notifyRfqListUpdated = useCallback(() => {
     try {
+      // localStorage triggers storage events in OTHER tabs (BroadcastChannel only reaches same tab)
+      localStorage.setItem('rfqs_needs_refresh', String(Date.now()));
+      sessionStorage.setItem('rfqs_needs_refresh', '1');
       const channel = new BroadcastChannel('pixi_rfq_updates');
       channel.postMessage({ type: 'rfq-item-updated', rfqId: Number(id || 0), itemId: editContext?.item?.id || null, at: Date.now() });
       channel.close();
@@ -720,9 +723,7 @@ const RFQDetail: React.FC = () => {
       message.success('Tétel frissítve');
       // Always keep the editor open — do not close on save
       setSelectorOpen(false);
-      if (isDirectItemEditMode) {
-        notifyRfqListUpdated();
-      }
+      notifyRfqListUpdated();
       if (isDirectItemEditMode && !(payload as any).keepOpen) {
         if (window.opener) {
           window.opener.postMessage({ type: 'pixi_rfq_item_updated' }, window.location.origin);
@@ -881,7 +882,7 @@ const RFQDetail: React.FC = () => {
         bodyStyle={{ padding: '12px 16px' }}
         title={
           <Space size={8}>
-            <Button size="small" icon={<LeftOutlined />} onClick={() => navigate('/sales/rfqs')}>Vissza</Button>
+            <Button size="small" icon={<LeftOutlined />} onClick={() => { try { sessionStorage.setItem('rfqs_needs_refresh', '1'); } catch {} navigate('/sales/rfqs'); }}>Vissza</Button>
             <span style={{ fontWeight: 600 }}>Gyártható: {rfq?.is_manufacturable ? 'IGEN' : 'NEM'}</span>
             <Switch
               size="small"
@@ -1011,8 +1012,8 @@ const RFQDetail: React.FC = () => {
             if (companyId === 'private') updateData.company_id = null;
             else if (companyId) updateData.company_id = companyId;
             await salesService.updateQuoteRequestBasic((rfq?.id || id) as any, updateData);
-            message.success('Mentve'); setLastSavedAt(dayjs());
-            if (closeAfter) { try { window.close(); } catch {} navigate('/sales/rfqs'); return; }
+            message.success('Mentve'); setLastSavedAt(dayjs()); notifyRfqListUpdated();
+            if (closeAfter) { try { window.close(); } catch {} try { sessionStorage.setItem('rfqs_needs_refresh', '1'); } catch {} navigate('/sales/rfqs'); return; }
             load();
           } catch { message.error('Mentés sikertelen'); } finally { setSaving(false); }
         }}>

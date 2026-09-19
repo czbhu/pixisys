@@ -228,7 +228,10 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
   const [manuDepartments, setManuDepartments] = useState<any[]>([]);
   const [manuDefaultMarkup, setManuDefaultMarkup] = useState(30);
   const [manuDefaultMarkupActive, setManuDefaultMarkupActive] = useState(false);
-  const [manuPriceFromCalc, setManuPriceFromCalc] = useState(true);
+  // Edit mode defaults to false to prevent price overwrite before async load completes
+  const [manuPriceFromCalc, setManuPriceFromCalc] = useState(() => !(mode === 'edit' || !!quoteItemId));
+  // Block price recalculation until product data is fully loaded in edit mode
+  const blockPriceCalcRef = useRef(mode === 'edit' || !!quoteItemId);
   const [manuCreatedId, setManuCreatedId] = useState<number | null>(null);
   const [manuHasPrintShop, setManuHasPrintShop] = useState(false); // van-e printshop_params a terméken
   const [manuPendingFiles, setManuPendingFiles] = useState<File[]>([]);
@@ -403,9 +406,8 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
       unitSelling,
       quantity: productQty,
     });
-    if (manuPriceFromCalc) {
+    if (manuPriceFromCalc && !blockPriceCalcRef.current) {
       const q = manuForm.getFieldValue('manu_quantity') || 1;
-      // If selling currency has exchange_rate > 1 (i.e. non-base), convert base total to that currency
       const currObj = manuCurrencies.find(c => c.id === manuSellCurrencyId || c.code.toUpperCase() === manuSellCurrencyCode);
       const exchRate = (currObj && currObj.exchange_rate > 0) ? currObj.exchange_rate : 1;
       const unitSellingConverted = exchRate !== 1 ? parseFloat((unitSelling / exchRate).toFixed(2)) : parseFloat(unitSelling.toFixed(2));
@@ -447,7 +449,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
     setManuDimensionsPerUnit(true);
     setManuCalculatedVolumes({ unit: 0, total: 0 });
     setManuCalculatedTotalDims(null);
-    setManuPriceFromCalc(mode === 'edit' ? (savedPriceFromCalc ?? true) : true);
+    setManuPriceFromCalc(mode === 'edit' || !!quoteItemId ? false : true);
     setManuPendingFiles([]);
     setManuPendingFileRemarks({});
     setExistingAttachments([]);
@@ -596,8 +598,8 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           setSyncQtyRows(new Set(loadedItems.filter(i => i.syncQty).map(i => i.id)));
           // PrintShop detektálás cost items-ből
           if (!manuHasPrintShop && loadedItems.some(ci => (ci.formulas as any)?._syncQty === false)) setManuHasPrintShop(true);
-          // savedPriceFromCalc (from formulas) takes priority; fallback to heuristic
           setManuPriceFromCalc(savedPriceFromCalc !== undefined ? savedPriceFromCalc : loadedItems.length > 0);
+          setTimeout(() => { blockPriceCalcRef.current = false; }, 0);
         }
       } else if (mode === 'edit' && quoteItemId) {
         setManuFormInitialValues({
@@ -651,7 +653,8 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           // PrintShop detektálás cost items-ből (direkt tétel, nincs MP)
           if (!manuHasPrintShop && loadedItems.some(ci => (ci.formulas as any)?._syncQty === false)) setManuHasPrintShop(true);
         }
-        setManuPriceFromCalc(savedPriceFromCalc ?? true);
+        setManuPriceFromCalc(savedPriceFromCalc ?? (mode === 'edit' || !!quoteItemId ? false : true));
+        setTimeout(() => { blockPriceCalcRef.current = false; }, 0);
       }
       return;
     }
@@ -686,16 +689,8 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           // Restore syncQtyRows from persisted syncQty flags
           const syncSet = new Set(items.filter(i => i.syncQty).map(i => i.id));
           setSyncQtyRows(syncSet);
-          if (mode === 'edit') {
-            if (savedPriceFromCalc !== undefined) setManuPriceFromCalc(savedPriceFromCalc);
-            else setManuPriceFromCalc(false);
-          } else if (savedPriceFromCalc !== undefined) {
-            setManuPriceFromCalc(savedPriceFromCalc);
-          } else if (typeof p.price_from_cost_calc === 'boolean') {
-            setManuPriceFromCalc(p.price_from_cost_calc);
-          } else {
-            setManuPriceFromCalc(items.length > 0);
-          }
+          if (savedPriceFromCalc !== undefined) setManuPriceFromCalc(savedPriceFromCalc);
+          else setManuPriceFromCalc(false);
           if (p._currency) {
             setManuSellCurrencyCode((p._currency.code || 'HUF').toUpperCase());
             setManuSellCurrencyId(p._currency.id ?? null);
@@ -705,6 +700,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           setManuCreatedId(initialSelection.ref_id); // Keep negative temp ID
           setSelected(cloneModalValue({ ...p, id: initialSelection.ref_id, __type: 'manufacturing' }));
           setActiveKey('manufacturing');
+          setTimeout(() => { blockPriceCalcRef.current = false; }, 0);
           return;
         }
         const p: any = await manufacturingService.getProduct(initialSelection.ref_id);
@@ -820,7 +816,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           );
           setSyncQtyRows(syncSet);
         }
-        // Restore saved checkbox state; savedPriceFromCalc always takes priority over product defaults
+        // Restore saved checkbox state; price overwrite is blocked by blockPriceCalcRef
         if (savedPriceFromCalc !== undefined) {
           setManuPriceFromCalc(savedPriceFromCalc);
         } else if (mode === 'edit' || !!quoteItemId) {
@@ -850,6 +846,8 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         }
         setSelected({ ...p, __type: 'manufacturing' });
         setActiveKey('manufacturing');
+        // Unblock price recalculation now that initial load is complete
+        setTimeout(() => { blockPriceCalcRef.current = false; }, 0);
       } catch (e) {
         // ignore — form simply not pre-filled
       }
@@ -2899,9 +2897,11 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
                         // manuDisplayedTotals already stores base-currency (HUF) values
                         const unitCostInCostCurr = isForeignCost ? manuDisplayedTotals.unitCost / costExchRate : manuDisplayedTotals.unitCost;
                         const totalCostInCostCurr = isForeignCost ? manuDisplayedTotals.totalCost / costExchRate : manuDisplayedTotals.totalCost;
-                        // Selling totals in sell currency
-                        const unitSellingConverted = isForeignSell ? manuDisplayedTotals.unitSelling / exchRate : manuDisplayedTotals.unitSelling;
-                        const totalSellingConverted = isForeignSell ? manuDisplayedTotals.totalSelling / exchRate : manuDisplayedTotals.totalSelling;
+                        // Selling totals in sell currency: use manual price when checkbox unchecked
+                        const effectiveUnitSelling = manuPriceFromCalc ? manuDisplayedTotals.unitSelling : watchPriceBase;
+                        const effectiveTotalSelling = effectiveUnitSelling * qty;
+                        const unitSellingConverted = isForeignSell ? effectiveUnitSelling / exchRate : effectiveUnitSelling;
+                        const totalSellingConverted = isForeignSell ? effectiveTotalSelling / exchRate : effectiveTotalSelling;
                         const profitConverted = isForeignSell ? profit / exchRate : profit;
                         return (
                           <div style={{ marginTop: 8, padding: 8, background: '#f5f5f5', borderRadius: 4, fontSize: 13 }}>

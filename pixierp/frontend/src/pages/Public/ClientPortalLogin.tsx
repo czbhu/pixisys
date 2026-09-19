@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Alert, Button, Card, Divider, Form, Input, Modal, Radio, Spin, Tabs, Typography, message } from "antd";
-import { BankOutlined, CheckCircleOutlined, CloseCircleOutlined, LockOutlined, MailOutlined, PhoneOutlined, QrcodeOutlined, SearchOutlined, UserOutlined } from "@ant-design/icons";
+import { Alert, AutoComplete, Button, Card, Divider, Form, Input, Modal, Radio, Spin, Tabs, Tag, Typography, message } from "antd";
+import { BankOutlined, CheckCircleOutlined, CloseCircleOutlined, LockOutlined, MailOutlined, PhoneOutlined, QrcodeOutlined, SafetyCertificateOutlined, SearchOutlined, UserOutlined } from "@ant-design/icons";
 import { QRCodeSVG } from "qrcode.react";
 import { publicPortalService } from "../../services/publicPortalService";
 
@@ -70,16 +70,49 @@ const ClientPortalLogin: React.FC = () => {
   const [qrSessionId, setQrSessionId] = useState<string | null>(null);
   const [qrStatus, setQrStatus] = useState<"loading" | "pending" | "approved" | "expired">("loading");
   const pollRef = useRef<NodeJS.Timeout | null>(null);
+  const [searchOptions, setSearchOptions] = useState<{ value: string; label: React.ReactNode }[]>([]);
+  const searchDebounce = useRef<NodeJS.Timeout | null>(null);
+  const [form] = Form.useForm();
+
+  const isAdminMode = !!localStorage.getItem('access_token');
 
   useEffect(() => { const t = localStorage.getItem("portal_access_token"); if (t) navigate("/portal", { replace: true }); }, []);
+
+  const handleAdminSearch = (val: string) => {
+    if (searchDebounce.current) clearTimeout(searchDebounce.current);
+    if (!val || val.length < 2) { setSearchOptions([]); return; }
+    searchDebounce.current = setTimeout(async () => {
+      try {
+        const results = await publicPortalService.searchPortalUsers(val);
+        setSearchOptions(results.map(r => ({
+          value: r.email,
+          label: (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: 13 }}>{r.label}</span>
+              {r.has_portal_user
+                ? <Tag color="green" style={{ fontSize: 11 }}>portál</Tag>
+                : <Tag color="orange" style={{ fontSize: 11 }}>CRM</Tag>}
+            </div>
+          ),
+        })));
+      } catch { setSearchOptions([]); }
+    }, 250);
+  };
 
   const handleLogin = async (values: any) => {
     setLoading(true);
     try {
-      const res = await publicPortalService.login(values.email.trim().toLowerCase(), values.password);
-      localStorage.setItem("portal_access_token", res.token);
+      if (isAdminMode) {
+        const res = await publicPortalService.adminLogin(values.email.trim().toLowerCase());
+        localStorage.setItem("portal_access_token", res.token);
+      } else {
+        const res = await publicPortalService.login(values.email.trim().toLowerCase(), values.password);
+        localStorage.setItem("portal_access_token", res.token);
+      }
       navigate("/portal", { replace: true });
-    } catch (err: any) { message.error(err?.response?.data?.error || "Hibás e-mail vagy jelszó."); }
+    } catch (err: any) {
+      message.error(err?.response?.data?.error || (isAdminMode ? "Nem található portál felhasználó ezzel az e-mail címmel." : "Hibás e-mail vagy jelszó."));
+    }
     finally { setLoading(false); }
   };
 
@@ -115,16 +148,46 @@ const ClientPortalLogin: React.FC = () => {
           {
             key: "login", label: "Bejelentkezés",
             children: (
-              <Form name="portal-login" onFinish={handleLogin} layout="vertical" size="large">
+              <Form name="portal-login" form={form} onFinish={handleLogin} layout="vertical" size="large">
+                {isAdminMode && (
+                  <Alert
+                    type="info"
+                    showIcon
+                    icon={<SafetyCertificateOutlined />}
+                    message="Admin mód"
+                    description="ERP adminként vagy bejelentkezve — jelszó nélkül beléphetsz bármely portál felhasználóként."
+                    style={{ marginBottom: 16, borderRadius: 8 }}
+                  />
+                )}
                 <Form.Item name="email" rules={[{ required: true, message: "Kérjük, adja meg az e-mail címet!" }, { type: "email", message: "Érvényes e-mail szükséges!" }]}>
-                  <Input prefix={<MailOutlined />} placeholder="E-mail cím" type="email" />
+                  {isAdminMode ? (
+                    <AutoComplete
+                      options={searchOptions}
+                      onSearch={handleAdminSearch}
+                      onSelect={(val: string) => form.setFieldValue('email', val)}
+                      filterOption={false}
+                    >
+                      <Input prefix={<SearchOutlined />} placeholder="Keresés: név vagy e-mail cím..." />
+                    </AutoComplete>
+                  ) : (
+                    <Input prefix={<MailOutlined />} placeholder="E-mail cím" type="email" />
+                  )}
                 </Form.Item>
-                <Form.Item name="password" rules={[{ required: true, message: "Kérjük, adja meg a jelszót!" }]}>
-                  <Input.Password prefix={<LockOutlined />} placeholder="Jelszó" />
+                {!isAdminMode && (
+                  <Form.Item name="password" rules={[{ required: true, message: "Kérjük, adja meg a jelszót!" }]}>
+                    <Input.Password prefix={<LockOutlined />} placeholder="Jelszó" />
+                  </Form.Item>
+                )}
+                <Form.Item>
+                  <Button type="primary" htmlType="submit" loading={loading} block size="large"
+                    icon={isAdminMode ? <SafetyCertificateOutlined /> : undefined}>
+                    {isAdminMode ? "Bejelentkezés adminként" : "Bejelentkezés"}
+                  </Button>
                 </Form.Item>
-                <Form.Item><Button type="primary" htmlType="submit" loading={loading} block size="large">Bejelentkezés</Button></Form.Item>
-                <Button icon={<QrcodeOutlined />} block size="large" onClick={openQrModal} style={{ marginBottom: 8 }}>Bejelentkezés QR kóddal</Button>
-                <Button type="link" block onClick={() => navigate("/portal/forgot-password")}>Jelszó emlékeztető</Button>
+                {!isAdminMode && <>
+                  <Button icon={<QrcodeOutlined />} block size="large" onClick={openQrModal} style={{ marginBottom: 8 }}>Bejelentkezés QR kóddal</Button>
+                  <Button type="link" block onClick={() => navigate("/portal/forgot-password")}>Jelszó emlékeztető</Button>
+                </>}
               </Form>
             ),
           },

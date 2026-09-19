@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { Layout, Dropdown, Avatar, Button, Space, message, Modal, Typography, Badge, MenuProps, Tooltip } from 'antd';
-import { UserOutlined, LogoutOutlined, MenuOutlined, ClockCircleOutlined, QrcodeOutlined, LoginOutlined, FieldTimeOutlined, RestOutlined, UndoOutlined, RedoOutlined, ShoppingCartOutlined } from '@ant-design/icons';
+import { UserOutlined, LogoutOutlined, MenuOutlined, ClockCircleOutlined, QrcodeOutlined, LoginOutlined, FieldTimeOutlined, RestOutlined, UndoOutlined, RedoOutlined, ShoppingCartOutlined, GlobalOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
+import { useTranslation } from '../../contexts/TranslationContext';
+import { FLAG_EMOJIS, SUPPORTED_LANGS } from '../../i18n';
 import { useActionHistory } from '../../contexts/ActionHistoryContext';
 import { useTimeTracker } from '../../contexts/TimeTrackerContext';
 import { TimerModal } from '../WorkLog/TimerModal';
@@ -26,6 +28,7 @@ interface HeaderProps {
 const Header: React.FC<HeaderProps> = ({ onMenuClick, isMobile = false, inviteCount = 0 }) => {
     const navigate = useNavigate();
     const { user, logout } = useAuth();
+    const { lang, setLang, isTranslating } = useTranslation();
     const { undo, redo, canUndo, canRedo, history, currentIndex } = useActionHistory();
     const { activeLog, elapsedSeconds, setModalOpen } = useTimeTracker();
     const { totalActiveCount, setDrawerOpen: setCartDrawerOpen } = useCart();
@@ -586,6 +589,24 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick, isMobile = false, inviteCo
             </div>
 
             <Space>
+                <Dropdown
+                  menu={{
+                    items: Object.entries(SUPPORTED_LANGS).map(([code, name]) => ({
+                      key: code,
+                      label: `${FLAG_EMOJIS[code] || ''} ${name}`,
+                      onClick: () => setLang(code),
+                    })),
+                    selectedKeys: [lang],
+                  }}
+                  trigger={['click']}
+                >
+                  <Button type="text" size="small" style={{ fontSize: 16, padding: '0 6px' }}
+                    loading={isTranslating}
+                    title="Nyelv / Language"
+                  >
+                    {FLAG_EMOJIS[lang] || <GlobalOutlined />}
+                  </Button>
+                </Dropdown>
                 <Badge count={totalActiveCount} size="small" offset={[-2, 4]} style={{ backgroundColor: '#531dab' }}>
                     <Button
                         type="text"

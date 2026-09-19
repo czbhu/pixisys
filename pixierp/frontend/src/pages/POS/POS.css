@@ -131,21 +131,22 @@
 
 .pos-products-table .ant-table-body::-webkit-scrollbar,
 .pos-cart-table .ant-table-body::-webkit-scrollbar {
-  width: 36px;
-  height: 36px;
+  width: 56px;
+  height: 56px;
 }
 
 .pos-products-table .ant-table-body::-webkit-scrollbar-track,
 .pos-cart-table .ant-table-body::-webkit-scrollbar-track {
   background: #f1f1f1;
-  border-radius: 12px;
+  border-radius: 16px;
 }
 
 .pos-products-table .ant-table-body::-webkit-scrollbar-thumb,
 .pos-cart-table .ant-table-body::-webkit-scrollbar-thumb {
   background: #1890ff;
-  border-radius: 18px;
-  border: 6px solid #f1f1f1;
+  border-radius: 24px;
+  border: 8px solid #f1f1f1;
+  min-height: 60px;
 }
 
 .pos-products-table .ant-table-body,

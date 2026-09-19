@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { Layout, Typography, Avatar, Dropdown, Button, Space, MenuProps, Tag } from 'antd';
-import { UserOutlined, LogoutOutlined, FieldTimeOutlined, RestOutlined, FullscreenOutlined, FullscreenExitOutlined } from '@ant-design/icons';
+import { UserOutlined, LogoutOutlined, FieldTimeOutlined, RestOutlined, FullscreenOutlined, FullscreenExitOutlined, ShopOutlined, SettingOutlined } from '@ant-design/icons';
 import { useLocation, useNavigate } from 'react-router-dom';
 import POS from './POS';
+import POSAdmin from './POSAdmin';
 import dayjs from 'dayjs';
 import duration from 'dayjs/plugin/duration';
 import { useAuth } from '../../contexts/AuthContext';
@@ -33,6 +34,9 @@ const Sales = () => {
     const [posTerminalName, setPosTerminalName] = useState<string>('POS');
     const [showAllCategories, setShowAllCategories] = useState<boolean>(true);
     const [allowedMaterialGroupIds, setAllowedMaterialGroupIds] = useState<number[]>([]);
+    const [allowedWarehouseIds, setAllowedWarehouseIds] = useState<number[]>([]);
+    const [posCashRegisterId, setPosCashRegisterId] = useState<number | null>(null);
+    const [viewMode, setViewMode] = useState<'pos' | 'admin'>('pos');
     const { user, logout } = useAuth();
     const navigate = useNavigate();
     const location = useLocation();
@@ -98,6 +102,8 @@ const Sales = () => {
                     setPosTerminalName(data?.name || 'POS');
                     setShowAllCategories(!!data?.show_all_categories);
                     setAllowedMaterialGroupIds(Array.isArray(data?.material_group_ids) ? data.material_group_ids : []);
+                    setAllowedWarehouseIds(Array.isArray(data?.warehouse_ids) ? data.warehouse_ids : []);
+                    setPosCashRegisterId(data?.cash_register ?? null);
 
                     if (data?.cash_register_name) {
                         setPosCashInfo({
@@ -119,6 +125,8 @@ const Sales = () => {
                     setPosTerminalName('POS');
                     setShowAllCategories(true);
                     setAllowedMaterialGroupIds([]);
+                    setAllowedWarehouseIds([]);
+                    setPosCashRegisterId(null);
                     setPosCashInfo(null);
                     return;
                 }
@@ -126,6 +134,8 @@ const Sales = () => {
                 setPosTerminalName(first.name || 'POS');
                 setShowAllCategories(!!first.show_all_categories);
                 setAllowedMaterialGroupIds(Array.isArray(first.material_group_ids) ? first.material_group_ids : []);
+                setAllowedWarehouseIds(Array.isArray(first.warehouse_ids) ? first.warehouse_ids : []);
+                setPosCashRegisterId(first.cash_register ?? null);
 
                 if (first.cash_register_name) {
                     setPosCashInfo({
@@ -142,6 +152,8 @@ const Sales = () => {
                     setPosTerminalName('POS');
                     setShowAllCategories(true);
                     setAllowedMaterialGroupIds([]);
+                    setAllowedWarehouseIds([]);
+                    setPosCashRegisterId(null);
                     setPosCashInfo(null);
                 }
             }
@@ -220,6 +232,14 @@ const Sales = () => {
             type: 'divider',
         },
         {
+            key: 'toggle-view',
+            icon: viewMode === 'admin' ? <ShopOutlined /> : <SettingOutlined />,
+            label: viewMode === 'admin' ? 'Kassza (értékesítés)' : 'Adminisztráció',
+        },
+        {
+            type: 'divider',
+        },
+        {
             key: 'logout',
             icon: <LogoutOutlined />,
             label: 'Kijelentkezés',
@@ -230,6 +250,8 @@ const Sales = () => {
     const handleUserMenuClick = (e: any) => {
         if (e.key === 'logout') {
             handleLogout();
+        } else if (e.key === 'toggle-view') {
+            setViewMode((v) => (v === 'admin' ? 'pos' : 'admin'));
         }
     };
 
@@ -302,7 +324,15 @@ const Sales = () => {
                 </div>
             </Header>
             <div style={{ marginTop: '64px' }}>
-                <POS showAllCategories={showAllCategories} allowedMaterialGroupIds={allowedMaterialGroupIds} />
+                {viewMode === 'admin' ? (
+                    <POSAdmin
+                        cashRegisterId={posCashRegisterId}
+                        allowedWarehouseIds={allowedWarehouseIds}
+                        onBackToPos={() => setViewMode('pos')}
+                    />
+                ) : (
+                    <POS showAllCategories={showAllCategories} allowedMaterialGroupIds={allowedMaterialGroupIds} allowedWarehouseIds={allowedWarehouseIds} />
+                )}
             </div>
         </Layout>
     );

@@ -11,7 +11,10 @@ import {
   PlusOutlined, EditOutlined, DeleteOutlined, MinusCircleOutlined, CopyOutlined,
   CalculatorOutlined, TagsOutlined, AppstoreOutlined, SyncOutlined, PrinterOutlined,
   LockOutlined, ArrowUpOutlined, ArrowDownOutlined, DownloadOutlined, UploadOutlined,
+  GlobalOutlined,
 } from '@ant-design/icons';
+import ReactQuill from 'react-quill';
+import 'react-quill/dist/quill.snow.css';
 import api from '../../services/api';
 import ExportButton from '../../components/ExportButton';
 import UnifiedQuickSearchHeader from '../../components/Layout/UnifiedQuickSearchHeader';
@@ -101,6 +104,8 @@ interface ProductTemplate {
   is_protected: boolean;
   created_at: string;
   updated_at: string;
+  public_description?: string;
+  youtube_url?: string;
 }
 
 interface TemplateCategory {
@@ -184,6 +189,95 @@ const fromMm = (v: number | null, unit: string): number | null => {
 const emptySizeRow = (order = 0): SizeRow => ({
   label: '', width: null, height: null, unit: 'mm', sort_order: order,
 });
+
+// ── Gallery editor sub-component ─────────────────────────────────────────────
+
+interface GalleryItem { id: number; image_url: string; sort_order: number; _local?: boolean; _file?: File; _preview?: string; }
+
+const GalleryEditor: React.FC<{ productId: number | null }> = ({ productId }) => {
+  const [items, setItems] = useState<GalleryItem[]>([]);
+  const [dragging, setDragging] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!productId) { setItems([]); return; }
+    api.get('/manufacturing/product-template-gallery/', { params: { product: productId } })
+      .then(r => setItems(Array.isArray(r.data) ? r.data : (r.data.results ?? [])))
+      .catch(() => {});
+  }, [productId]);
+
+  const upload = async (file: File) => {
+    if (!productId) {
+      // Pending: store locally as preview until product is saved
+      const reader = new FileReader();
+      reader.onload = e => {
+        const preview = e.target?.result as string;
+        setItems(prev => [...prev, { id: Date.now(), image_url: preview, sort_order: prev.length, _local: true, _file: file, _preview: preview }]);
+      };
+      reader.readAsDataURL(file);
+      return;
+    }
+    const fd = new FormData();
+    fd.append('product', String(productId));
+    fd.append('image', file);
+    fd.append('sort_order', String(items.length));
+    try {
+      const r = await api.post('/manufacturing/product-template-gallery/', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+      setItems(prev => [...prev, r.data]);
+    } catch { message.error('Képfeltöltés sikertelen'); }
+  };
+
+  const remove = async (item: GalleryItem) => {
+    if (!item._local && productId) {
+      try { await api.delete(`/manufacturing/product-template-gallery/${item.id}/`); } catch {}
+    }
+    setItems(prev => prev.filter(i => i.id !== item.id));
+  };
+
+  const moveItem = async (fromIdx: number, toIdx: number) => {
+    if (fromIdx === toIdx) return;
+    const next = [...items];
+    const [moved] = next.splice(fromIdx, 1);
+    next.splice(toIdx, 0, moved);
+    setItems(next);
+    if (productId) {
+      const realIds = next.filter(i => !i._local).map(i => i.id);
+      if (realIds.length) api.post('/manufacturing/product-template-gallery/reorder/', { ordered_ids: realIds }).catch(() => {});
+    }
+  };
+
+  return (
+    <div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+        {items.map((item, idx) => (
+          <div key={item.id}
+            draggable
+            onDragStart={() => setDragging(idx)}
+            onDragOver={e => { e.preventDefault(); }}
+            onDrop={() => { if (dragging !== null) { moveItem(dragging, idx); setDragging(null); } }}
+            style={{ position: 'relative', cursor: 'grab', border: idx === 0 ? '2px solid #1677ff' : '1px solid #e8e8e8', borderRadius: 6, overflow: 'hidden' }}
+          >
+            <img src={item.image_url || item._preview || ''} alt="" style={{ width: 90, height: 90, objectFit: 'cover', display: 'block' }} />
+            {idx === 0 && <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, background: 'rgba(22,119,255,0.8)', color: '#fff', fontSize: 9, textAlign: 'center', padding: '1px 0' }}>katalógus</div>}
+            <Button size="small" danger type="text" icon={<DeleteOutlined />}
+              style={{ position: 'absolute', top: 2, right: 2, background: 'rgba(255,255,255,0.85)', padding: '0 4px' }}
+              onClick={() => remove(item)} />
+          </div>
+        ))}
+        <Upload accept="image/*" showUploadList={false}
+          beforeUpload={file => {
+            if (!file.type.startsWith('image/')) { message.error('Csak képfájl'); return Upload.LIST_IGNORE; }
+            if (file.size > 10 * 1024 * 1024) { message.error('Max 10 MB'); return Upload.LIST_IGNORE; }
+            upload(file); return false;
+          }}>
+          <div style={{ width: 90, height: 90, border: '1px dashed #d9d9d9', borderRadius: 6, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: '#bbb', fontSize: 11 }}>
+            <UploadOutlined style={{ fontSize: 20 }} /><div>Hozzáadás</div>
+          </div>
+        </Upload>
+      </div>
+      {items.length > 0 && <div style={{ fontSize: 11, color: '#888' }}>Húzással rendezhető · Az első kép a katalóguskép</div>}
+    </div>
+  );
+};
 
 // ── Main component ───────────────────────────────────────────────────────────
 
@@ -282,6 +376,13 @@ const ProductEditor: React.FC = () => {
   // Detail / preview drawer
   const [detailOpen, setDetailOpen]     = useState(false);
   const [detailProduct, setDetailProduct] = useState<ProductTemplate | null>(null);
+
+  // Public page editor drawer
+  const [pubOpen, setPubOpen] = useState(false);
+  const [pubProduct, setPubProduct] = useState<ProductTemplate | null>(null);
+  const [pubDesc, setPubDesc] = useState('');
+  const [pubYoutube, setPubYoutube] = useState('');
+  const [pubSaving, setPubSaving] = useState(false);
 
   // ── Data loading ────────────────────────────────────────────────────────────
 
@@ -715,6 +816,34 @@ const ProductEditor: React.FC = () => {
     setDetailOpen(true);
   };
 
+  const openPublicPage = (p: ProductTemplate) => {
+    setPubProduct(p);
+    setPubDesc(p.public_description ?? '');
+    setPubYoutube(p.youtube_url ?? '');
+    setPubOpen(true);
+  };
+
+  const savePublicPage = async () => {
+    if (!pubProduct) return;
+    setPubSaving(true);
+    try {
+      await api.patch(`/manufacturing/product-templates/${pubProduct.id}/`, {
+        public_description: pubDesc,
+        youtube_url: pubYoutube,
+      });
+      message.success('Publikus oldal mentve.');
+      setProducts(prev => prev.map(p => p.id === pubProduct.id
+        ? { ...p, public_description: pubDesc, youtube_url: pubYoutube }
+        : p
+      ));
+      setPubOpen(false);
+    } catch {
+      message.error('Mentési hiba.');
+    } finally {
+      setPubSaving(false);
+    }
+  };
+
   // ── Expandable rows ───────────────────────────────────────────────────────────
 
   const handleExpand = async (expanded: boolean, record: ProductTemplate) => {
@@ -879,6 +1008,9 @@ const ProductEditor: React.FC = () => {
           <Tooltip title="Szerkesztés">
             <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(rec)} />
           </Tooltip>
+          <Tooltip title="Publikus oldal szerkesztése">
+            <Button size="small" icon={<GlobalOutlined />} onClick={() => openPublicPage(rec)} />
+          </Tooltip>
           <Tooltip title="Másolás">
             <Button size="small" icon={<CopyOutlined />} onClick={() => handleDuplicate(rec)} />
           </Tooltip>
@@ -1027,48 +1159,8 @@ const ProductEditor: React.FC = () => {
                       <TextArea rows={3} placeholder="Rövid leírás…" />
                     </Form.Item>
 
-                    <Form.Item label="Katalógus kép" help="A termékkatalógus oldalon megjelenő kép.">
-                      <Space align="start">
-                        {imagePreview ? (
-                          <div style={{ position: 'relative' }}>
-                            <img
-                              src={imagePreview}
-                              alt="előnézet"
-                              style={{ width: 96, height: 96, objectFit: 'cover', borderRadius: 6, border: '1px solid #e8e8e8' }}
-                            />
-                            <Button
-                              size="small" danger type="text"
-                              icon={<DeleteOutlined />}
-                              style={{ position: 'absolute', top: 2, right: 2, background: 'rgba(255,255,255,0.85)' }}
-                              onClick={() => { setImageFile(null); setImagePreview(null); setImageRemoved(true); }}
-                            />
-                          </div>
-                        ) : (
-                          <div style={{
-                            width: 96, height: 96, borderRadius: 6, border: '1px dashed #d9d9d9',
-                            display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#bbb',
-                          }}>
-                            <AppstoreOutlined style={{ fontSize: 28 }} />
-                          </div>
-                        )}
-                        <Upload
-                          accept="image/*"
-                          showUploadList={false}
-                          beforeUpload={(file) => {
-                            const isImage = file.type.startsWith('image/');
-                            if (!isImage) { message.error('Csak képfájl tölthető fel'); return Upload.LIST_IGNORE; }
-                            if (file.size > 5 * 1024 * 1024) { message.error('A kép maximum 5 MB lehet'); return Upload.LIST_IGNORE; }
-                            setImageFile(file);
-                            setImageRemoved(false);
-                            const reader = new FileReader();
-                            reader.onload = e => setImagePreview(e.target?.result as string);
-                            reader.readAsDataURL(file);
-                            return false;
-                          }}
-                        >
-                          <Button icon={<UploadOutlined />}>{imagePreview ? 'Csere' : 'Kép feltöltése'}</Button>
-                        </Upload>
-                      </Space>
+                    <Form.Item label="Mintaképek" help="Az első kép lesz a katalóguskép. Húzással rendezhető.">
+                      <GalleryEditor productId={editing?.id ?? null} />
                     </Form.Item>
 
                     <Row gutter={16}>
@@ -1994,6 +2086,72 @@ const ProductEditor: React.FC = () => {
             </Space>
           );
         })()}
+      </Drawer>
+
+      {/* ── Public page editor drawer ───────────────────────────────────── */}
+      <Drawer
+        title={<Space><GlobalOutlined /> Publikus oldal – {pubProduct?.name}</Space>}
+        open={pubOpen}
+        onClose={() => setPubOpen(false)}
+        width={720}
+        footer={
+          <Space style={{ float: 'right' }}>
+            <Button onClick={() => setPubOpen(false)}>Mégse</Button>
+            <Button type="primary" loading={pubSaving} onClick={savePublicPage}>Mentés</Button>
+          </Space>
+        }
+        destroyOnHidden
+      >
+        <Space direction="vertical" style={{ width: '100%' }} size={20}>
+          <div>
+            <Text strong style={{ display: 'block', marginBottom: 8 }}>Galéria képek</Text>
+            <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
+              Húzással rendezhető. Az első kép lesz a fő kép a portálon.
+            </Text>
+            <GalleryEditor productId={pubProduct?.id ?? null} />
+          </div>
+
+          <Divider style={{ margin: '4px 0' }} />
+
+          <div>
+            <Text strong style={{ display: 'block', marginBottom: 8 }}>Publikus leírás (HTML)</Text>
+            <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
+              Formázott szöveg, HTML támogatással. A portálon jelenik meg a termék leírás oldalán.
+            </Text>
+            <ReactQuill
+              theme="snow"
+              value={pubDesc}
+              onChange={setPubDesc}
+              style={{ height: 260, marginBottom: 42 }}
+              modules={{
+                toolbar: [
+                  [{ header: [1, 2, 3, false] }],
+                  ['bold', 'italic', 'underline', 'strike'],
+                  [{ color: [] }, { background: [] }],
+                  [{ list: 'ordered' }, { list: 'bullet' }],
+                  ['link', 'image'],
+                  ['clean'],
+                ],
+              }}
+            />
+          </div>
+
+          <Divider style={{ margin: '4px 0' }} />
+
+          <div>
+            <Text strong style={{ display: 'block', marginBottom: 8 }}>YouTube videó URL</Text>
+            <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
+              pl. https://www.youtube.com/watch?v=XXXXXXXX — opcionális
+            </Text>
+            <Input
+              value={pubYoutube}
+              onChange={e => setPubYoutube(e.target.value)}
+              placeholder="https://www.youtube.com/watch?v=..."
+              prefix={<GlobalOutlined style={{ color: '#ff0000' }} />}
+              allowClear
+            />
+          </div>
+        </Space>
       </Drawer>
     </div>
   );

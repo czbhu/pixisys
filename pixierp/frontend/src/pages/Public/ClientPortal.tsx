@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Alert, Button, Card, Col, Form, Input, Row, Select, Space, Table, Tag, Typography, message } from 'antd';
+import { PrinterOutlined, ShoppingCartOutlined } from '@ant-design/icons';
 import { publicPortalService } from '../../services/publicPortalService';
 
 const { Title } = Typography;
@@ -76,6 +77,8 @@ const ClientPortal: React.FC = () => {
           <Title level={3} style={{ margin: 0 }}>Kliens portál</Title>
           <Space>
             <Tag color="blue">{portalUser?.email || '-'}</Tag>
+            <Button icon={<PrinterOutlined />} onClick={() => navigate('/portal/printshop')}>Nyomdai kalkulátor</Button>
+            <Button icon={<ShoppingCartOutlined />} onClick={() => navigate('/shop/ruha')}>Termékkatalógus</Button>
             <Button onClick={() => navigate('/portal/login')}>← Bejelentkezés</Button>
             <Button onClick={handleLogout}>Kijelentkezés</Button>
           </Space>

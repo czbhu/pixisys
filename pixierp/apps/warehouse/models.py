@@ -60,6 +60,27 @@ class MaterialGroup(models.Model):
         related_name='children',
         verbose_name="Szülő kategória"
     )
+    public_slug = models.SlugField(
+        max_length=100,
+        unique=True,
+        blank=True,
+        null=True,
+        verbose_name="Publikus link (slug)",
+        help_text="Egyedi URL-azonosító, pl. 'ajandektargyak' → /shop/ajandektargyak",
+    )
+    public_title = models.CharField(
+        max_length=200, blank=True, default='',
+        verbose_name="Publikus oldal cím",
+        help_text="Ha üres, a kategória neve kerül megjelenítésre",
+    )
+    public_description = models.TextField(
+        blank=True, default='',
+        verbose_name="Publikus oldal leírás (HTML)",
+    )
+    show_prices = models.BooleanField(
+        default=True,
+        verbose_name="Árak megjelenítése a publikus oldalon",
+    )
     
     class Meta:
         verbose_name = "Alapanyag gyűjtő"
@@ -76,8 +97,126 @@ class MaterialGroup(models.Model):
         return self.get_full_name()
     
     def get_materials_count(self):
-        """Visszaadja a gyűjtőhöz tartozó alapanyagok számát"""
-        return self.materials.count()
+        from django.db.models import Q as _Q
+        # Count via both FK (legacy) and M2M fields, deduplicated
+        Material = self.materials.model
+        return Material.objects.filter(
+            _Q(material_group=self) | _Q(material_groups=self)
+        ).distinct().count()
+
+
+class MaterialGroupApiSync(models.Model):
+    """Külső API konfiguráció egy kategória automatikus szinkronizálásához."""
+    METHOD_CHOICES = [('GET', 'GET'), ('POST', 'POST')]
+    STATUS_CHOICES = [('idle', 'Még nem futott'), ('ok', 'Sikeres'), ('error', 'Hiba')]
+
+    material_group = models.ForeignKey(
+        MaterialGroup,
+        on_delete=models.CASCADE,
+        related_name='api_syncs',
+        verbose_name="Alapanyag gyűjtő",
+    )
+    name = models.CharField(max_length=100, verbose_name="Szinkron neve")
+    api_url = models.URLField(max_length=500, verbose_name="API URL")
+    api_method = models.CharField(max_length=4, choices=METHOD_CHOICES, default='GET', verbose_name="HTTP metódus")
+    api_headers = models.JSONField(
+        blank=True, null=True, default=dict,
+        verbose_name="API fejlécek (JSON)",
+        help_text='pl. {"Authorization": "Bearer TOKEN", "X-Api-Key": "..."}'
+    )
+    api_body = models.JSONField(
+        blank=True, null=True, default=dict,
+        verbose_name="POST törzs / GET paraméterek (JSON)",
+    )
+    # JSONField mapping: { "name": "termek_nev", "code": "cikkszam", "unit_selling_price": "ar", ... }
+    field_mapping = models.JSONField(
+        blank=True, null=True, default=dict,
+        verbose_name="Mező-leképezés (JSON)",
+        help_text='Külső mező neve → belső mező neve, pl. {"termek_nev": "name", "ar": "unit_selling_price"}',
+    )
+    items_path = models.CharField(
+        max_length=200, blank=True, default='',
+        verbose_name="Tömb elérési útja a válaszban",
+        help_text='pl. "results" vagy "data.items" — üres = a teljes válasz egy tömb',
+    )
+    sync_interval_minutes = models.PositiveIntegerField(
+        default=60, verbose_name="Szinkronizáció gyakorisága (perc)"
+    )
+    default_supplier = models.ForeignKey(
+        'crm.Company',
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='api_syncs',
+        verbose_name="Alapértelmezett beszállító",
+        help_text="Ha meg van adva, a szinkronizált termékek ehhez a beszállítóhoz lesznek rendelve.",
+    )
+    default_markup_percentage = models.DecimalField(
+        max_digits=7, decimal_places=2, default=0,
+        verbose_name="Haszonkulcs (%)",
+        help_text="Eladási ár = beszerzési ár × (1 + haszonkulcs / 100). 0 = nincs felár.",
+    )
+    is_active = models.BooleanField(default=True, verbose_name="Aktív")
+    last_synced_at = models.DateTimeField(null=True, blank=True, verbose_name="Utolsó szinkron")
+    last_sync_status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='idle', verbose_name="Utolsó szinkron státusza")
+    last_sync_message = models.TextField(blank=True, default='', verbose_name="Utolsó szinkron üzenet")
+    last_sync_count = models.IntegerField(default=0, verbose_name="Legutóbbi szinkronált termékek száma")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "API szinkron konfiguráció"
+        verbose_name_plural = "API szinkron konfigurációk"
+        ordering = ['material_group', 'name']
+
+    def __str__(self):
+        return f"{self.material_group.name} — {self.name}"
+
+
+class MaterialVariant(models.Model):
+    """Egy termék egy szín+méret variánsa (pl. UTTEAM SKU)."""
+    material = models.ForeignKey(
+        'Material', on_delete=models.CASCADE,
+        related_name='variants', verbose_name="Alapanyag",
+    )
+    sku = models.CharField(max_length=100, verbose_name="SKU", db_index=True)
+    color = models.CharField(max_length=100, blank=True, default='', verbose_name="Szín")
+    color_hex = models.CharField(max_length=20, blank=True, default='', verbose_name="Szín HEX")
+    size = models.CharField(max_length=50, blank=True, default='', verbose_name="Méret")
+    stock_quantity = models.IntegerField(default=0, verbose_name="Készlet (elsődleges)")
+    stock_supplier = models.IntegerField(default=0, verbose_name="Készlet (beszállító)")
+    price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True, verbose_name="Ár")
+    currency = models.CharField(max_length=3, default='HUF', verbose_name="Pénznem")
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Termék variáns"
+        verbose_name_plural = "Termék variánsok"
+        unique_together = ('material', 'sku')
+        ordering = ['color', 'size']
+
+    def __str__(self):
+        return f"{self.material.code} / {self.color} / {self.size}"
+
+
+class MaterialBarcode(models.Model):
+    """Egy termékhez rendelt vonalkód vagy QR kód. Egy kód csak egy termékhez tartozhat."""
+    material = models.ForeignKey(
+        'Material', on_delete=models.CASCADE,
+        related_name='barcodes', verbose_name="Termék",
+    )
+    code = models.CharField(max_length=100, unique=True, verbose_name="Vonalkód/QR kód")
+    created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True, verbose_name="Létrehozta",
+    )
+
+    class Meta:
+        verbose_name = "Vonalkód"
+        verbose_name_plural = "Vonalkódok"
+        ordering = ['code']
+
+    def __str__(self):
+        return self.code
 
 
 class Material(models.Model):
@@ -165,6 +304,13 @@ class Material(models.Model):
         related_name='materials',
         verbose_name="Alapanyag gyűjtő",
         help_text="Opcionális gyűjtő kategória (pl. Épületháló)"
+    )
+    material_groups = models.ManyToManyField(
+        MaterialGroup,
+        blank=True,
+        related_name='materials_m2m',
+        verbose_name="Alapanyag gyűjtők (több)",
+        help_text="Egy alapanyag több gyűjtőbe is tartozhat",
     )
     unit = models.CharField(
         max_length=20, 
@@ -337,13 +483,14 @@ class Material(models.Model):
     
     # Liter (liter alapú anyagokhoz)
     volume_liter = models.DecimalField(
-        max_digits=10,
-        decimal_places=2,
-        null=True,
-        blank=True,
-        validators=[MinValueValidator(0)],
-        verbose_name="Térfogat (liter)",
+        max_digits=10, decimal_places=2, null=True, blank=True,
+        validators=[MinValueValidator(0)], verbose_name="Térfogat (liter)",
         help_text="Liter alapú anyagok térfogata"
+    )
+    image_url = models.URLField(
+        max_length=500, blank=True, default='',
+        verbose_name="Képek URL",
+        help_text="Külső forrásból szinkronizált termékkép URL",
     )
     
     # Árazás
@@ -372,6 +519,16 @@ class Material(models.Model):
         validators=[MinValueValidator(0)],
         verbose_name="Egységár (eladási)",
         help_text="Eladási ár mértékegységenként (számított vagy manuális)"
+    )
+
+    promo_price = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(0)],
+        verbose_name="Akciós ár (bruttó)",
+        help_text="Ha ki van töltve, a POS ezt az árat kínálja fel akciós árként a normál ár helyett",
     )
     
     # ÁFA osztály (reference to invoice app's VATType via UUID)
@@ -1035,8 +1192,44 @@ class MaterialStock(models.Model):
         super().save(*args, **kwargs)
 
 
+class MaterialReceiptBatch(models.Model):
+    """Egy bevételezési esemény (szállítólevél/számla) fejléce, több tétellel (MaterialReceipt sorokkal)."""
+    DOCUMENT_TYPE_CHOICES = [
+        ('delivery', 'Szállítólevél'),
+        ('invoice', 'Számla'),
+    ]
+    supplier = models.ForeignKey(
+        Company, on_delete=models.SET_NULL, null=True, blank=True,
+        limit_choices_to={'is_supplier': True},
+        related_name='material_receipt_batches', verbose_name="Beszállító",
+    )
+    warehouse = models.ForeignKey(
+        'Warehouse', on_delete=models.CASCADE,
+        related_name='material_receipt_batches', verbose_name="Raktár",
+    )
+    document_type = models.CharField(max_length=20, choices=DOCUMENT_TYPE_CHOICES, default='delivery', verbose_name="Dokumentum típusa")
+    receipt_date = models.DateField(verbose_name="Teljesítés dátuma")
+    invoice_number = models.CharField(max_length=100, blank=True, default='', verbose_name="Szállítólevél/Számla szám")
+    notes = models.TextField(blank=True, default='', verbose_name="Megjegyzés")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, verbose_name="Rögzítette")
+
+    class Meta:
+        verbose_name = "Bevételezés"
+        verbose_name_plural = "Bevételezések"
+        ordering = ['-receipt_date', '-created_at']
+
+    def __str__(self):
+        return f"Bevételezés #{self.pk} — {self.supplier.name if self.supplier else 'Ismeretlen'} ({self.receipt_date})"
+
+
 class MaterialReceipt(models.Model):
     """Alapanyag bevételezés"""
+    batch = models.ForeignKey(
+        MaterialReceiptBatch, on_delete=models.CASCADE, null=True, blank=True,
+        related_name='lines', verbose_name="Bevételezés (fejléc)",
+    )
     material = models.ForeignKey(
         Material,
         on_delete=models.CASCADE,
@@ -1089,6 +1282,11 @@ class MaterialReceipt(models.Model):
         default=0,
         validators=[MinValueValidator(0)],
         verbose_name="Egységár"
+    )
+    unit = models.CharField(
+        max_length=20, blank=True, default='',
+        verbose_name="Mennyiségi egység",
+        help_text="Ha üres, a termék alapértelmezett mértékegysége érvényes",
     )
     
     # Méretek (opcionális, ha konkrét mérettel érkezik)

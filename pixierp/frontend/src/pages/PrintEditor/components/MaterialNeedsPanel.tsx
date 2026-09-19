@@ -10,7 +10,9 @@ interface MaterialRow {
   supplierName: string | null;
   needed: number;
   unit: string;
-  stock: number | null; // null = loading
+  stock: number | null;
+  rollWidthMm?: number | null;
+  wasteM2?: number | null;
 }
 
 interface Props {
@@ -24,7 +26,41 @@ const MaterialNeedsPanel: React.FC<Props> = ({ priceBreakdown }) => {
 
   useEffect(() => {
     const bd = priceBreakdown as any;
-    const items = bd?.material_items ?? [];
+
+    // Board/sheet products use board_material_* fields; click products use material_items
+    const boardMatName: string | null = bd?.board_material_name ?? null;
+    const boardMatId: number | null = bd?.material_id ?? (bd?.board_material_supplier_id != null ? null : null);
+    const usedMaterialId: number | null = bd?.material_id ?? null;
+
+    let items = bd?.material_items ?? [];
+
+    // Roll products: use material_breakdown from calculate-price-multi result
+    const mb = bd?.material_breakdown;
+    if (!items.length && mb?.name && (bd?.total ?? 0) > 0 && (mb?.roll_length_fm ?? 0) > 0) {
+      // Resolve supplier name from id if needed
+      items = [{
+        name: mb.name,
+        supplier_name: mb.supplier_name ?? null,
+        supplier_id: mb.supplier_id ?? null,
+        units: mb.roll_length_fm,
+        unit: 'fm',
+        material_id: bd?._material_id ?? null,
+        roll_width_mm: mb.roll_width_mm ?? null,
+        waste_m2: mb.waste_m2 ?? null,
+      }];
+    }
+
+    if (!items.length && boardMatName && (bd?.board_material_cost ?? 0) > 0) {
+      items = [{
+        name: boardMatName,
+        supplier_name: bd?.board_material_supplier_name ?? null,
+        supplier_id: bd?.board_material_supplier_id ?? null,
+        units: bd?.board_material_boards_needed ?? bd?.boards_needed ?? 0,
+        unit: 'tábla',
+        material_id: bd?.board_material_material_id ?? null,
+      }];
+    }
+
     if (!items.length) { setRows([]); return; }
 
     const initial: MaterialRow[] = items.map((mi: any) => ({
@@ -33,6 +69,8 @@ const MaterialNeedsPanel: React.FC<Props> = ({ priceBreakdown }) => {
       needed: Number(mi.units ?? 0),
       unit: mi.unit ?? 'ív',
       stock: null,
+      rollWidthMm: mi.roll_width_mm ?? null,
+      wasteM2: mi.waste_m2 ?? null,
     }));
     setRows(initial);
 
@@ -86,6 +124,10 @@ const MaterialNeedsPanel: React.FC<Props> = ({ priceBreakdown }) => {
             const toOrder = Math.max(0, row.needed - stock);
             const excess = Math.max(0, stock - row.needed);
             const sufficient = !loading && stock >= row.needed;
+            // For roll: show backend-computed waste (used area - printed area)
+            const excessM2 = row.wasteM2 != null && row.wasteM2 > 0
+              ? row.wasteM2
+              : (row.rollWidthMm && excess > 0 ? excess * (row.rollWidthMm / 1000) : null);
 
             return (
               <tr key={i} style={{ borderBottom: '1px solid #f0f0f0' }}>
@@ -120,8 +162,13 @@ const MaterialNeedsPanel: React.FC<Props> = ({ priceBreakdown }) => {
                 <td style={{ padding: '5px 6px', textAlign: 'right' }}>
                   {loading ? (
                     <span style={{ color: '#bbb' }}>…</span>
+                  ) : row.wasteM2 != null && row.wasteM2 > 0 ? (
+                    <span style={{ color: '#fa8c16' }}>{fmt(row.wasteM2)} m²</span>
                   ) : excess > 0 ? (
-                    <span style={{ color: '#52c41a' }}>+{fmt(excess)} {row.unit}</span>
+                    <span style={{ color: '#52c41a' }}>
+                      +{fmt(excess)} {row.unit}
+                      {excessM2 != null && <span style={{ color: '#95d475', fontSize: 10 }}> ({fmt(excessM2)} m²)</span>}
+                    </span>
                   ) : (
                     <span style={{ color: '#b0b0b0' }}>–</span>
                   )}

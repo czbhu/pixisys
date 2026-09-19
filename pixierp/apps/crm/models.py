@@ -20,6 +20,12 @@ def validate_eu_tax_number(value):
     if value and not RegexValidator(regex=r'^[A-Z]{2}\d{8,10}$')(value) is None:
         raise ValidationError('EU adószám formátuma: HU11956541')
 
+def tax_number_base(value):
+    """8 jegyű törzsszám kinyerése (elválasztók nélkül), pl. '12792016-2-43' -> '12792016'"""
+    import re
+    digits = re.sub(r'\D', '', value or '')
+    return digits[:8] if len(digits) >= 8 else None
+
 class Company(models.Model):
     """Cég modell"""
     
@@ -163,6 +169,16 @@ class Company(models.Model):
         else:
             if not self.address:
                 raise ValidationError("Nem magyarország esetén cím megadása kötelező.")
+
+        # Duplikátum-ellenőrzés: ugyanazzal az adószám-törzsszámmal (első 8 számjegy)
+        # már ne lehessen másik céget felvenni, formázástól függetlenül.
+        base = tax_number_base(self.tax_number)
+        if base:
+            for other in Company.objects.exclude(pk=self.pk).exclude(tax_number__isnull=True).exclude(tax_number=''):
+                if tax_number_base(other.tax_number) == base:
+                    raise ValidationError(
+                        {'tax_number': f'Már létezik cég ezzel az adószámmal: "{other.name}" (ID: {other.pk}).'}
+                    )
 
 class Contact(models.Model):
     """Kapcsolattartó modell"""

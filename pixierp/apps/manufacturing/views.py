@@ -12,14 +12,14 @@ from .models import (
     ProductClass, Project, ManufacturingProduct, Service, ServiceGroup,
     CalculatorTemplate, Calculation, ServiceSupplierPrice, ServiceCostItem,
     ProductTemplate, ProductTemplateSize, ManufacturingProductAttachment,
-    ManufacturingCostItem,
+    ManufacturingCostItem, ProductTemplateGalleryImage,
 )
 from .serializers import (
     ProductClassSerializer, ProjectSerializer, ManufacturingProductSerializer,
     CurrencySerializer, ServiceSerializer, ServiceGroupSerializer, CalculatorTemplateSerializer,
     CalculationSerializer, ServiceSupplierPriceSerializer, ServiceCostItemSerializer,
     ProductTemplateSerializer, ManufacturingProductAttachmentSerializer,
-    ManufacturingCostItemSerializer,
+    ManufacturingCostItemSerializer, ProductTemplateGalleryImageSerializer,
 )
 from apps.crm.models import Contact
 from apps.hr.models import Employee
@@ -194,6 +194,7 @@ class ManufacturingProductViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             contact=original.contact,
             contact_external_id=original.contact_external_id,
             deadline=original.deadline,
+            printshop_params=original.printshop_params,
         )
         if hasattr(ManufacturingProduct, 'created_by'):
             new_product.created_by = request.user if request.user and request.user.is_authenticated else None
@@ -2482,3 +2483,32 @@ class ProductTemplateViewSet(viewsets.ModelViewSet):
         out = StringIO()
         call_command('seed_protected_items', '--verbose', stdout=out)
         return Response({'detail': out.getvalue()})
+
+
+class ProductTemplateGalleryViewSet(viewsets.ModelViewSet):
+    """Termék sablon galéria képek – feltöltés, sorrend, törlés."""
+    from rest_framework.permissions import IsAuthenticated as _IsAuth
+    from rest_framework import parsers as _parsers
+    permission_classes = [_IsAuth]
+    parser_classes = [_parsers.MultiPartParser, _parsers.FormParser, _parsers.JSONParser]
+
+    def get_queryset(self):
+        qs = ProductTemplateGalleryImage.objects.all()
+        product_id = self.request.query_params.get('product')
+        if product_id:
+            qs = qs.filter(product_id=product_id)
+        return qs.order_by('sort_order', 'id')
+
+    def get_serializer_class(self):
+        return ProductTemplateGalleryImageSerializer
+
+    def perform_create(self, serializer):
+        serializer.save()
+
+    @action(detail=False, methods=['post'], url_path='reorder')
+    def reorder(self, request):
+        """Reorder: expects {"ordered_ids": [1, 2, 3]}"""
+        ordered_ids = request.data.get('ordered_ids', [])
+        for i, pk in enumerate(ordered_ids):
+            ProductTemplateGalleryImage.objects.filter(pk=pk).update(sort_order=i)
+        return Response({'status': 'ok'})

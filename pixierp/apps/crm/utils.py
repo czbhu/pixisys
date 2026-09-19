@@ -1,4 +1,4 @@
-from .models import Company
+from .models import Company, tax_number_base
 
 def sync_company_to_local_db(data):
     """
@@ -16,9 +16,18 @@ def sync_company_to_local_db(data):
         # Check by external_id first
         qs = Company.objects.filter(external_id=cid)
         if not qs.exists():
-            # Fallback: check by tax number (risky but useful for legacy)
+            # Fallback: check by tax number, ignoring formatting differences
+            # (e.g. '12792016' vs '12792016-2-43' must be treated as the same company)
             tax = data.get('tax_number')
-            if tax:
+            base = tax_number_base(tax) if tax else None
+            if base:
+                match = next(
+                    (c for c in Company.objects.exclude(tax_number__isnull=True).exclude(tax_number='')
+                     if tax_number_base(c.tax_number) == base),
+                    None,
+                )
+                qs = Company.objects.filter(pk=match.pk) if match else Company.objects.none()
+            elif tax:
                 qs = Company.objects.filter(tax_number=tax)
 
         if qs.exists():
@@ -102,19 +111,20 @@ def bulk_sync_companies_to_local_db(items):
         for c in Company.objects.filter(external_id__in=ext_ids)
     }
 
-    # Also load by tax number for fallback (those without external_id yet)
-    tax_numbers = [
-        str(item.get('tax_number') or '')
+    # Also load by tax number for fallback (those without external_id yet), matched by
+    # normalized base (first 8 digits) so formatting differences don't create duplicates.
+    tax_number_bases = {
+        tax_number_base(item.get('tax_number'))
         for item in items
         if item.get('tax_number') and str(item.get('id') or '') not in existing_by_ext
-    ]
+    }
+    tax_number_bases.discard(None)
     existing_by_tax = {}
-    if tax_numbers:
-        existing_by_tax = {
-            str(c.tax_number): c
-            for c in Company.objects.filter(tax_number__in=tax_numbers)
-            if c.tax_number
-        }
+    if tax_number_bases:
+        for c in Company.objects.exclude(tax_number__isnull=True).exclude(tax_number=''):
+            b = tax_number_base(c.tax_number)
+            if b in tax_number_bases and b not in existing_by_tax:
+                existing_by_tax[b] = c
 
     to_update = []
     to_create = []
@@ -133,7 +143,7 @@ def bulk_sync_companies_to_local_db(items):
 
         company = existing_by_ext.get(cid)
         if not company and tax:
-            company = existing_by_tax.get(str(tax))
+            company = existing_by_tax.get(tax_number_base(tax))
 
         if company:
             changed = False

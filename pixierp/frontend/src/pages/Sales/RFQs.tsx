@@ -10,7 +10,7 @@ import type { UploadFile } from 'antd/es/upload/interface';
 import { PlusOutlined, EyeOutlined, SendOutlined, MailOutlined, EditOutlined, SearchOutlined, CopyOutlined, PlusCircleOutlined, ExclamationCircleOutlined, FileTextOutlined, DeleteOutlined, FilterOutlined, CameraOutlined, PictureOutlined, UploadOutlined, PaperClipOutlined, LeftOutlined, RightOutlined, ShoppingCartOutlined, HistoryOutlined, WarningOutlined, PrinterOutlined, UserSwitchOutlined, FolderAddOutlined, RocketOutlined, CarOutlined, CheckCircleOutlined, DollarOutlined, SettingOutlined } from '@ant-design/icons';
 import { isPdf, openPdfPreview } from '../../utils/pdfPreview';
 import { useNewRowTracker, newDotColumn } from '../../hooks/useNewRowTracker';
-import { useNavigate, useSearchParams } from 'react-router-dom'; // Add useSearchParams
+import { useNavigate, useSearchParams, useLocation } from 'react-router-dom'; // Add useSearchParams
 import './RFQs.css';
 import { salesService } from '../../services/salesService';
 import { crmService } from '../../services/crmService';
@@ -895,6 +895,30 @@ const RFQs: React.FC = () => {
   useEffect(() => {
     prefetchCacheRef.current.clear();
   }, [debouncedQuery, creatorFilter, projectFilter, statusFilter]); // eslint-disable-line
+
+  // Frissítés, ha a RFQ detail oldal jelezte a változást (sessionStorage flag)
+  const location = useLocation();
+  useEffect(() => {
+    try {
+      if (sessionStorage.getItem('rfqs_needs_refresh') === '1') {
+        sessionStorage.removeItem('rfqs_needs_refresh');
+        prefetchCacheRef.current.clear();
+        fetchPage(tablePageRef.current || 1, tablePageSize);
+      }
+    } catch {}
+  }, [location.key]); // eslint-disable-line
+
+  // Cross-tab refresh via localStorage storage event
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === 'rfqs_needs_refresh' && e.newValue) {
+        prefetchCacheRef.current.clear();
+        fetchPage(tablePageRef.current || 1, tablePageSize);
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []); // eslint-disable-line
 
   // Lap/szűrő változás → fetchel (cache-ből ha van)
   useEffect(() => {
@@ -2550,22 +2574,25 @@ const RFQs: React.FC = () => {
       const d = event.data;
       setNewItems(prev => {
         const productId = d.manufacturing_product_id;
-        // Ugyanabból a PrintShop ablakból ismételt Mentés → frissítjük a meglévő tételt (ne duplikálódjon)
+        // Remove all previous items from this product (base + any prior tiers)
         const filtered = prev.filter(it => it.ref_id !== productId && it.manufacturing_product?.id !== productId);
-        return [...filtered, {
+        const buildItem = (qty: number, unitPrice: number) => ({
           item_type: 'manufacturing',
           ref_id: productId,
           manufacturing_product: { id: productId, name: d.name },
           name: d.name || `Egyedi termék #${productId}`,
-          quantity: Number(d.quantity) || 1,
+          quantity: Number(qty) || 1,
           unit: d.unit || 'db',
-          net_unit_price: Number(d.net_unit_price) || 0,
+          net_unit_price: Number(unitPrice) || 0,
           vat_rate: 27,
           description: d.description || '',
           _ps_mfg_id: d._ps_mfg_id || productId,
           _editor_state: d._editor_state || null,
           formulas: { _price_from_cost_calc: true },
-        }];
+        });
+        const baseItem = buildItem(d.quantity, d.net_unit_price);
+        const tierItems = (d.bulk_tiers || []).map((t: any) => buildItem(t.qty, t.unit_price));
+        return [...filtered, baseItem, ...tierItems];
       });
     };
     window.addEventListener('message', handleMsg);
@@ -2828,19 +2855,13 @@ const RFQs: React.FC = () => {
     if (createdOrders.length > 0) {
       if (newCount > 0) message.success(`${newCount} megrendelés létrehozva`);
       loadData();
-      // Group orders by customer (company or customer id) so same customer gets one combined email
-      const grouped: { [key: string]: { orderId: number; rfqId: number }[] } = {};
-      for (const co of createdOrders) {
-        const rfq = findRfqByRef((rfqs || []) as any[], co.rfqId);
-        const companyKey = String(rfq?.company?.id || rfq?.customer?.id || `rfq_${co.rfqId}`);
-        if (!grouped[companyKey]) grouped[companyKey] = [];
-        grouped[companyKey].push(co);
-      }
-      const groupedEmailOrders = Object.values(grouped).map(orders => ({
-        primaryOrderId: orders[0].orderId,
-        orderIds: orders.map(o => o.orderId),
-        rfqId: orders[0].rfqId,
-        rfqIds: orders.map(o => o.rfqId),
+      // Each order gets its own confirmation email — no company-based grouping
+      // (prevents combined RFQ partners from leaking into an unrelated order's confirmation)
+      const groupedEmailOrders = createdOrders.map(co => ({
+        primaryOrderId: co.orderId,
+        orderIds: [co.orderId],
+        rfqId: co.rfqId,
+        rfqIds: [co.rfqId],
       }));
       setConfirmEmailOrders(groupedEmailOrders);
       setConfirmEmailIndex(0);
@@ -4998,10 +5019,24 @@ const RFQs: React.FC = () => {
             <Button icon={<HistoryOutlined />} onClick={openHistoryModal} title="Korábbi tételek betöltése">Korábbi tételek</Button>
             <Button
               onClick={() => {
-                const companyId = form.getFieldValue('company_id');
-                const company = companies.find((c: any) => c.id === companyId);
+                let companyId = form.getFieldValue('company_id');
+                let company = companies.find((c: any) => c.id === companyId);
+                // Fallback: derive company from first selected contact when no company is set
+                if (!companyId || companyId === 'private') {
+                  const contactIds: any[] = form.getFieldValue('contact_ids') || [];
+                  const firstId = typeof contactIds[0] === 'object' ? contactIds[0]?.value : contactIds[0];
+                  const contact = contacts.find((c: any) => String(c.id) === String(firstId));
+                  if (contact?.company?.id) { companyId = contact.company.id; company = contact.company; }
+                  else if (contact?.company_id) { companyId = contact.company_id; company = companies.find((c: any) => c.id === companyId); }
+                  else if (contact) {
+                    // Private person — no company
+                    const contactName = contact.full_name || contact.name || [contact.first_name, contact.last_name].filter(Boolean).join(' ') || 'Magánszemély';
+                    companyId = -1;
+                    company = { id: -1, name: `Magánszemély - ${contactName}` };
+                  }
+                }
                 const params = new URLSearchParams({ from_rfq: '1', return_url: window.location.href, mode: 'pdf' });
-                if (companyId && companyId !== 'private') params.set('company', String(companyId));
+                if (companyId) params.set('company', String(companyId));
                 if (company?.name) params.set('company_name', encodeURIComponent(company.name));
                 window.open(`/print-shop?${params.toString()}`, '_blank');
               }}

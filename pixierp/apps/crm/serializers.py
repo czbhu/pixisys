@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Company, Contact
+from .models import Company, Contact, tax_number_base
 
 class CompanySerializer(serializers.ModelSerializer):
     """Cég serializer"""
@@ -63,7 +63,21 @@ class CompanySerializer(serializers.ModelSerializer):
                 # Basic sanity check
                 if len(tax_number.replace('-', '')) < 8:
                      raise serializers.ValidationError({'tax_number': 'Az adószámnak legalább 8 számjegynek kell lennie.'})
-        
+
+        # Duplikátum-ellenőrzés: ugyanazzal az adószám-törzsszámmal (formázástól függetlenül)
+        # már ne lehessen másik céget felvenni/módosítani.
+        tax_number = attrs.get('tax_number', getattr(self.instance, 'tax_number', '')) or ''
+        base = tax_number_base(tax_number)
+        if base:
+            qs = Company.objects.exclude(tax_number__isnull=True).exclude(tax_number='')
+            if self.instance:
+                qs = qs.exclude(pk=self.instance.pk)
+            for other in qs:
+                if tax_number_base(other.tax_number) == base:
+                    raise serializers.ValidationError(
+                        {'tax_number': f'Már létezik cég ezzel az adószámmal: "{other.name}" (ID: {other.pk}).'}
+                    )
+
         return attrs
 
 class ContactSerializer(serializers.ModelSerializer):

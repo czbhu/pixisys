@@ -1,9 +1,10 @@
-from rest_framework import viewsets, status
+from rest_framework import viewsets, status, generics
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.pagination import PageNumberPagination
-from django.db.models import Q, Sum
+from django.db.models import Q, Sum, Prefetch
+from django.db import transaction
 from django.core.files.storage import default_storage
 from django.core.files.base import ContentFile
 import os
@@ -13,24 +14,27 @@ from .nav_invoice_service import NavInvoiceService
 from .models import (
     MaterialType, MaterialGroup, Material, Warehouse, Shelf, MaterialSupplier, 
     Inventory, MaterialCostItem, MaterialSize,
-    MaterialStock, MaterialReceipt, StockMovement,
+    MaterialStock, MaterialReceipt, MaterialReceiptBatch, StockMovement,
     SupplierInvoice, InvoiceItem,
-    ScrapRecord, ScrapItem
+    ScrapRecord, ScrapItem, MaterialGroupApiSync, MaterialBarcode,
 )
 from .serializers import (
     MaterialTypeSerializer, MaterialGroupSerializer, MaterialSerializer, WarehouseSerializer, 
     ShelfSerializer, MaterialSupplierSerializer, InventorySerializer, 
     MaterialCostItemSerializer, MaterialSizeSerializer,
     MaterialStockSerializer, MaterialReceiptSerializer, StockMovementSerializer,
+    MaterialReceiptBatchSerializer, MaterialReceiptBatchDetailSerializer,
     SupplierInvoiceSerializer, InvoiceItemSerializer,
-    ScrapRecordSerializer, ScrapItemSerializer
+    ScrapRecordSerializer, ScrapItemSerializer,
+    MaterialGroupApiSyncSerializer, PublicMaterialSerializer,
+    MaterialBarcodeSerializer, POSProductSerializer,
 )
 from apps.crm.models import Company
 
 class LargeResultsSetPagination(PageNumberPagination):
-    page_size = 1000
+    page_size = 200
     page_size_query_param = 'page_size'
-    max_page_size = 10000
+    max_page_size = 2000
 
 class MaterialTypeViewSet(viewsets.ModelViewSet):
     """Alapanyag típusok kezelése"""
@@ -43,9 +47,9 @@ class MaterialGroupViewSet(viewsets.ModelViewSet):
     queryset = MaterialGroup.objects.all()
     serializer_class = MaterialGroupSerializer
     pagination_class = LargeResultsSetPagination
-    
+
     def get_queryset(self):
-        queryset = MaterialGroup.objects.all()
+        queryset = MaterialGroup.objects.select_related('created_by', 'parent')
         
         # Szűrés aktív státusz szerint
         is_active = self.request.query_params.get('is_active')
@@ -58,6 +62,43 @@ class MaterialGroupViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(name__icontains=search)
         
         return queryset.order_by('name')
+
+    def list(self, request, *args, **kwargs):
+        """Bulk-compute materials_count (and a representative image) for all groups
+        in a handful of queries instead of one per group."""
+        qs = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(qs)
+        objects = page if page is not None else list(qs)
+
+        counts: dict = {}
+        for gid, mat_id in Material.objects.exclude(material_group_id__isnull=True).values_list('material_group_id', 'id'):
+            counts.setdefault(gid, set()).add(mat_id)
+        M2M = Material.material_groups.through
+        for gid, mat_id in M2M.objects.values_list('materialgroup_id', 'material_id'):
+            counts.setdefault(gid, set()).add(mat_id)
+
+        # First non-empty image_url found for each group (FK first, then M2M) — used
+        # by the shop-style category browsers (public shop + POS) to show a tile image.
+        images: dict = {}
+        for gid, img in (Material.objects
+                         .exclude(material_group_id__isnull=True).exclude(image_url='')
+                         .order_by('material_group_id')
+                         .values_list('material_group_id', 'image_url')):
+            images.setdefault(gid, img)
+        for gid, img in (M2M.objects
+                         .exclude(material__image_url='')
+                         .order_by('materialgroup_id')
+                         .values_list('materialgroup_id', 'material__image_url')):
+            images.setdefault(gid, img)
+
+        for obj in objects:
+            obj._materials_count = len(counts.get(obj.id, ()))
+            obj._image_url = images.get(obj.id)
+
+        serializer = self.get_serializer(objects, many=True)
+        if page is not None:
+            return self.get_paginated_response(serializer.data)
+        return Response(serializer.data)
     
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
@@ -70,9 +111,38 @@ class MaterialViewSet(viewsets.ModelViewSet):
     queryset = Material.objects.all()
     serializer_class = MaterialSerializer
     pagination_class = LargeResultsSetPagination
+
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve'):
+            from rest_framework.permissions import AllowAny
+            return [AllowAny()]
+        return super().get_permissions()
+
+    def list(self, request, *args, **kwargs):
+        """Override list to mark objects with _lite_mode for fast serialization."""
+        qs = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(qs)
+        objects = page if page is not None else list(qs)
+        # Mark all objects for lite mode (skip expensive N+1 computed fields)
+        for obj in objects:
+            obj._lite_mode = True
+        serializer = self.get_serializer(objects, many=True)
+        if page is not None:
+            return self.get_paginated_response(serializer.data)
+        return Response(serializer.data)
     
     def get_queryset(self):
-        queryset = Material.objects.all()
+        from apps.warehouse.models import MaterialGroup
+        # select_related/prefetch_related avoid N+1 queries for the serializer's
+        # material_type_name / material_group_name / material_group_names /
+        # created_by_name / default_supplier_name / internal_production_department_name
+        # fields (get_full_name() also walks up to 2 parent levels).
+        queryset = Material.objects.select_related(
+            'material_type', 'material_group', 'material_group__parent', 'material_group__parent__parent',
+            'default_supplier', 'internal_production_department', 'created_by',
+        ).prefetch_related(
+            Prefetch('material_groups', queryset=MaterialGroup.objects.select_related('parent', 'parent__parent')),
+        )
         material_type = self.request.query_params.get('material_type', None)
         filter_type = self.request.query_params.get('filter_type', None)
         search = self.request.query_params.get('search', None)
@@ -93,13 +163,40 @@ class MaterialViewSet(viewsets.ModelViewSet):
         if material_group_ids:
             id_list = [i.strip() for i in material_group_ids.split(',') if i.strip().isdigit()]
             if id_list:
-                queryset = queryset.filter(material_group_id__in=id_list)
+                # Filter by M2M field (includes backward-compat FK)
+                queryset = queryset.filter(
+                    Q(material_group_id__in=id_list) | Q(material_groups__in=id_list)
+                ).distinct()
         elif material_group:
-            queryset = queryset.filter(material_group_id=material_group)
+            queryset = queryset.filter(
+                Q(material_group_id=material_group) | Q(material_groups=material_group)
+            ).distinct()
         
         if supplier:
             queryset = queryset.filter(default_supplier_id=supplier)
-        
+
+        # Filter by warehouse(s): only materials that have stock in these warehouses
+        warehouse_ids = self.request.query_params.get('warehouse_ids')
+        if warehouse_ids:
+            from apps.warehouse.models import MaterialVariant
+            parts = [w.strip() for w in warehouse_ids.split(',') if w.strip()]
+            has_no_wh = '0' in parts
+            wid_list = [w for w in parts if w.isdigit() and w != '0']
+            # Any material with variants is API-synced → always counts as having external stock,
+            # regardless of current stock_quantity level (out-of-stock items are still "external").
+            api_synced_mat_ids = MaterialVariant.objects.values_list('material_id', flat=True).distinct()
+            if has_no_wh and wid_list:
+                # Mix: truly "no warehouse" OR specific warehouses
+                queryset = queryset.filter(
+                    Q(stocks__warehouse_id__in=wid_list) |
+                    (Q(stocks__isnull=True) & ~Q(id__in=api_synced_mat_ids))
+                ).distinct()
+            elif has_no_wh:
+                # "No warehouse" = no MaterialStock AND not an API-synced product
+                queryset = queryset.filter(stocks__isnull=True).exclude(id__in=api_synced_mat_ids)
+            elif wid_list:
+                queryset = queryset.filter(stocks__warehouse_id__in=wid_list).distinct()
+
         is_active = self.request.query_params.get('is_active')
         if is_active is not None:
             queryset = queryset.filter(is_active=is_active.lower() == 'true')
@@ -112,6 +209,37 @@ class MaterialViewSet(viewsets.ModelViewSet):
             )
         
         return queryset
+
+    @action(detail=False, methods=['get'], url_path='pos-products')
+    def pos_products(self, request):
+        """Minimális, gyors, lapozás nélküli terméklista a Kassza (POS) képernyőhöz.
+        Csak a ténylegesen megjelenített mezőket adja vissza (nincs drága join/számítás),
+        így nagy tételszám (pár ezer termék) mellett is gyorsan betöltődik egyetlen kérésben."""
+        queryset = Material.objects.filter(is_product=True)
+
+        is_active = request.query_params.get('is_active')
+        if is_active is not None:
+            queryset = queryset.filter(is_active=is_active.lower() == 'true')
+
+        warehouse_ids = request.query_params.get('warehouse_ids')
+        if warehouse_ids:
+            from apps.warehouse.models import MaterialVariant
+            parts = [w.strip() for w in warehouse_ids.split(',') if w.strip()]
+            has_no_wh = '0' in parts
+            wid_list = [w for w in parts if w.isdigit() and w != '0']
+            api_synced_mat_ids = MaterialVariant.objects.values_list('material_id', flat=True).distinct()
+            if has_no_wh and wid_list:
+                queryset = queryset.filter(
+                    Q(stocks__warehouse_id__in=wid_list) |
+                    (Q(stocks__isnull=True) & ~Q(id__in=api_synced_mat_ids))
+                ).distinct()
+            elif has_no_wh:
+                queryset = queryset.filter(stocks__isnull=True).exclude(id__in=api_synced_mat_ids)
+            elif wid_list:
+                queryset = queryset.filter(stocks__warehouse_id__in=wid_list).distinct()
+
+        serializer = POSProductSerializer(queryset, many=True)
+        return Response(serializer.data)
 
     # CSV mezők sorrendje (fejléc)
     CSV_FIELDS = [
@@ -746,11 +874,154 @@ class MaterialReceiptViewSet(viewsets.ModelViewSet):
         
         if date_to:
             queryset = queryset.filter(receipt_date__lte=date_to)
-        
-        return queryset
+
+        search = self.request.query_params.get('search', None)
+        if search:
+            queryset = queryset.filter(
+                Q(material__name__icontains=search) |
+                Q(material__description__icontains=search) |
+                Q(supplier__name__icontains=search)
+            )
+
+        return queryset.order_by('-receipt_date', '-created_at')
     
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
+
+
+class MaterialReceiptBatchViewSet(viewsets.ModelViewSet):
+    """Bevételezések fejléce + tételei (a step-by-step bevételezés véglegesítése ide ír)."""
+    queryset = MaterialReceiptBatch.objects.all()
+    serializer_class = MaterialReceiptBatchSerializer
+
+    def get_serializer_class(self):
+        if self.action == 'retrieve':
+            return MaterialReceiptBatchDetailSerializer
+        return MaterialReceiptBatchSerializer
+
+    def get_queryset(self):
+        queryset = MaterialReceiptBatch.objects.select_related('supplier', 'warehouse').prefetch_related('lines__material')
+        search = self.request.query_params.get('search', None)
+        if search:
+            queryset = queryset.filter(
+                Q(supplier__name__icontains=search) |
+                Q(lines__material__name__icontains=search) |
+                Q(lines__material__description__icontains=search)
+            ).distinct()
+        return queryset
+
+    def create(self, request, *args, **kwargs):
+        data = request.data
+        lines = data.get('lines') or []
+        if not lines:
+            return Response({'error': 'Legalább egy tétel megadása kötelező.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not data.get('warehouse'):
+            return Response({'error': 'Raktár megadása kötelező.'}, status=status.HTTP_400_BAD_REQUEST)
+        user = request.user if request.user.is_authenticated else None
+        with transaction.atomic():
+            batch = MaterialReceiptBatch.objects.create(
+                supplier_id=data.get('supplier'),
+                warehouse_id=data.get('warehouse'),
+                document_type=data.get('document_type', 'delivery'),
+                receipt_date=data.get('receipt_date'),
+                invoice_number=data.get('invoice_number', ''),
+                notes=data.get('notes', ''),
+                created_by=user,
+            )
+            for line in lines:
+                qty = float(line.get('quantity') or 0)
+                price = float(line.get('unit_price') or 0)
+                MaterialReceipt.objects.create(
+                    batch=batch,
+                    material_id=line['material'],
+                    warehouse_id=batch.warehouse_id,
+                    supplier_id=batch.supplier_id,
+                    receipt_date=batch.receipt_date,
+                    invoice_number=batch.invoice_number,
+                    invoice_value=qty * price,
+                    quantity=qty,
+                    unit_price=price,
+                    unit=line.get('unit') or '',
+                    currency='HUF',
+                    notes=batch.notes,
+                    created_by=user,
+                )
+        serializer = MaterialReceiptBatchDetailSerializer(batch)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    def _apply_update(self, request, batch):
+        data = request.data
+        if 'supplier' in data:
+            batch.supplier_id = data.get('supplier')
+        if 'warehouse' in data:
+            batch.warehouse_id = data.get('warehouse')
+        if 'document_type' in data:
+            batch.document_type = data.get('document_type')
+        if 'receipt_date' in data:
+            batch.receipt_date = data.get('receipt_date')
+        if 'invoice_number' in data:
+            batch.invoice_number = data.get('invoice_number', '')
+        if 'notes' in data:
+            batch.notes = data.get('notes', '')
+        batch.save()
+
+        lines = data.get('lines')
+        if lines is not None:
+            user = request.user if request.user.is_authenticated else None
+            existing = {l.id: l for l in batch.lines.all()}
+            submitted_ids = set()
+            for line in lines:
+                qty = float(line.get('quantity') or 0)
+                price = float(line.get('unit_price') or 0)
+                line_id = line.get('id')
+                if line_id and line_id in existing:
+                    obj = existing[line_id]
+                    obj.material_id = line['material']
+                    obj.warehouse_id = batch.warehouse_id
+                    obj.supplier_id = batch.supplier_id
+                    obj.receipt_date = batch.receipt_date
+                    obj.invoice_number = batch.invoice_number
+                    obj.quantity = qty
+                    obj.unit_price = price
+                    obj.unit = line.get('unit') or ''
+                    obj.invoice_value = qty * price
+                    obj.notes = batch.notes
+                    obj.save()
+                    submitted_ids.add(line_id)
+                else:
+                    new_obj = MaterialReceipt.objects.create(
+                        batch=batch,
+                        material_id=line['material'],
+                        warehouse_id=batch.warehouse_id,
+                        supplier_id=batch.supplier_id,
+                        receipt_date=batch.receipt_date,
+                        invoice_number=batch.invoice_number,
+                        invoice_value=qty * price,
+                        quantity=qty,
+                        unit_price=price,
+                        unit=line.get('unit') or '',
+                        currency='HUF',
+                        notes=batch.notes,
+                        created_by=user,
+                    )
+                    submitted_ids.add(new_obj.id)
+            # Remove lines that were dropped in the wizard
+            for line_id, obj in existing.items():
+                if line_id not in submitted_ids:
+                    obj.delete()
+
+    def update(self, request, *args, **kwargs):
+        batch = self.get_object()
+        with transaction.atomic():
+            self._apply_update(request, batch)
+        # Re-fetch: `batch` may carry a stale prefetch_related('lines') cache
+        # (from get_object()) that still references now-deleted/mutated line objects.
+        fresh = MaterialReceiptBatch.objects.select_related('supplier', 'warehouse').prefetch_related('lines__material').get(pk=batch.pk)
+        serializer = MaterialReceiptBatchDetailSerializer(fresh)
+        return Response(serializer.data)
+
+    def partial_update(self, request, *args, **kwargs):
+        return self.update(request, *args, **kwargs)
 
 
 class StockMovementViewSet(viewsets.ReadOnlyModelViewSet):
@@ -1348,3 +1619,575 @@ class MaterialRemnantViewSet(viewsets.ModelViewSet):
         remnant.is_available = True
         remnant.save()
         return Response({'status': 'ok', 'id': remnant.id})
+
+
+def _do_sync(sync):
+    """Execute one MaterialGroupApiSync — fetch external API, create/update Materials."""
+    from django.utils import timezone
+    import urllib.request as _req
+    import urllib.parse as _parse
+    import json as _json
+
+    # Ensure JSON fields are dicts/lists even if stored as strings
+    def _parse_json(val, default):
+        if isinstance(val, (dict, list)):
+            return val
+        try:
+            return _json.loads(val or '{}') if val else default
+        except Exception:
+            return default
+
+    NUMERIC_FIELDS = {'unit_selling_price', 'unit_cost_price', 'markup_percentage',
+                      'width', 'length', 'height', 'weight', 'area_weight', 'density', 'volume_liter'}
+    MATERIAL_FIELDS = {f.name for f in Material._meta.get_fields() if hasattr(f, 'column')}
+
+    try:
+        hdrs = dict(_parse_json(sync.api_headers, {}))
+        body_params = _parse_json(sync.api_body, {})
+        if sync.api_method == 'POST':
+            hdrs.setdefault('Content-Type', 'application/json')
+            raw_body = _json.dumps(body_params).encode('utf-8')
+            req = _req.Request(sync.api_url, data=raw_body, headers=hdrs, method='POST')
+        else:
+            qs = _parse.urlencode(body_params)
+            url = f"{sync.api_url}?{qs}" if qs else sync.api_url
+            req = _req.Request(url, headers=hdrs, method='GET')
+
+        with _req.urlopen(req, timeout=120) as resp:
+            raw = resp.read()
+        data = _json.loads(raw)
+
+        # Navigate to items array via items_path
+        if sync.items_path:
+            for key in (k for k in sync.items_path.split('.') if k):
+                data = data[key]
+
+        # Auto-detect array in common response wrappers
+        if isinstance(data, dict):
+            for key in ('data', 'results', 'items', 'products', 'records', 'styles'):
+                if key in data and isinstance(data[key], list):
+                    data = data[key]
+                    break
+            else:
+                for v in data.values():
+                    if isinstance(v, list):
+                        data = v
+                        break
+
+        if not isinstance(data, list):
+            raise ValueError(f"Expected list, got {type(data).__name__}: {str(data)[:200]}")
+
+        mapping = _parse_json(sync.field_mapping, {})
+        # Cache subcategory groups to avoid repeated DB lookups per item
+        subcategory_cache: dict = {}
+        created = updated = skipped = 0
+
+        def _get_nested(item: dict, key: str):
+            """Access nested fields using dot-notation: 'color.name', 'img.0'"""
+            val = item
+            for part in key.split('.'):
+                if isinstance(val, dict):
+                    val = val.get(part)
+                elif isinstance(val, list):
+                    try:
+                        val = val[int(part)]
+                    except (IndexError, ValueError, TypeError):
+                        return None
+                else:
+                    return None
+                if val is None:
+                    return None
+            return val
+
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            row = {}
+            extra_groups: list = []  # subcategories to assign this item to
+            variant_data: dict = {}  # fields for MaterialVariant
+            lookup_sku = None  # if set, resolve Material via existing MaterialVariant instead of by code
+
+            for ext_key, int_key in mapping.items():
+                val = _get_nested(item, ext_key)
+                if val is None or val == '':
+                    continue
+
+                # Special __lookup_variant_sku directive: resolve parent Material via an existing
+                # MaterialVariant SKU instead of creating a new Material keyed by this value.
+                # Needed when the external API's row-level ID is variant-specific (color/size),
+                # not the base product code (e.g. MACMA price/stock feeds).
+                if int_key == '__lookup_variant_sku':
+                    lookup_sku = str(val).strip()
+                    continue
+
+                # Special __category directive: create/find subcategory
+                if int_key in ('__category', '__category_first'):
+                    raw_cat = str(val).strip()
+                    # __category_first: use only the first pipe-separated part
+                    cat_name = (raw_cat.split('|')[0].strip() if int_key == '__category_first' else raw_cat)[:100]
+                    if cat_name:
+                        if cat_name not in subcategory_cache:
+                            cat_group, _ = MaterialGroup.objects.get_or_create(
+                                name=cat_name,
+                                defaults={'is_active': True, 'parent': sync.material_group,
+                                          'description': f'Auto: {sync.material_group.name}'},
+                            )
+                            if not cat_group.parent_id:
+                                cat_group.parent = sync.material_group
+                                cat_group.save(update_fields=['parent'])
+                            subcategory_cache[cat_name] = cat_group
+                        extra_groups.append(subcategory_cache[cat_name])
+                    continue
+
+                # Special __variant_* directive: store fields for MaterialVariant
+                if isinstance(int_key, str) and int_key.startswith('__variant_'):
+                    variant_data[int_key[len('__variant_'):]] = str(val).strip()
+                    continue
+
+                # Support list targets: {"price": ["unit_cost_price", "__variant_price"]}
+                targets = int_key if isinstance(int_key, list) else ([int_key] if int_key in MATERIAL_FIELDS else None)
+                if not targets:
+                    continue
+                for target in targets:
+                    # __variant_* inside a list target
+                    if isinstance(target, str) and target.startswith('__variant_'):
+                        variant_data[target[len('__variant_'):]] = str(val).strip()
+                        continue
+                    if target not in MATERIAL_FIELDS:
+                        continue
+                    v = val
+                    if target in NUMERIC_FIELDS:
+                        try:
+                            v = float(str(v).replace(',', '.').strip())
+                        except (ValueError, TypeError):
+                            continue
+                    else:
+                        v = str(v).strip()[:200] if isinstance(v, str) else v
+                    row[target] = v
+
+            if not row.get('name') and not row.get('code') and not lookup_sku:
+                skipped += 1
+                continue
+
+            # Truncate code to 50 chars (CharField max_length)
+            code = str(row.get('code', '')).strip()[:50]
+            defaults = {k: v for k, v in row.items() if k != 'code'}
+            defaults.setdefault('unit', 'db')
+            defaults.setdefault('currency', 'HUF')
+
+            # Apply markup: selling price = cost price × (1 + markup / 100)
+            markup = float(sync.default_markup_percentage or 0)
+            if markup > 0 and 'unit_cost_price' in defaults:
+                defaults['unit_selling_price'] = round(float(defaults['unit_cost_price']) * (1 + markup / 100), 2)
+
+            # Link default supplier
+            if sync.default_supplier_id:
+                defaults['default_supplier_id'] = sync.default_supplier_id
+
+            if lookup_sku:
+                # Row identifier is variant-level (e.g. MACMA price/stock feed) — resolve the
+                # correct base Material via an existing MaterialVariant SKU instead of creating
+                # a duplicate Material keyed by the variant id.
+                from apps.warehouse.models import MaterialVariant
+                existing_variant = MaterialVariant.objects.filter(sku=lookup_sku[:100]).select_related('material').first()
+                if not existing_variant:
+                    skipped += 1
+                    continue
+                mat = existing_variant.material
+                if defaults:
+                    for k, v in defaults.items():
+                        setattr(mat, k, v)
+                    mat.is_product = True
+                    mat.save()
+                updated += 1
+                variant_data.setdefault('sku', lookup_sku)
+            elif code:
+                mat, is_new = Material.objects.get_or_create(
+                    code=code,
+                    defaults={**defaults, 'is_material': False, 'is_product': True},
+                )
+                if not is_new:
+                    for k, v in defaults.items():
+                        setattr(mat, k, v)
+                    mat.is_product = True
+                    mat.save()
+                    updated += 1
+                else:
+                    created += 1
+            else:
+                # No code — create without uniqueness check
+                row.pop('code', None)
+                mat = Material.objects.create(
+                    **defaults, is_material=False, is_product=True,
+                    code=f"EXT-{sync.id}-{created + updated}"
+                )
+                created += 1
+
+            # Create MaterialVariant if __variant_* fields were mapped
+            if variant_data.get('sku') and mat:
+                from apps.warehouse.models import MaterialVariant
+                MaterialVariant.objects.update_or_create(
+                    material=mat,
+                    sku=variant_data['sku'][:100],
+                    defaults={
+                        'color': variant_data.get('color', '')[:100],
+                        'color_hex': variant_data.get('color_hex', '')[:20],
+                        'size': variant_data.get('size', '')[:50],
+                        'stock_quantity': int(variant_data.get('stock_quantity', 0) or 0),
+                        'stock_supplier': int(variant_data.get('stock_supplier', 0) or 0),
+                        'price': float(variant_data['price']) if variant_data.get('price') else None,
+                        'currency': variant_data.get('currency', 'HUF')[:3],
+                    }
+                )
+
+            mat.material_groups.add(sync.material_group)
+            # Also add to any subcategories derived from __category mapping
+            for grp in extra_groups:
+                mat.material_groups.add(grp)
+            # Sync primary FK to the most-specific group (subcategory if available)
+            primary = extra_groups[0] if extra_groups else sync.material_group
+            if not mat.material_group_id:
+                mat.material_group = primary
+                mat.save(update_fields=['material_group'])
+
+            # Create/update MaterialSupplier and MaterialCostItem when supplier + cost price are set
+            if sync.default_supplier_id and mat.unit_cost_price:
+                cost_price = float(mat.unit_cost_price)
+                currency = mat.currency or 'HUF'
+                markup = float(sync.default_markup_percentage or 0)
+                selling = round(cost_price * (1 + markup / 100), 2)
+                VERSION = 'API szinkron'
+
+                MaterialSupplier.objects.update_or_create(
+                    material=mat,
+                    supplier_id=sync.default_supplier_id,
+                    defaults={
+                        'unit_price': cost_price,
+                        'currency': currency,
+                        'is_primary': True,
+                        'is_active': True,
+                    }
+                )
+                MaterialCostItem.objects.update_or_create(
+                    material=mat,
+                    supplier_id=sync.default_supplier_id,
+                    price_calculation_version=VERSION,
+                    defaults={
+                        'name': 'Anyagköltség',
+                        'calculation_type': 'unit',
+                        'unit': mat.unit or 'db',
+                        'unit_price': cost_price,
+                        'price_quantity': 1,
+                        'markup_percentage': markup,
+                        'selling_price': selling,
+                        'currency': currency,
+                        'is_internal': False,
+                    }
+                )
+                # Set selling price and point to the calculation version
+                mat.unit_selling_price = selling
+                mat.price_source_mode = 'default_version'
+                mat.default_price_calculation_version = VERSION
+                mat.save(update_fields=['unit_selling_price', 'price_source_mode', 'default_price_calculation_version'])
+
+        # Aggregate variant stock → MaterialStock in the external warehouse
+        # Always create/update an EXT entry for API-synced materials (even qty=0),
+        # so they are consistently tracked as "external warehouse" products.
+        if subcategory_cache is not None:  # always true, used as flag that variant loop ran
+            from apps.warehouse.models import MaterialStock, MaterialVariant
+            from django.db.models import Sum as _Sum
+            ext_wh = Warehouse.objects.filter(code='EXT').first()
+            if ext_wh:
+                agg = (MaterialVariant.objects
+                       .filter(material__material_groups=sync.material_group)
+                       .values('material_id')
+                       .annotate(total=_Sum('stock_quantity')))
+                for row in agg:
+                    mat_id = row['material_id']
+                    qty = row['total'] or 0
+                    mat_obj = Material.objects.filter(id=mat_id).first()
+                    if not mat_obj:
+                        continue
+                    MaterialStock.objects.update_or_create(
+                        material=mat_obj, warehouse=ext_wh,
+                        defaults={
+                            'quantity': qty, 'currency': mat_obj.currency or 'HUF',
+                            'unit_value': float(mat_obj.unit_cost_price or 0),
+                            'total_value': float(mat_obj.unit_cost_price or 0) * qty,
+                        }
+                    )
+
+        sync.last_synced_at = timezone.now()
+        sync.last_sync_status = 'ok'
+        sync.last_sync_count = created + updated
+        sync.last_sync_message = (
+            f"Létrehozva: {created}, Frissítve: {updated}, Kihagyva: {skipped}"
+            + (f", Alkategóriák: {len(subcategory_cache)}" if subcategory_cache else "")
+        )
+        sync.save()
+
+    except Exception as e:
+        from django.utils import timezone as _tz
+        sync.last_synced_at = _tz.now()
+        sync.last_sync_status = 'error'
+        sync.last_sync_message = str(e)[:500]
+        sync.save()
+        raise
+
+
+class MaterialVariantViewSet(viewsets.ReadOnlyModelViewSet):
+    """Termék variánsok (szín/méret/készlet) — csak olvasás."""
+    from rest_framework.permissions import IsAuthenticated as _IA
+    permission_classes = [_IA]
+    serializer_class = MaterialGroupApiSyncSerializer  # placeholder — overridden below
+
+    def get_serializer_class(self):
+        from rest_framework import serializers as rs
+        from apps.warehouse.models import MaterialVariant as MV
+
+        class VariantSer(rs.ModelSerializer):
+            class Meta:
+                model = MV
+                fields = ['sku', 'color', 'color_hex', 'size', 'stock_quantity',
+                          'stock_supplier', 'price', 'currency', 'updated_at']
+        return VariantSer
+
+    def get_queryset(self):
+        from apps.warehouse.models import MaterialVariant
+        qs = MaterialVariant.objects.all()
+        mat = self.request.query_params.get('material')
+        if mat:
+            qs = qs.filter(material_id=mat)
+        color = self.request.query_params.get('color')
+        if color:
+            qs = qs.filter(color=color)
+        return qs.order_by('color', 'size')
+
+
+class MaterialBarcodeViewSet(viewsets.ModelViewSet):
+    """Termékekhez rendelt vonalkódok/QR kódok kezelése.
+
+    A create() kezeli az ütközést: ha a kód már más termékhez van rendelve,
+    409-et ad vissza a másik termék adataival, kivéve ha a kliens `transfer=true`
+    paramétert küld, ekkor a kódot átveszi az új termékhez.
+    """
+    from rest_framework.permissions import IsAuthenticated as _IA
+    permission_classes = [_IA]
+    queryset = MaterialBarcode.objects.select_related('material').all()
+    serializer_class = MaterialBarcodeSerializer
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        material_id = self.request.query_params.get('material')
+        if material_id:
+            qs = qs.filter(material_id=material_id)
+        code = self.request.query_params.get('code')
+        if code:
+            qs = qs.filter(code=code.strip())
+        return qs
+
+    def create(self, request, *args, **kwargs):
+        material_id = request.data.get('material')
+        code = str(request.data.get('code') or '').strip()
+        transfer = str(request.data.get('transfer', '')).lower() in ('1', 'true', 'yes')
+
+        if not material_id or not code:
+            return Response({'error': 'A termék és a kód megadása kötelező.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            material = Material.objects.get(pk=material_id)
+        except Material.DoesNotExist:
+            return Response({'error': 'Termék nem található.'}, status=status.HTTP_404_NOT_FOUND)
+
+        existing = MaterialBarcode.objects.select_related('material').filter(code=code).first()
+        if existing:
+            if existing.material_id == material.id:
+                return Response({'error': 'Ez a kód már fel van véve ehhez a termékhez.'}, status=status.HTTP_400_BAD_REQUEST)
+            if not transfer:
+                return Response({
+                    'conflict': True,
+                    'code': code,
+                    'existing_material_id': existing.material_id,
+                    'existing_material_name': existing.material.name,
+                    'existing_material_code': existing.material.code,
+                }, status=status.HTTP_409_CONFLICT)
+            existing.material = material
+            existing.save(update_fields=['material'])
+            return Response(self.get_serializer(existing).data, status=status.HTTP_200_OK)
+
+        barcode = MaterialBarcode.objects.create(
+            material=material, code=code,
+            created_by=request.user if request.user.is_authenticated else None,
+        )
+        return Response(self.get_serializer(barcode).data, status=status.HTTP_201_CREATED)
+
+
+class MaterialGroupApiSyncViewSet(viewsets.ModelViewSet):
+    """API szinkron konfigurációk kezelése."""
+    from rest_framework.permissions import IsAuthenticated as _IA
+    permission_classes = [_IA]
+    serializer_class = MaterialGroupApiSyncSerializer
+
+    def get_queryset(self):
+        qs = MaterialGroupApiSync.objects.all()
+        group = self.request.query_params.get('material_group')
+        if group:
+            qs = qs.filter(material_group_id=group)
+        return qs.order_by('material_group', 'name')
+
+    @action(detail=True, methods=['post'], url_path='run')
+    def run_sync(self, request, pk=None):
+        """Azonnali szinkronizáció futtatása."""
+        sync = self.get_object()
+        _do_sync(sync)
+        sync.refresh_from_db()
+        if sync.last_sync_status == 'ok':
+            return Response({'ok': True, 'message': sync.last_sync_message, 'count': sync.last_sync_count})
+        return Response({'ok': False, 'error': sync.last_sync_message}, status=400)
+
+
+class PublicProductVariantsView(generics.GenericAPIView):
+    """Publikus variáns lekérés — szín/méret/készlet kombinációk."""
+    from rest_framework.permissions import AllowAny as _AA
+    permission_classes = [_AA]
+
+    def get(self, request, slug, material_id):
+        from apps.warehouse.models import MaterialVariant, MaterialStock
+        from django.db.models import Sum
+        group = MaterialGroup.objects.filter(public_slug=slug, is_active=True).first()
+        if not group:
+            return Response({'error': 'Nem található'}, status=404)
+        variants = list(MaterialVariant.objects.filter(
+            material_id=material_id,
+            material__material_groups=group,
+        ).values('sku', 'color', 'color_hex', 'size', 'stock_quantity', 'stock_supplier', 'price', 'currency'))
+        # Internal stock: sum from non-external warehouses
+        internal = (MaterialStock.objects
+                    .filter(material_id=material_id)
+                    .exclude(warehouse__code='EXT')
+                    .aggregate(total=Sum('quantity'))['total'] or 0)
+        return Response({'variants': variants, 'internal_stock': float(internal)})
+
+
+class PublicProductCatalogView(generics.ListAPIView):
+    from rest_framework.permissions import AllowAny as _AA
+    permission_classes = [_AA]
+    serializer_class = PublicMaterialSerializer
+
+    def get_queryset(self):
+        slug = self.kwargs.get('slug')
+        group = MaterialGroup.objects.filter(public_slug=slug, is_active=True).first()
+        if not group:
+            return Material.objects.none()
+        # All materials in this group or its M2M
+        return Material.objects.filter(
+            Q(material_group=group) | Q(material_groups=group),
+            is_active=True, is_product=True,
+        ).distinct().prefetch_related('material_groups', 'variants')
+
+    def list(self, request, *args, **kwargs):
+        slug = self.kwargs.get('slug')
+        group = MaterialGroup.objects.filter(public_slug=slug, is_active=True).first()
+        if not group:
+            return Response({'error': 'Nem található'}, status=404)
+        qs = self.get_queryset()
+        # Single product lookup by ID
+        product_id = request.query_params.get('id')
+        if product_id:
+            try:
+                mat = Material.objects.filter(
+                    Q(material_group=group) | Q(material_groups=group),
+                    id=int(product_id),
+                    is_active=True
+                ).prefetch_related('material_groups', 'variants').first()
+                if not mat:
+                    return Response({'error': 'Termék nem található'}, status=404)
+                serializer = self.get_serializer(mat, context={'request': request})
+                return Response({'product': serializer.data})
+            except (ValueError, TypeError):
+                pass
+
+        # Optional subcategory filter
+        cat_id = request.query_params.get('cat')
+        if cat_id:
+            try:
+                sub = MaterialGroup.objects.get(id=int(cat_id))
+                qs = qs.filter(Q(material_group=sub) | Q(material_groups=sub)).distinct()
+            except (ValueError, MaterialGroup.DoesNotExist):
+                pass
+        # Search
+        search = request.query_params.get('search', '').strip()
+        if search:
+            qs = qs.filter(Q(name__icontains=search) | Q(code__icontains=search) | Q(description__icontains=search))
+        # Ordering
+        ordering = request.query_params.get('ordering', 'name')
+        ALLOWED_ORDERINGS = {'name', '-name', 'unit_selling_price', '-unit_selling_price'}
+        if ordering not in ALLOWED_ORDERINGS:
+            ordering = 'name'
+        qs = qs.order_by(ordering)
+        # Pagination
+        page_size = min(int(request.query_params.get('page_size', 48)), 200)
+        page = max(int(request.query_params.get('page', 1)), 1)
+        total = qs.count()
+        qs_page = qs[(page - 1) * page_size: page * page_size]
+        serializer = self.get_serializer(qs_page, many=True, context={'request': request})
+        # Subcategories for filter UI — include a representative product image
+        subcats_raw = MaterialGroup.objects.filter(parent=group, is_active=True).order_by('name')
+        subcats = []
+        for sc in subcats_raw:
+            img = (
+                Material.objects.filter(
+                    Q(material_group=sc) | Q(material_groups=sc),
+                    image_url__gt='', is_active=True
+                ).values_list('image_url', flat=True).first()
+            )
+            # Build full URL for relative image paths (UTTEAM CDN)
+            if img and not img.startswith('http'):
+                img = f"https://utteam.com/utt_img/product_images/640/{img.lstrip('/')}"
+            subcats.append({'id': sc.id, 'name': sc.name, 'image_url': img or None})
+        return Response({
+            'id': group.id,
+            'name': group.name,
+            'title': group.public_title or group.name,
+            'description': group.public_description or '',
+            'show_prices': group.show_prices,
+            'slug': group.public_slug,
+            'total': total,
+            'page': page,
+            'page_size': page_size,
+            'subcategories': subcats,
+            'products': serializer.data,
+        })
+
+
+class PublicShopIndexView(generics.GenericAPIView):
+    """Lists all top-level public shop categories (e.g. 'ruha', 'reklámajándék') for the /shop/ landing page."""
+    from rest_framework.permissions import AllowAny as _AA
+    permission_classes = [_AA]
+
+    def get(self, request, *args, **kwargs):
+        groups = (MaterialGroup.objects
+                  .filter(is_active=True, parent__isnull=True)
+                  .exclude(public_slug__isnull=True).exclude(public_slug='')
+                  .order_by('name'))
+        results = []
+        for g in groups:
+            img = (
+                Material.objects.filter(
+                    Q(material_group=g) | Q(material_groups=g),
+                    image_url__gt='', is_active=True
+                ).values_list('image_url', flat=True).first()
+            )
+            if img and not img.startswith('http'):
+                img = f"https://utteam.com/utt_img/product_images/640/{img.lstrip('/')}"
+            count = Material.objects.filter(
+                Q(material_group=g) | Q(material_groups=g),
+                is_active=True, is_product=True,
+            ).distinct().count()
+            results.append({
+                'slug': g.public_slug,
+                'title': g.public_title or g.name,
+                'description': g.public_description or '',
+                'image_url': img or None,
+                'product_count': count,
+            })
+        return Response({'categories': results})

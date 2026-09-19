@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Typography, Card, Row, Col, Button, Table, Input, InputNumber, message, Modal, Space, Tag } from 'antd';
+import { Typography, Card, Row, Col, Button, Table, Input, InputNumber, message, Modal, Space, Tag, Form, Descriptions, Spin, Tabs, Empty } from 'antd';
 import NumInput from '../../components/NumInput';
-import { ShoppingCartOutlined, UserOutlined, PlusOutlined, MinusOutlined, DeleteOutlined } from '@ant-design/icons';
+import { ShoppingCartOutlined, UserOutlined, PlusOutlined, MinusOutlined, DeleteOutlined, EditOutlined, AppstoreOutlined, CloseCircleFilled, ShoppingOutlined } from '@ant-design/icons';
 import CustomerSelection from './components/CustomerSelection';
 import CheckoutSummary from './components/CheckoutSummary';
 import api from '../../services/api';
@@ -48,18 +48,38 @@ interface Material {
   material_group?: number | null;
 }
 
+interface MaterialGroup {
+  id: number;
+  name: string;
+  parent: number | null;
+  image_url?: string | null;
+}
+
 interface POSProps {
   showAllCategories?: boolean;
   allowedMaterialGroupIds?: number[];
+  allowedWarehouseIds?: number[];
 }
 
-const POS: React.FC<POSProps> = ({ showAllCategories = true, allowedMaterialGroupIds = [] }) => {
+const POS: React.FC<POSProps> = ({ showAllCategories = true, allowedMaterialGroupIds = [], allowedWarehouseIds = [] }) => {
   const [showCheckout, setShowCheckout] = useState(false);
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [lastTransaction, setLastTransaction] = useState<any>(null);
   const [showDiscountPrices, setShowDiscountPrices] = useState(false);
   const [customerModalOpen, setCustomerModalOpen] = useState(false);
+
+  // Product detail/edit sheet
+  const [detailModalOpen, setDetailModalOpen] = useState(false);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailMaterial, setDetailMaterial] = useState<any>(null);
+  const [detailEditing, setDetailEditing] = useState(false);
+  const [detailForm] = Form.useForm();
+  const [detailSuppliers, setDetailSuppliers] = useState<any[]>([]);
+  const [detailCostItems, setDetailCostItems] = useState<any[]>([]);
+  const [detailStocks, setDetailStocks] = useState<any[]>([]);
+  const [detailSizes, setDetailSizes] = useState<any[]>([]);
+  const [detailVariants, setDetailVariants] = useState<any[]>([]);
   
   // Product list states
   const [materials, setMaterials] = useState<Material[]>([]);
@@ -71,6 +91,13 @@ const POS: React.FC<POSProps> = ({ showAllCategories = true, allowedMaterialGrou
   const [showProductLetter, setShowProductLetter] = useState(false);
   const productLetterTimeoutRef = useRef<number | null>(null);
   const searchInputRef = useRef<any>(null);
+
+  // Category browser
+  const [categories, setCategories] = useState<MaterialGroup[]>([]);
+  const [categoryModalOpen, setCategoryModalOpen] = useState(false);
+  const [categoryModalParentId, setCategoryModalParentId] = useState<number | null>(null);
+  const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(null);
+  const [selectedCategoryName, setSelectedCategoryName] = useState<string>('');
 
   // Get display tax number (full format if available)
   const getDisplayTaxNumber = (customer: Customer | null): string => {
@@ -111,12 +138,18 @@ const POS: React.FC<POSProps> = ({ showAllCategories = true, allowedMaterialGrou
 
   useEffect(() => {
     fetchLastTransaction();
-    fetchMaterials();
+    fetchCategories();
   }, []);
+
+  // Refetch products whenever the POS's allowed warehouse restriction changes
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    fetchMaterials();
+  }, [JSON.stringify(allowedWarehouseIds)]);
 
   useEffect(() => {
     filterMaterials();
-  }, [searchText, materials, showAllCategories, allowedMaterialGroupIds]);
+  }, [searchText, materials, showAllCategories, allowedMaterialGroupIds, selectedCategoryId, categories]);
 
   useEffect(() => {
     const handleGlobalTyping = (event: KeyboardEvent) => {
@@ -200,15 +233,19 @@ const POS: React.FC<POSProps> = ({ showAllCategories = true, allowedMaterialGrou
   const fetchMaterials = async () => {
     setLoadingMaterials(true);
     try {
-      const response = await api.get('/warehouse/materials/', {
-        params: { page_size: 1000, is_active: true }
-      });
-      const data = response.data.results || response.data;
-      setMaterials(data);
+      const params: any = { is_active: true };
+      if (allowedWarehouseIds.length > 0) {
+        params.warehouse_ids = allowedWarehouseIds.join(',');
+      }
+      // Dedicated lightweight, unpaginated endpoint (minimal fields) — loads the
+      // whole product catalog (thousands of items) in a single fast request.
+      const response = await api.get('/warehouse/materials/pos-products/', { params });
+      const all: Material[] = response.data || [];
+      setMaterials(all);
       
       // Initialize quantities
       const initialQuantities: Record<number, number> = {};
-      data.forEach((mat: Material) => {
+      all.forEach((mat: Material) => {
         initialQuantities[mat.id] = 1;
       });
       setQuantities(initialQuantities);
@@ -220,13 +257,34 @@ const POS: React.FC<POSProps> = ({ showAllCategories = true, allowedMaterialGrou
     }
   };
 
+  const fetchCategories = async () => {
+    try {
+      const response = await api.get('/warehouse/material-groups/', { params: { is_active: true, page_size: 500 } });
+      const data = response.data.results || response.data;
+      setCategories(data);
+    } catch (error) {
+      console.error('Error fetching categories:', error);
+    }
+  };
+
+  // A kategória kiválasztásakor az összes alkategóriája is beleszámít a szűrésbe.
+  const collectCategoryIdsWithDescendants = (id: number, groups: MaterialGroup[]): number[] => {
+    const children = groups.filter(g => g.parent === id);
+    return [id, ...children.flatMap(c => collectCategoryIdsWithDescendants(c.id, groups))];
+  };
+
   const filterMaterials = () => {
-    const categoryFiltered = showAllCategories
+    let categoryFiltered = showAllCategories
       ? materials
       : materials.filter((mat) => {
           if (!allowedMaterialGroupIds.length) return false;
           return !!mat.material_group && allowedMaterialGroupIds.includes(mat.material_group);
         });
+
+    if (selectedCategoryId !== null) {
+      const idsWithDescendants = collectCategoryIdsWithDescendants(selectedCategoryId, categories);
+      categoryFiltered = categoryFiltered.filter(mat => !!mat.material_group && idsWithDescendants.includes(mat.material_group));
+    }
 
     if (!searchText) {
       setFilteredMaterials(categoryFiltered);
@@ -250,6 +308,64 @@ const POS: React.FC<POSProps> = ({ showAllCategories = true, allowedMaterialGrou
       }
     } catch (error) {
       console.error('Error fetching last transaction:', error);
+    }
+  };
+
+  const openMaterialDetail = async (materialId: number) => {
+    setDetailModalOpen(true);
+    setDetailEditing(false);
+    setDetailLoading(true);
+    setDetailSuppliers([]);
+    setDetailCostItems([]);
+    setDetailStocks([]);
+    setDetailSizes([]);
+    setDetailVariants([]);
+    try {
+      const [matRes, supRes, costRes, stockRes, sizeRes, variantRes] = await Promise.all([
+        api.get(`/warehouse/materials/${materialId}/`),
+        api.get('/warehouse/material-suppliers/', { params: { material: materialId } }),
+        api.get('/warehouse/material-cost-items/', { params: { material_id: materialId } }),
+        api.get('/warehouse/material-stocks/', { params: { material_id: materialId } }),
+        api.get('/warehouse/material-sizes/', { params: { material_id: materialId } }),
+        api.get('/warehouse/material-variants/', { params: { material: materialId } }),
+      ]);
+      setDetailMaterial(matRes.data);
+      setDetailSuppliers(supRes.data.results || supRes.data || []);
+      setDetailCostItems(costRes.data.results || costRes.data || []);
+      setDetailStocks(stockRes.data.results || stockRes.data || []);
+      setDetailSizes(sizeRes.data.results || sizeRes.data || []);
+      setDetailVariants(variantRes.data.results || variantRes.data || []);
+    } catch (error) {
+      console.error('Error fetching material detail:', error);
+      message.error('Nem sikerült betölteni a termék adatlapját');
+      setDetailModalOpen(false);
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
+  const startEditingDetail = () => {
+    if (!detailMaterial) return;
+    detailForm.setFieldsValue({
+      name: detailMaterial.name,
+      description: detailMaterial.description,
+      unit: detailMaterial.unit,
+      unit_selling_price: detailMaterial.unit_selling_price,
+    });
+    setDetailEditing(true);
+  };
+
+  const saveDetailEdits = async (values: any) => {
+    if (!detailMaterial) return;
+    try {
+      const response = await api.patch(`/warehouse/materials/${detailMaterial.id}/`, values);
+      setDetailMaterial(response.data);
+      setDetailEditing(false);
+      message.success('Termék adatai mentve');
+      fetchMaterials();
+    } catch (error) {
+      console.error('Error saving material:', error);
+      message.error('Hiba történt a mentés során');
     }
   };
 
@@ -405,11 +521,25 @@ const POS: React.FC<POSProps> = ({ showAllCategories = true, allowedMaterialGrou
       title: 'Készlet',
       dataIndex: 'current_stock',
       key: 'current_stock',
-      width: 100,
+      width: 90,
       render: (stock: number) => (
         <Tag color={stock > 0 ? 'green' : 'red'}>
           {stock} db
         </Tag>
+      )
+    },
+    {
+      title: '',
+      key: 'edit',
+      width: 44,
+      fixed: 'right' as const,
+      render: (_: any, record: Material) => (
+        <Button
+          icon={<EditOutlined />}
+          size="small"
+          title="Termék adatlapja"
+          onClick={() => openMaterialDetail(record.id)}
+        />
       )
     },
   ];
@@ -574,6 +704,21 @@ const POS: React.FC<POSProps> = ({ showAllCategories = true, allowedMaterialGrou
                   style={{ flex: 1, textAlign: 'center' }}
                   size="middle"
                 />
+                <Button
+                  icon={<AppstoreOutlined />}
+                  type={selectedCategoryId !== null ? 'primary' : 'default'}
+                  onClick={() => { setCategoryModalParentId(null); setCategoryModalOpen(true); }}
+                >
+                  {selectedCategoryId !== null ? selectedCategoryName : 'Kategóriák'}
+                </Button>
+                {selectedCategoryId !== null && (
+                  <Button
+                    type="text"
+                    icon={<CloseCircleFilled />}
+                    onClick={() => { setSelectedCategoryId(null); setSelectedCategoryName(''); }}
+                    title="Szűrő törlése"
+                  />
+                )}
               </div>
             }
             styles={{ header: { padding: '12px 16px' }, body: { padding: '8px' } }}
@@ -587,8 +732,9 @@ const POS: React.FC<POSProps> = ({ showAllCategories = true, allowedMaterialGrou
                 rowKey="id"
                 loading={loadingMaterials}
                 pagination={false}
-                scroll={{ y: 'calc(100vh - 260px)' }}
+                scroll={{ x: 'max-content', y: 'calc(100vh - 260px)' }}
                 size="small"
+                tableLayout="fixed"
               />
               {showProductLetter && currentProductLetter && (
                 <div style={{
@@ -671,6 +817,266 @@ const POS: React.FC<POSProps> = ({ showAllCategories = true, allowedMaterialGrou
           showDiscountPrices={showDiscountPrices}
           isModal={true}
         />
+      </Modal>
+
+      {/* Product detail / edit sheet */}
+      <Modal
+        title="Termék adatlap"
+        open={detailModalOpen}
+        onCancel={() => setDetailModalOpen(false)}
+        footer={detailEditing ? null : [
+          <Button key="edit" type="primary" icon={<EditOutlined />} onClick={startEditingDetail}>
+            Szerkesztés
+          </Button>,
+          <Button key="close" onClick={() => setDetailModalOpen(false)}>
+            Bezárás
+          </Button>,
+        ]}
+        width={800}
+        destroyOnHidden
+      >
+        {detailLoading ? (
+          <div style={{ textAlign: 'center', padding: 40 }}><Spin /></div>
+        ) : detailMaterial ? (
+          <Tabs
+            defaultActiveKey="1"
+            items={[
+              {
+                key: '1',
+                label: 'Alapadatok',
+                children: detailEditing ? (
+                  <Form form={detailForm} layout="vertical" onFinish={saveDetailEdits}>
+                    <Form.Item name="name" label="Név" rules={[{ required: true, message: 'Kötelező' }]}>
+                      <Input />
+                    </Form.Item>
+                    <Form.Item name="description" label="Leírás">
+                      <Input.TextArea rows={3} />
+                    </Form.Item>
+                    <Form.Item name="unit" label="Egység">
+                      <Input />
+                    </Form.Item>
+                    <Form.Item name="unit_selling_price" label="Eladási ár (nettó)">
+                      <InputNumber style={{ width: '100%' }} min={0} />
+                    </Form.Item>
+                    <Space>
+                      <Button type="primary" htmlType="submit">Mentés</Button>
+                      <Button onClick={() => setDetailEditing(false)}>Mégse</Button>
+                    </Space>
+                  </Form>
+                ) : (
+                  <Descriptions column={1} bordered size="small">
+                    <Descriptions.Item label="Cikkszám">{detailMaterial.code}</Descriptions.Item>
+                    <Descriptions.Item label="Név">{detailMaterial.name}</Descriptions.Item>
+                    <Descriptions.Item label="Leírás">{detailMaterial.description || '-'}</Descriptions.Item>
+                    <Descriptions.Item label="Kategória">{detailMaterial.material_group_name || '-'}</Descriptions.Item>
+                    <Descriptions.Item label="Beszállító">{detailMaterial.default_supplier_name || '-'}</Descriptions.Item>
+                    <Descriptions.Item label="Egység">{detailMaterial.unit}</Descriptions.Item>
+                    <Descriptions.Item label="Nettó ár">{(detailMaterial.net_price ?? 0).toLocaleString('hu-HU')} Ft</Descriptions.Item>
+                    <Descriptions.Item label="Bruttó ár">{(detailMaterial.gross_price ?? 0).toLocaleString('hu-HU')} Ft</Descriptions.Item>
+                    <Descriptions.Item label="ÁFA">{detailMaterial.vat_rate}%</Descriptions.Item>
+                    <Descriptions.Item label="Készlet">{detailMaterial.current_stock} db</Descriptions.Item>
+                  </Descriptions>
+                )
+              },
+              {
+                key: '2',
+                label: 'Beszállítók és árkalkuláció',
+                children: (
+                  <>
+                    <Table
+                      size="small"
+                      rowKey="id"
+                      pagination={false}
+                      dataSource={detailSuppliers}
+                      locale={{ emptyText: 'Nincs rögzített beszállító' }}
+                      columns={[
+                        { title: 'Beszállító', dataIndex: 'supplier_name', key: 'supplier_name' },
+                        { title: 'Cikkszám', dataIndex: 'supplier_code', key: 'supplier_code' },
+                        { title: 'Egységár', dataIndex: 'unit_price', key: 'unit_price',
+                          render: (v: number) => v != null ? `${Number(v).toLocaleString('hu-HU')} Ft` : '-' },
+                        { title: 'Elsődleges', dataIndex: 'is_primary', key: 'is_primary',
+                          render: (v: boolean) => v ? 'Igen' : 'Nem' },
+                      ]}
+                      style={{ marginBottom: 20 }}
+                    />
+                    <Table
+                      size="small"
+                      rowKey="id"
+                      pagination={false}
+                      dataSource={detailCostItems}
+                      locale={{ emptyText: 'Nincs rögzített árkalkuláció' }}
+                      columns={[
+                        { title: 'Megnevezés', dataIndex: 'name', key: 'name' },
+                        { title: 'Beszállító', dataIndex: 'supplier_name', key: 'supplier_name', render: (v: string) => v || '-' },
+                        { title: 'Egységár', dataIndex: 'unit_price', key: 'unit_price',
+                          render: (v: number) => v != null ? `${Number(v).toLocaleString('hu-HU')} Ft` : '-' },
+                        { title: 'Eladási ár', dataIndex: 'selling_price', key: 'selling_price',
+                          render: (v: number) => v != null ? `${Number(v).toLocaleString('hu-HU')} Ft` : '-' },
+                      ]}
+                    />
+                  </>
+                )
+              },
+              {
+                key: '3',
+                label: 'Készletek',
+                children: (
+                  <Table
+                    size="small"
+                    rowKey="id"
+                    pagination={false}
+                    dataSource={detailStocks}
+                    locale={{ emptyText: 'Nincs készletadat' }}
+                    columns={[
+                      { title: 'Raktár', dataIndex: 'warehouse_name', key: 'warehouse_name' },
+                      { title: 'Mennyiség', dataIndex: 'quantity', key: 'quantity',
+                        render: (v: number) => `${v} db` },
+                      { title: 'Állapot', dataIndex: 'status_display', key: 'status_display' },
+                    ]}
+                  />
+                )
+              },
+              {
+                key: '4',
+                label: 'Rendelhető méretek',
+                children: (
+                  <Table
+                    size="small"
+                    rowKey="id"
+                    pagination={false}
+                    dataSource={detailSizes}
+                    locale={{ emptyText: 'Nincs rögzített méret' }}
+                    columns={[
+                      { title: 'Név', dataIndex: 'name', key: 'name' },
+                      { title: 'Szélesség (mm)', dataIndex: 'width', key: 'width' },
+                      { title: 'Hosszúság (mm)', dataIndex: 'length', key: 'length' },
+                      { title: 'Ár', dataIndex: 'effective_price', key: 'effective_price',
+                        render: (v: number) => v != null ? `${Number(v).toLocaleString('hu-HU')} Ft` : '-' },
+                    ]}
+                  />
+                )
+              },
+              {
+                key: '5',
+                label: 'Variánsok (API)',
+                children: (
+                  <Table
+                    size="small"
+                    rowKey="sku"
+                    pagination={false}
+                    dataSource={detailVariants}
+                    locale={{ emptyText: 'Nincs API variáns' }}
+                    columns={[
+                      { title: 'SKU', dataIndex: 'sku', key: 'sku' },
+                      { title: 'Szín', dataIndex: 'color', key: 'color', render: (v: string) => v || '-' },
+                      { title: 'Méret', dataIndex: 'size', key: 'size', render: (v: string) => v || '-' },
+                      { title: 'Készlet', dataIndex: 'stock_quantity', key: 'stock_quantity',
+                        render: (v: number) => `${v} db` },
+                      { title: 'Ár', dataIndex: 'price', key: 'price',
+                        render: (v: number, r: any) => v != null ? `${Number(v).toLocaleString('hu-HU')} ${r.currency}` : '-' },
+                    ]}
+                  />
+                )
+              },
+            ]}
+          />
+        ) : null}
+      </Modal>
+
+      {/* Category browser modal: szülőkategória → alkategória drill-down nézet */}
+      <Modal
+        title="Kategóriák"
+        open={categoryModalOpen}
+        onCancel={() => setCategoryModalOpen(false)}
+        footer={null}
+        width={640}
+      >
+        {(() => {
+          const currentParent = categories.find(c => c.id === categoryModalParentId) || null;
+          const children = categories.filter(c => c.parent === categoryModalParentId);
+          const hasChildren = (id: number) => categories.some(c => c.parent === id);
+
+          const selectCategory = (id: number | null, name: string) => {
+            setSelectedCategoryId(id);
+            setSelectedCategoryName(name);
+            setCategoryModalOpen(false);
+          };
+
+          return (
+            <div>
+              <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+                {categoryModalParentId !== null && (
+                  <Button onClick={() => setCategoryModalParentId(currentParent?.parent ?? null)}>
+                    ← Vissza
+                  </Button>
+                )}
+                <Button
+                  type={selectedCategoryId === null ? 'primary' : 'default'}
+                  onClick={() => selectCategory(null, '')}
+                >
+                  Összes kategória
+                </Button>
+                {currentParent && (
+                  <Button
+                    type={selectedCategoryId === currentParent.id ? 'primary' : 'default'}
+                    onClick={() => selectCategory(currentParent.id, currentParent.name)}
+                  >
+                    Összes ebben: {currentParent.name}
+                  </Button>
+                )}
+              </div>
+              {categories.length === 0 ? (
+                <Empty description="Nincs kategória" />
+              ) : children.length === 0 ? (
+                <Empty description="Nincs alkategória" />
+              ) : (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14 }}>
+                  {children.map(c => {
+                    const childHasChildren = hasChildren(c.id);
+                    const active = selectedCategoryId === c.id;
+                    return (
+                      <button
+                        key={c.id}
+                        onClick={() => (childHasChildren ? setCategoryModalParentId(c.id) : selectCategory(c.id, c.name))}
+                        style={{
+                          width: 130, cursor: 'pointer', border: 'none', borderRadius: 10,
+                          padding: 0, background: 'transparent', textAlign: 'center',
+                        }}
+                      >
+                        <div style={{
+                          height: 100, borderRadius: 10, marginBottom: 6, overflow: 'hidden',
+                          background: 'linear-gradient(135deg,#f0f5ff,#e6fffb)',
+                          border: `2px solid ${active ? '#1677ff' : '#e8e8e8'}`,
+                          boxShadow: active ? '0 0 0 2px #1677ff33' : 'none',
+                          position: 'relative',
+                        }}>
+                          {c.image_url ? (
+                            <img src={c.image_url} alt={c.name} loading="lazy"
+                              style={{ width: '100%', height: '100%', objectFit: 'contain', padding: 8 }} />
+                          ) : (
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
+                              <ShoppingOutlined style={{ fontSize: 32, color: '#bbb' }} />
+                            </div>
+                          )}
+                          {childHasChildren && (
+                            <div style={{
+                              position: 'absolute', bottom: 4, right: 4, background: 'rgba(0,0,0,.55)',
+                              color: '#fff', borderRadius: 8, width: 20, height: 20, fontSize: 13,
+                              display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            }}>›</div>
+                          )}
+                        </div>
+                        <span style={{ fontSize: 13, fontWeight: active ? 700 : 500, color: active ? '#1677ff' : '#333', lineHeight: 1.3, display: 'block' }}>
+                          {c.name}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })()}
       </Modal>
     </div>
   );

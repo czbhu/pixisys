@@ -18,6 +18,7 @@ class POSTerminalViewSet(viewsets.ModelViewSet):
 	def get_queryset(self):
 		qs = POSTerminal.objects.select_related('cash_register', 'cash_register__currency').prefetch_related(
 			'material_groups',
+			'warehouses',
 			'authorized_employees',
 			'authorized_employees__user'
 		)

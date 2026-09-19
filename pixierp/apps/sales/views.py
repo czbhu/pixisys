@@ -358,7 +358,10 @@ def _build_items_table_html(items_qs, currency_symbol=''):
                getattr(item.product, 'name', None) or \
                getattr(item.material, 'name', None) or \
                getattr(item.service, 'name', None) or ''
-        code = getattr(item.manufacturing_product, 'code', None) or \
+        # Manufacturing items use the RFQ number as code (1 item = 1 RFQ)
+        _qr = getattr(item, 'quote_request', None)
+        _rfq_num = (_qr.request_number or _qr.number) if _qr else None
+        code = (_rfq_num if item.manufacturing_product else None) or \
                getattr(item.material, 'code', None) or \
                getattr(item.service, 'code', None) or \
                getattr(item, 'quote_number', None) or ''
@@ -1094,7 +1097,8 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                 if item.item_type == 'product' and item.product:
                     code = item.product.code or ''
                 elif item.item_type == 'manufacturing' and item.manufacturing_product:
-                    code = item.manufacturing_product.code or ''
+                    _qr1 = getattr(item, 'quote_request', None)
+                    code = (_qr1.request_number or _qr1.number) if _qr1 else (item.manufacturing_product.code or '')
                 elif item.item_type == 'service' and item.service:
                     code = item.service.code or ''
 
@@ -4735,7 +4739,9 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
                     ''
                 )
                 code = (
-                    (getattr(getattr(qi, 'manufacturing_product', None), 'code', None) if qi else None) or
+                    (getattr(getattr(qi, 'quote_request', None), 'request_number', None) or
+                     getattr(getattr(qi, 'quote_request', None), 'number', None)
+                     if getattr(qi, 'manufacturing_product', None) else None) or
                     (getattr(getattr(qi, 'material', None), 'code', None) if qi else None) or
                     (getattr(getattr(qi, 'service', None), 'code', None) if qi else None) or
                     (getattr(qi, 'quote_number', None) if qi else None) or
@@ -4787,7 +4793,7 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
         items_table_html = _build_customer_order_items_table_html(combined_items, currency_symbol)
 
         context = {
-            'order_number': order_numbers_str or order.order_number,
+            'order_number': order.order_number,  # primary only; use {order_numbers} for combined
             'primary_order_number': order.order_number,
             'order_numbers': order_numbers_str,
             'order_ids': order_ids_str,
@@ -4808,8 +4814,8 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
                 rendered = rendered.replace(f"{{{k}}}", str(v))
             return rendered
 
-        # Subject & Body
-        subject = f"Megrendelés visszaigazolás - {order_numbers_str or order.order_number}"
+        # Subject & Body — always use primary order number to avoid combined-partner leakage
+        subject = f"Megrendelés visszaigazolás - {order.order_number}"
         body = ""
         is_html = False
 
@@ -5366,7 +5372,8 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
                     supplier_name = item.material.default_supplier.name
             elif item.manufacturing_product:
                 name = item.manufacturing_product.name
-                code = item.manufacturing_product.code or ''
+                _qr5 = getattr(item, 'quote_request', None)
+                code = (_qr5.request_number or _qr5.number) if _qr5 else (item.manufacturing_product.code or '')
                 # Manufacturing product usually internal
                 is_internal = True
                 # Try to get internal department if capable
@@ -5473,7 +5480,8 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
             if hasattr(item.material, 'description'): product_desc = item.material.description
         elif item.manufacturing_product: 
             item_name = item.manufacturing_product.name
-            if hasattr(item.manufacturing_product, 'code'): item_code = item.manufacturing_product.code
+            _qr6 = getattr(item, 'quote_request', None)
+            item_code = (_qr6.request_number or _qr6.number) if _qr6 else (item.manufacturing_product.code if hasattr(item.manufacturing_product, 'code') else '')
             if hasattr(item.manufacturing_product, 'internal_description'): internal_desc = item.manufacturing_product.internal_description
             if hasattr(item.manufacturing_product, 'description'): product_desc = item.manufacturing_product.description
         elif item.service: 
@@ -5855,7 +5863,8 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
                     entity_desc = quote_item.material.description or ''
                 elif quote_item.manufacturing_product:
                     item_name = quote_item.manufacturing_product.name
-                    item_code = quote_item.manufacturing_product.code or ''
+                    _qr2 = getattr(quote_item, 'quote_request', None)
+                    item_code = (_qr2.request_number or _qr2.number) if _qr2 else (quote_item.manufacturing_product.code or '')
                     entity_desc = quote_item.manufacturing_product.description or ''
                 elif quote_item.service:
                     item_name = quote_item.service.name
@@ -6805,12 +6814,8 @@ def public_delivery_view(request, token: str):
             item_code = quote_item.material.code
         elif quote_item.manufacturing_product:
             item_name = quote_item.manufacturing_product.name
-            item_code = quote_item.manufacturing_product.code or ''
-        elif quote_item.service:
-            item_name = quote_item.service.name
-            item_code = quote_item.service.code or ''
-        
-        # Calculate prices (convert to Decimal for precision)
+            _qr = getattr(quote_item, 'quote_request', None)
+            item_code = (_qr.request_number or _qr.number) if _qr else (quote_item.manufacturing_product.code or '')
         from decimal import Decimal
         net_total = item.quantity * item.net_unit_price
         discount = net_total * (item.discount_percent / Decimal('100'))
@@ -7045,12 +7050,8 @@ def public_delivery_pdf(request, token: str):
             item_code = quote_item.material.code
         elif quote_item.manufacturing_product:
             item_name = quote_item.manufacturing_product.name
-            item_code = quote_item.manufacturing_product.code or ''
-        elif quote_item.service:
-            item_name = quote_item.service.name
-            item_code = quote_item.service.code or ''
-        
-        # Calculate prices
+            _qr4 = getattr(quote_item, 'quote_request', None)
+            item_code = (_qr4.request_number or _qr4.number) if _qr4 else (quote_item.manufacturing_product.code or '')
         net_total = item.quantity * item.net_unit_price
         discount = net_total * (item.discount_percent / Decimal('100'))
         discounted_net = net_total - discount

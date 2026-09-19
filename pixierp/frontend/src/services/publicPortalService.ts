@@ -70,11 +70,44 @@ export const publicPortalService = {
     return response.data;
   },
 
+  async adminLogin(email: string) {
+    const erpToken = localStorage.getItem('access_token') || '';
+    const response = await publicApi.post('/public-site/portal/admin-login/', { email }, {
+      headers: { Authorization: `Bearer ${erpToken}` },
+    });
+    return response.data;
+  },
+
+  async searchPortalUsers(q: string) {
+    const erpToken = localStorage.getItem('access_token') || '';
+    const response = await publicApi.get('/public-site/portal/search-users/', {
+      params: { q },
+      headers: { Authorization: `Bearer ${erpToken}` },
+    });
+    return response.data as { email: string; label: string; full_name: string; has_portal_user: boolean }[];
+  },
+
   async me() {
     const response = await publicApi.get('/public-site/portal/me/', {
       headers: authHeaders(),
     });
     return response.data;
+  },
+
+  async getPrintPresets() {
+    const response = await publicApi.get('/public-site/portal/print-presets/');
+    return response.data as { presets: { id: number; name: string; width_mm: number; height_mm: number }[]; materials: { id: number; name: string }[] };
+  },
+
+  async calculatePrice(params: {
+    width_mm: number; height_mm: number; quantity: number;
+    sides: string; side1_mode: string; side2_mode: string;
+    binding: string; folding_count: number; material_id?: number | null;
+  }) {
+    const response = await publicApi.post('/public-site/portal/calculate-price/', params, {
+      headers: authHeaders(),
+    });
+    return response.data as { total: number; unit_price: number; quantity: number; discount_percent: number; discounted_total: number; discounted_unit_price: number };
   },
 
   async logout() {

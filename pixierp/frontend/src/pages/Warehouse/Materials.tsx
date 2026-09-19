@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Table, Card, Button, Modal, Form, Input, Select, message, Space, Tag, Popconfirm, Tabs, Upload, Checkbox, Row, Col, Radio, Tooltip, TreeSelect } from 'antd';
+import { Table, Card, Button, Modal, Form, Input, Select, message, Space, Tag, Popconfirm, Tabs, Upload, Checkbox, Row, Col, Radio, Tooltip, TreeSelect, Typography } from 'antd';
 import NumInput from '../../components/NumInput';
 import { PlusOutlined, EditOutlined, DeleteOutlined, UploadOutlined, ExclamationCircleOutlined, ThunderboltOutlined, CopyOutlined, DownloadOutlined, ImportOutlined, CheckCircleOutlined, MinusCircleOutlined } from '@ant-design/icons';
 import { useSearchParams } from 'react-router-dom';
@@ -10,6 +10,7 @@ import ExportButton from '../../components/ExportButton';
 
 const { Option } = Select;
 const { TextArea } = Input;
+const { Text } = Typography;
 
 interface Material {
   id: number;
@@ -33,6 +34,8 @@ interface Material {
   material_type: string;
   material_group?: number;
   material_group_name?: string;
+  material_groups?: number[];
+  material_group_names?: string[];
   material_format: string;
   width?: number;
   length?: number;
@@ -186,6 +189,171 @@ interface MaterialReceipt {
   created_by_name: string;
 }
 
+// ── Variants tab ─────────────────────────────────────────────────────────────
+
+const VariantsTab: React.FC<{ materialId: number | null }> = ({ materialId }) => {
+  const [variants, setVariants] = React.useState<any[]>([]);
+  const [loading, setLoading] = React.useState(false);
+  const [colorFilter, setColorFilter] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (!materialId) { setVariants([]); return; }
+    setLoading(true);
+    api.get(`/warehouse/material-variants/?material=${materialId}&page_size=1000`)
+      .then(r => setVariants(r.data?.results ?? r.data ?? []))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [materialId]);
+
+  const colors = Array.from(new Set(variants.map((v: any) => v.color).filter(Boolean)));
+  const displayed = colorFilter ? variants.filter((v: any) => v.color === colorFilter) : variants;
+
+  if (!materialId) return null;
+  if (loading) return <div style={{ padding: 32, textAlign: 'center' }}><span>Betöltés…</span></div>;
+  if (!variants.length) return <div style={{ padding: 32, textAlign: 'center', color: '#aaa' }}>Nincsenek API variánsok ehhez a termékhez.</div>;
+
+  return (
+    <div>
+      {colors.length > 1 && (
+        <div style={{ marginBottom: 12, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          <Tag
+            style={{ cursor: 'pointer', fontWeight: !colorFilter ? 700 : 400 }}
+            color={!colorFilter ? 'blue' : 'default'}
+            onClick={() => setColorFilter(null)}
+          >Összes ({variants.length})</Tag>
+          {colors.map(c => (
+            <Tag
+              key={c} style={{ cursor: 'pointer', fontWeight: colorFilter === c ? 700 : 400 }}
+              color={colorFilter === c ? 'blue' : 'default'}
+              onClick={() => setColorFilter(colorFilter === c ? null : c)}
+            >{c}</Tag>
+          ))}
+        </div>
+      )}
+      <Table
+        size="small"
+        dataSource={displayed}
+        rowKey="sku"
+        pagination={{ pageSize: 20, showSizeChanger: false, showTotal: t => `${t} variáns` }}
+        columns={[
+          { title: 'SKU', dataIndex: 'sku', key: 'sku', width: 160, render: (v: string) => <Text code style={{ fontSize: 11 }}>{v}</Text> },
+          { title: 'Szín', dataIndex: 'color', key: 'color', render: (v: string) => v || '–' },
+          { title: 'Méret', dataIndex: 'size', key: 'size', width: 80, render: (v: string) => v ? <Tag>{v}</Tag> : '–' },
+          { title: 'Készlet (UTT)', dataIndex: 'stock_quantity', key: 'stock', width: 110,
+            render: (v: number) => (
+              <Tag color={v > 100 ? 'success' : v > 0 ? 'warning' : 'error'}>{v} db</Tag>
+            )
+          },
+          { title: 'Besz. készlet', dataIndex: 'stock_supplier', key: 'stock_supp', width: 100,
+            render: (v: number) => v > 0 ? <span style={{ color: '#888' }}>{v} db</span> : '–'
+          },
+          { title: 'Ár', dataIndex: 'price', key: 'price', width: 120,
+            render: (v: number | null, r: any) => v != null
+              ? <Text style={{ color: '#1677ff' }}>{Math.round(v).toLocaleString('hu-HU')} {r.currency}</Text>
+              : '–'
+          },
+        ]}
+      />
+    </div>
+  );
+};
+
+interface MaterialBarcode {
+  id: number;
+  material: number;
+  code: string;
+}
+
+interface BarcodeConflict {
+  code: string;
+  existing_material_id: number;
+  existing_material_name: string;
+  existing_material_code: string;
+}
+
+// Vonalkódok/QR kódok kezelése egy termékhez. Ha egy kód már más termékhez tartozik,
+// felajánlja az átvételt (törli a másik terméktől, hozzáadja az aktuálishoz).
+const MaterialBarcodesField: React.FC<{ materialId?: number }> = ({ materialId }) => {
+  const [barcodes, setBarcodes] = useState<MaterialBarcode[]>([]);
+  const [inputValue, setInputValue] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [conflict, setConflict] = useState<BarcodeConflict | null>(null);
+
+  useEffect(() => {
+    if (!materialId) { setBarcodes([]); return; }
+    api.get('/warehouse/material-barcodes/', { params: { material: materialId } })
+      .then(res => setBarcodes(res.data.results || res.data || []))
+      .catch(() => {});
+  }, [materialId]);
+
+  const addCode = async (rawCode: string, transfer = false) => {
+    const code = rawCode.trim();
+    if (!code || !materialId) return;
+    setSaving(true);
+    try {
+      const res = await api.post('/warehouse/material-barcodes/', { material: materialId, code, transfer });
+      setBarcodes(prev => [...prev.filter(b => b.code !== code), res.data]);
+      setConflict(null);
+    } catch (err: any) {
+      if (err?.response?.status === 409) {
+        setConflict(err.response.data);
+      } else {
+        message.error(err?.response?.data?.error || 'Hiba a vonalkód hozzáadásakor');
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleInputConfirm = () => {
+    // Több kód is beírható/beolvasható egyszerre, szóköz/vessző/sortörés választja el
+    const parts = inputValue.split(/[\s,]+/).map(s => s.trim()).filter(Boolean);
+    parts.forEach(p => addCode(p));
+    setInputValue('');
+  };
+
+  const removeBarcode = async (id: number) => {
+    try {
+      await api.delete(`/warehouse/material-barcodes/${id}/`);
+      setBarcodes(prev => prev.filter(b => b.id !== id));
+    } catch {
+      message.error('Hiba a vonalkód törlésekor');
+    }
+  };
+
+  return (
+    <div>
+      {barcodes.length > 0 && (
+        <div style={{ marginBottom: 6, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+          {barcodes.map(b => (
+            <Tag key={b.id} closable onClose={(e) => { e.preventDefault(); removeBarcode(b.id); }}>
+              {b.code}
+            </Tag>
+          ))}
+        </div>
+      )}
+      <Input
+        placeholder={materialId ? 'Vonalkód/QR beolvasása vagy beírása, Enter' : 'Mentés után adható meg'}
+        value={inputValue}
+        disabled={!materialId || saving}
+        onChange={e => setInputValue(e.target.value)}
+        onPressEnter={handleInputConfirm}
+      />
+      {conflict && (
+        <div style={{ marginTop: 8, padding: 8, background: '#fff7e6', border: '1px solid #ffd591', borderRadius: 6 }}>
+          <div style={{ marginBottom: 6, fontSize: 13 }}>
+            A(z) <b>{conflict.code}</b> kód már fel van véve ehhez a termékhez: <b>{conflict.existing_material_name}</b> ({conflict.existing_material_code}).
+          </div>
+          <Space>
+            <Button size="small" type="primary" onClick={() => addCode(conflict.code, true)}>Átvétel</Button>
+            <Button size="small" onClick={() => setConflict(null)}>Mégse</Button>
+          </Space>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const Materials: React.FC = () => {
   const [searchParams] = useSearchParams();
   const [materials, setMaterials] = useState<Material[]>([]);
@@ -309,6 +477,12 @@ const Materials: React.FC = () => {
   });
   const [filterSupplierId, setFilterSupplierId] = useState<number | undefined>(() => {
     try { const v = sessionStorage.getItem('materials_filterSupplierId'); return v ? Number(v) : undefined; } catch { return undefined; }
+  });
+  const [filterWarehouseIds, setFilterWarehouseIds] = useState<number[]>(() => {
+    try {
+      const v = sessionStorage.getItem('materials_filterWarehouseIds');
+      return v ? JSON.parse(v) : [];
+    } catch { return []; }
   });
   const [netUnitPrice, setNetUnitPrice] = useState<number>(0);
   const [calculatedVat, setCalculatedVat] = useState<number>(0);
@@ -622,7 +796,7 @@ const Materials: React.FC = () => {
   // Újratöltés szűrő vagy keresés változásakor
   useEffect(() => {
     fetchMaterials();
-  }, [filterType, searchText, filterGroupId, filterSupplierId]);
+  }, [filterType, searchText, filterGroupId, filterSupplierId, filterWarehouseIds]);
 
   // Update informational price when default supplier changes
   // Disabled to strictly follow manual transfer workflow like Services
@@ -662,9 +836,13 @@ const Materials: React.FC = () => {
       if (filterSupplierId !== undefined) {
         params.append('supplier', String(filterSupplierId));
       }
-      
-      // Load all materials for client-side pagination
-      params.append('page_size', '10000');
+
+      if (filterWarehouseIds.length > 0) {
+        params.append('warehouse_ids', filterWarehouseIds.join(','));
+      }
+
+      // Limit to 300 — use warehouse/group filters to narrow down larger catalogs
+      params.append('page_size', '300');
       params.append('is_active', 'true');
       
       const queryString = params.toString();
@@ -683,7 +861,7 @@ const Materials: React.FC = () => {
     }
   };
 
-  const fetchSuppliers = async () => {
+const fetchSuppliers = async () => {
     try {
       const response = await api.get('/crm/companies/?is_supplier=true');
       const data = Array.isArray(response.data) ? response.data : (response.data.results || []);
@@ -1096,11 +1274,15 @@ const Materials: React.FC = () => {
     };
     
     // Remove read-only/computed fields that shouldn't be in the form
-    const readOnlyFields = ['material_type_name', 'material_group_name', 'created_by_name', 
+    const readOnlyFields = ['material_type_name', 'material_group_name', 'material_group_names', 'created_by_name', 
                             'default_supplier_name', 'internal_production_department_name',
                             'base_price', 'gross_price', 'net_price', 'vat_rate', 
                             'current_stock', 'discount_price'];
     readOnlyFields.forEach(field => delete formData[field]);
+    // Ensure material_groups is an array of IDs (M2M)
+    if (!formData.material_groups) {
+      formData.material_groups = material.material_group ? [material.material_group] : [];
+    }
     
     console.log('🔍 formData.vat_type_id before setFieldsValue:', formData.vat_type_id);
     
@@ -2069,13 +2251,24 @@ const Materials: React.FC = () => {
     },
     {
       title: 'Kategória',
-      dataIndex: 'material_group_name',
+      dataIndex: 'material_group_names',
       key: 'material_group_name',
-      width: 150,
+      width: 180,
       responsive: ['lg'] as any,
       sorter: (a: any, b: any) => (a.material_group_name || '').localeCompare(b.material_group_name || '', 'hu'),
-      render: (groupName: string | undefined) => 
-        groupName ? <Tag color="purple" style={{ margin: 0, maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{groupName}</Tag> : '-',
+      render: (_: any, rec: any) => {
+        const names: string[] = rec.material_group_names?.length
+          ? rec.material_group_names
+          : rec.material_group_name ? [rec.material_group_name] : [];
+        if (!names.length) return <span style={{ color: '#bbb' }}>–</span>;
+        return (
+          <Space size={2} wrap>
+            {names.map(n => (
+              <Tag key={n} color="purple" style={{ margin: 0, maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{n}</Tag>
+            ))}
+          </Space>
+        );
+      },
     },
     {
       title: 'Formátum',
@@ -2255,7 +2448,20 @@ const Materials: React.FC = () => {
 
   return (
     <div>
-      <Card title="Alapanyagok/Termékek" style={{ marginBottom: 0 }}>
+      <Card
+        title={
+          <span>
+            Alapanyagok/Termékek
+            {materials.length > 0 && (
+              <span style={{ fontSize: 12, fontWeight: 400, color: '#888', marginLeft: 8 }}>
+                ({materials.length} betöltve
+                {materials.length >= 300 ? ' — szűkíts raktár/csoport alapján a teljes lista megjelenítéséhez' : ''})
+              </span>
+            )}
+          </span>
+        }
+        style={{ marginBottom: 0 }}
+      >
       <EnhancedTable
         tableKey="materials"
         size="small"
@@ -2310,6 +2516,21 @@ const Materials: React.FC = () => {
                 <Option key={s.id} value={s.id}>{s.name}</Option>
               ))}
             </Select>
+            <Select
+              mode="multiple"
+              allowClear
+              placeholder="Raktár szűrő"
+              value={filterWarehouseIds}
+              onChange={(vals: number[]) => {
+                setFilterWarehouseIds(vals);
+                try { sessionStorage.setItem('materials_filterWarehouseIds', JSON.stringify(vals)); } catch {}
+              }}
+              style={{ minWidth: 160, maxWidth: 300 }}
+              options={[
+                { value: 0, label: '⚠ Raktár nélküli' },
+                ...warehouses.map((w: any) => ({ value: w.id, label: `${w.name} (${w.code})` })),
+              ]}
+              maxTagCount={2} />
             <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
               Új elem
             </Button>
@@ -2412,22 +2633,31 @@ const Materials: React.FC = () => {
                 <Input />
               </Form.Item>
 
-              <Form.Item label="Cikkszám" required>
-                 <Space>
-                    <Form.Item 
-                       name="code" 
-                       noStyle 
-                       rules={[{ required: true, message: 'Kötelező mező' }]}
-                    >
-                      <Input />
-                    </Form.Item>
-                    <Button 
-                      icon={<ThunderboltOutlined />} 
-                      onClick={generateCode}
-                      title="Cikkszám generálás"
-                    />
-                 </Space>
-              </Form.Item>
+              <Row gutter={16}>
+                <Col span={12}>
+                  <Form.Item label="Cikkszám" required>
+                     <Space>
+                        <Form.Item 
+                           name="code" 
+                           noStyle 
+                           rules={[{ required: true, message: 'Kötelező mező' }]}
+                        >
+                          <Input />
+                        </Form.Item>
+                        <Button 
+                          icon={<ThunderboltOutlined />} 
+                          onClick={generateCode}
+                          title="Cikkszám generálás"
+                        />
+                     </Space>
+                  </Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item label="Vonalkódok">
+                    <MaterialBarcodesField materialId={editingMaterial?.id} />
+                  </Form.Item>
+                </Col>
+              </Row>
 
               <div style={{ display: 'flex', gap: 16, marginBottom: 16 }}>
                 <Form.Item
@@ -2453,15 +2683,16 @@ const Materials: React.FC = () => {
 
               <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
                 <Form.Item
-                  name="material_group"
-                  label="Alapanyag gyűjtő"
-                  help="Opcionális - csoportosítás pl. Épületháló, Fólia, stb."
+                  name="material_groups"
+                  label="Alapanyag gyűjtők"
+                  help="Egy alapanyag több gyűjtőbe is tartozhat"
                   style={{ flex: 1, marginBottom: 0 }}
                 >
                   <TreeSelect
+                    multiple
                     allowClear
                     showSearch
-                    placeholder="Válassz gyűjtőt (opcionális)"
+                    placeholder="Válassz gyűjtőket (opcionális)"
                     treeData={materialGroupTree}
                     treeDefaultExpandAll={false}
                     filterTreeNode={(input, node) =>
@@ -3407,6 +3638,12 @@ const Materials: React.FC = () => {
                   )}
                 </div>
               ),
+            },
+            {
+              key: '6',
+              label: 'Variánsok (API)',
+              disabled: !editingMaterial,
+              children: <VariantsTab materialId={editingMaterial?.id ?? null} />,
             },
           ]}
         />

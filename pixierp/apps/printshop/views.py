@@ -172,24 +172,44 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
             items_per_sheet = cols
             boards_needed = rows
         else:
-            fw_n = int(sw / prod_w)
-            fh_n = int(sh / prod_h)
-            fw_r = int(sw / prod_h)
-            fh_r = int(sh / prod_w)
-            ips_n = fw_n * fh_n
-            ips_r = fw_r * fh_r
-            if force_rotate is None:
-                rotated = ips_r > ips_n
-            else:
-                rotated = bool(force_rotate)
-            if rotated:
-                fit_w, fit_h = fw_r, fh_r
-                items_per_sheet = max(1, ips_r)
-            else:
-                fit_w, fit_h = fw_n, fh_n
-                items_per_sheet = max(1, ips_n)
-            total_pieces = int(qty) * sc
-            boards_needed = _math.ceil(total_pieces / items_per_sheet)
+            if prod_w > 0 and prod_h > 0:
+                fw_n = int(sw / prod_w)
+                fh_n = int(sh / prod_h)
+                fw_r = int(sw / prod_h)
+                fh_r = int(sh / prod_w)
+                ips_n = fw_n * fh_n
+                ips_r = fw_r * fh_r
+                if force_rotate is None:
+                    rotated = ips_r > ips_n
+                else:
+                    rotated = bool(force_rotate)
+                if rotated:
+                    fit_w, fit_h = fw_r, fh_r
+                    ips = ips_r
+                else:
+                    fit_w, fit_h = fw_n, fh_n
+                    ips = ips_n
+                total_pieces = int(qty) * sc
+                if ips > 0:
+                    items_per_sheet = ips
+                    boards_needed = _math.ceil(total_pieces / items_per_sheet)
+                else:
+                    # Item larger than board: tile across multiple boards
+                    tiles_w_n = _math.ceil(prod_w / sw) if sw > 0 else 1
+                    tiles_h_n = _math.ceil(prod_h / sh) if sh > 0 else 1
+                    tiles_w_r = _math.ceil(prod_h / sw) if sw > 0 else 1
+                    tiles_h_r = _math.ceil(prod_w / sh) if sh > 0 else 1
+                    tiles_n = tiles_w_n * tiles_h_n
+                    tiles_r = tiles_w_r * tiles_h_r
+                    if tiles_r < tiles_n:
+                        rotated = True
+                        fit_w, fit_h = tiles_w_r, tiles_h_r
+                        boards_per_item = tiles_r
+                    else:
+                        fit_w, fit_h = tiles_w_n, tiles_h_n
+                        boards_per_item = tiles_n
+                    items_per_sheet = 0
+                    boards_needed = total_pieces * boards_per_item
 
     # Papírköltség
     area_m2 = (w / 1000) * (h / 1000)
@@ -500,8 +520,12 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
 
             if size_comparison:
                 size_comparison.sort(key=lambda x: x['total'])
-                size_comparison[0]['is_best'] = True
-                _chosen = size_comparison[0]  # az optimális az alapértelmezett
+                _cheapest = size_comparison[0]['total']
+                _tol = _cheapest * 0.05
+                _cands = [e for e in size_comparison if e['total'] <= _cheapest + _tol]
+                _best = min(_cands, key=lambda x: (x.get('boards_needed', 999), x['total']))
+                _best['is_best'] = True
+                _chosen = _best  # az optimális az alapértelmezett
                 board_material_cost = Decimal(str(_chosen['material_cost']))
                 board_material_label = _chosen['label']
                 _chosen_svc_cost = Decimal(str(_chosen['service_cost']))
@@ -551,9 +575,22 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
                 fh_r = int(sh / _prod_w) if _prod_w > 0 else 0
                 ips_n = fw_n * fh_n; ips_r = fw_r * fh_r
                 _rot = ips_r > ips_n
-                _ips = max(ips_r if _rot else ips_n, 1)
-                _fw = fw_r if _rot else fw_n; _fh = fh_r if _rot else fh_n
-                _bd = _math.ceil(int(qty) * _sc / _ips)
+                _ips = ips_r if _rot else ips_n
+                if _ips == 0:
+                    # Item larger than board: tiling
+                    twn = _math.ceil(_prod_w / sw) if sw > 0 else 1
+                    thn = _math.ceil(_prod_h / sh) if sh > 0 else 1
+                    twr = _math.ceil(_prod_h / sw) if sw > 0 else 1
+                    thr = _math.ceil(_prod_w / sh) if sh > 0 else 1
+                    tn = twn * thn; tr = twr * thr
+                    _rot = tr < tn
+                    _bpi = tr if _rot else tn
+                    _fw = twr if _rot else twn; _fh = thr if _rot else thn
+                    _bd = int(qty) * _sc * _bpi
+                else:
+                    _bpi = 1
+                    _fw = fw_r if _rot else fw_n; _fh = fh_r if _rot else fh_n
+                    _bd = _math.ceil(int(qty) * _sc / _ips)
                 # Ny. terület = qty × sc × prod_w × prod_h (termékek összes területe)
                 _prod_area_sc = Decimal(str(_prod_w)) / 1000 * Decimal(str(_prod_h)) / 1000 * Decimal(str(int(qty) * _sc))
                 _svc_cost = Decimal('0')
@@ -614,7 +651,11 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
                     size_comparison.append(_entry)
             if size_comparison:
                 size_comparison.sort(key=lambda x: x['total'])
-                size_comparison[0]['is_best'] = True
+                _cheapest2 = size_comparison[0]['total']
+                _tol2 = _cheapest2 * 0.05
+                _cands2 = [e for e in size_comparison if e['total'] <= _cheapest2 + _tol2]
+                _best2 = min(_cands2, key=lambda x: (x.get('boards_needed', 999), x['total']))
+                _best2['is_best'] = True
         except Exception:
             pass
 
@@ -639,6 +680,7 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
 
     # Anyag beszállító, tábla szám, bekerülési ár
     board_material_supplier_id = None
+    board_material_supplier_name = None
     board_material_boards_needed = boards_needed
     board_material_price_per_board = float(board_material_cost / Decimal(str(max(boards_needed, 1)))) if board_material_cost > 0 else 0.0
     board_material_cost_price_per_board = 0.0
@@ -651,6 +693,20 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
             _sup = _ms.materialsupplier_set.first()
             if _sup:
                 board_material_supplier_id = _sup.supplier_id
+            if not board_material_supplier_id:
+                try:
+                    _ci = _ms.cost_items.filter(supplier_id__isnull=False).first()
+                    if _ci:
+                        board_material_supplier_id = _ci.supplier_id
+                except Exception:
+                    pass
+            board_material_supplier_name = None
+            if board_material_supplier_id:
+                try:
+                    from apps.crm.models import Company as _CrmCoSup
+                    board_material_supplier_name = _CrmCoSup.objects.filter(id=board_material_supplier_id).values_list('name', flat=True).first()
+                except Exception:
+                    pass
             # Bekerülési ár arányos kiszámítása (unit_cost_price / unit_selling_price)
             _sell = float(_ms.unit_selling_price or 0)
             _cost = float(_ms.unit_cost_price or 0)
@@ -690,6 +746,8 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
         'board_material_label': board_material_label,
         'board_material_name': board_material_name,
         'board_material_supplier_id': board_material_supplier_id,
+        'board_material_supplier_name': board_material_supplier_name,
+        'board_material_material_id': material_id,
         'board_material_boards_needed': board_material_boards_needed,
         'board_material_price_per_board': board_material_price_per_board,
         'board_material_cost_price_per_board': board_material_cost_price_per_board,
@@ -705,7 +763,7 @@ class PrintSizePresetViewSet(viewsets.ModelViewSet):
 
     def get_permissions(self):
         if self.action in ['list', 'retrieve']:
-            return [IsAuthenticated()]
+            return [AllowAny()]
         from rest_framework.permissions import IsAdminUser
         return [IsAdminUser()]
 
@@ -719,7 +777,7 @@ class PrintMaterialViewSet(viewsets.ModelViewSet):
 
     def get_permissions(self):
         if self.action in ['list', 'retrieve']:
-            return [IsAuthenticated()]
+            return [AllowAny()]
         from rest_framework.permissions import IsAdminUser
         return [IsAdminUser()]
 
@@ -804,6 +862,20 @@ def _calculate_multi_roll(items_data, print_service_id, material_id, bleed_mm,
     _mat_sup = _mat.materialsupplier_set.first()
     if _mat_sup:
         _mat_supplier_id = _mat_sup.supplier_id
+    if not _mat_supplier_id:
+        try:
+            _ci_sup = _mat.cost_items.filter(supplier_id__isnull=False).first()
+            if _ci_sup:
+                _mat_supplier_id = _ci_sup.supplier_id
+        except Exception:
+            pass
+    _mat_supplier_name = None
+    if _mat_supplier_id:
+        try:
+            from apps.crm.models import Company as _CrmCo
+            _mat_supplier_name = _CrmCo.objects.filter(id=_mat_supplier_id).values_list('name', flat=True).first()
+        except Exception:
+            pass
 
     # Default pricing version: prefer '1. verzió', else first alphabetically
     _mat_cost_items_qs = list(_mat.cost_items.filter(is_active=True))
@@ -824,8 +896,15 @@ def _calculate_multi_roll(items_data, print_service_id, material_id, bleed_mm,
             use_rot = bool(force_rot)
         eff_w = ph if use_rot else pw
         eff_h = pw if use_rot else ph
+        # Tiling: if item is wider than roll, split into multiple strip runs
+        tiles = 1
+        original_qty = qty
+        if rw_mm > 0 and eff_w > rw_mm:
+            tiles = _math.ceil(eff_w / rw_mm)
+            eff_w = rw_mm  # each strip fits the roll width
+            qty = qty * tiles  # each item needs 'tiles' strip runs
         return {'eff_w': eff_w, 'eff_h': eff_h, 'prod_w': pw, 'prod_h': ph,
-                'qty': qty, 'idx': it.get('_idx', 0)}
+                'qty': qty, 'original_qty': original_qty, 'tiles': tiles, 'idx': it.get('_idx', 0)}
 
     def _cost_for_width(rw_mm):
         if rw_mm <= 0:
@@ -885,9 +964,9 @@ def _calculate_multi_roll(items_data, print_service_id, material_id, bleed_mm,
             else:
                 mat_cost = Decimal(str(_raw_sell)) * Decimal(str(roll_length_fm))
 
-        # Area cost = sum of individual print areas (independent of layout)
+        # Area cost uses DESIGN area (original dimensions), not tiled strip area
         total_area = sum(
-            Decimal(str(inf['prod_w'] / 1000)) * Decimal(str(inf['prod_h'] / 1000)) * Decimal(str(inf['qty']))
+            Decimal(str(inf['prod_w'] / 1000)) * Decimal(str(inf['prod_h'] / 1000)) * Decimal(str(inf.get('original_qty', inf['qty'])))
             for inf in infos
         )
         svc_cost = Decimal('0')
@@ -972,10 +1051,12 @@ def _calculate_multi_roll(items_data, print_service_id, material_id, bleed_mm,
                 'price_per': _raw_sell,
                 'cost_price_per': float(_mat.unit_cost_price or _raw_sell),
                 'supplier_id': _mat_supplier_id,
+                'supplier_name': _mat_supplier_name,
                 'roll_width_mm': rw_mm,
                 'roll_length_fm': roll_length_fm,
                 'total': float(mat_cost.quantize(Decimal('0.01'))),
                 'material_cost_items': material_cost_items,
+                'waste_m2': round(roll_length_fm * (rw_mm / 1000) - float(total_area), 4),
             },
         }
 
@@ -1013,6 +1094,18 @@ def _calculate_multi_roll(items_data, print_service_id, material_id, bleed_mm,
 
 class PrintOrderViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
+
+    _OPEN_ACTIONS = frozenset({'calculate_price', 'calculate_price_multi', 'calculate_price_click'})
+
+    def get_authenticators(self):
+        if getattr(self, 'action', None) in self._OPEN_ACTIONS:
+            return []
+        return super().get_authenticators()
+
+    def get_permissions(self):
+        if getattr(self, 'action', None) in self._OPEN_ACTIONS:
+            return [AllowAny()]
+        return super().get_permissions()
 
     def get_queryset(self):
         user = self.request.user
@@ -1209,10 +1302,8 @@ class PrintOrderViewSet(viewsets.ModelViewSet):
             # pl. 100 db × 2 lap = 200 nyomtatandó elem
             total_pieces    = quantity * sheet_count
             sheets_needed   = _math.ceil(total_pieces / items_per_sheet)
-            # Páros ívszám csak akkor szükséges, ha mindkét oldal ténylegesen nyomott
+            # Klikk = ívszám × ténylegesen nyomott oldalak száma (Nyomatlan oldal nem számít klikknek)
             both_sides_printed = print_sides == 2 and bool(print_service_id_1) and bool(print_service_id_2)
-            if both_sides_printed and sheets_needed % 2 != 0:
-                sheets_needed += 1
             # Klikk = ívszám × ténylegesen nyomott oldalak száma (Nyomatlan oldal nem számít klikknek)
             effective_sides = (1 if print_service_id_1 else 0) + (1 if (print_sides == 2 and print_service_id_2) else 0)
             clicks_total = sheets_needed * max(1, effective_sides)
@@ -1450,7 +1541,22 @@ class PrintOrderViewSet(viewsets.ModelViewSet):
                                 mat_sup_id = first_ms.supplier_id
                         except Exception:
                             pass
-                    mat_sup_name = mat.default_supplier.name if mat_sup_id and mat.default_supplier else None
+                    if not mat_sup_id:
+                        # Fallback: cost_items supplier
+                        try:
+                            first_ci = mat.cost_items.filter(supplier_id__isnull=False).first()
+                            if first_ci:
+                                mat_sup_id = first_ci.supplier_id
+                        except Exception:
+                            pass
+                    mat_sup_name = None
+                    if mat_sup_id:
+                        try:
+                            from apps.crm.models import Company as _CrmCo
+                            sup = _CrmCo.objects.filter(id=mat_sup_id).values_list('name', flat=True).first()
+                            mat_sup_name = sup
+                        except Exception:
+                            pass
                     mat_cost_per = Decimal(str(mat.unit_cost_price or 0))
                     mat_markup = float(mat.markup_percentage or 0)
                     material_items = [{

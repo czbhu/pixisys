@@ -2,7 +2,7 @@ from rest_framework import serializers
 
 from apps.finance.models import CashRegister
 from apps.hr.models import Employee
-from apps.warehouse.models import MaterialGroup
+from apps.warehouse.models import MaterialGroup, Warehouse
 
 from .models import POSTerminal
 
@@ -23,6 +23,14 @@ class POSTerminalSerializer(serializers.ModelSerializer):
     )
     material_group_names = serializers.SerializerMethodField()
 
+    warehouse_ids = serializers.PrimaryKeyRelatedField(
+        many=True,
+        source='warehouses',
+        queryset=Warehouse.objects.all(),
+        required=False
+    )
+    warehouse_names = serializers.SerializerMethodField()
+
     authorized_employee_ids = serializers.PrimaryKeyRelatedField(
         many=True,
         source='authorized_employees',
@@ -37,6 +45,7 @@ class POSTerminalSerializer(serializers.ModelSerializer):
             'id', 'name', 'location', 'hepg', 'cash_register', 'cash_register_name',
             'cash_register_current_balance', 'cash_register_currency_code', 'cash_register_currency_symbol',
             'show_all_categories', 'material_group_ids', 'material_group_names',
+            'warehouse_ids', 'warehouse_names',
             'authorized_employee_ids', 'authorized_employee_names',
             'is_active', 'created_by', 'created_at', 'updated_at'
         ]
@@ -44,6 +53,9 @@ class POSTerminalSerializer(serializers.ModelSerializer):
 
     def get_material_group_names(self, obj):
         return [g.get_full_name() for g in obj.material_groups.all()]
+
+    def get_warehouse_names(self, obj):
+        return [w.name for w in obj.warehouses.all()]
 
     def get_authorized_employee_names(self, obj):
         names = []
@@ -54,6 +66,7 @@ class POSTerminalSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         material_groups = validated_data.pop('material_groups', [])
+        warehouses = validated_data.pop('warehouses', [])
         authorized_employees = validated_data.pop('authorized_employees', [])
 
         request = self.context.get('request')
@@ -63,12 +76,15 @@ class POSTerminalSerializer(serializers.ModelSerializer):
         terminal = POSTerminal.objects.create(**validated_data)
         if material_groups:
             terminal.material_groups.set(material_groups)
+        if warehouses:
+            terminal.warehouses.set(warehouses)
         if authorized_employees:
             terminal.authorized_employees.set(authorized_employees)
         return terminal
 
     def update(self, instance, validated_data):
         material_groups = validated_data.pop('material_groups', None)
+        warehouses = validated_data.pop('warehouses', None)
         authorized_employees = validated_data.pop('authorized_employees', None)
 
         for attr, value in validated_data.items():
@@ -77,6 +93,8 @@ class POSTerminalSerializer(serializers.ModelSerializer):
 
         if material_groups is not None:
             instance.material_groups.set(material_groups)
+        if warehouses is not None:
+            instance.warehouses.set(warehouses)
         if authorized_employees is not None:
             instance.authorized_employees.set(authorized_employees)
 

@@ -36,10 +36,12 @@ import NfcPage from './pages/NfcPage';
 import PrintProductsPage from './pages/PrintProductsPage';
 import PickupLocationsPage from './pages/PickupLocationsPage';
 import ImportPage from './pages/ImportPage';
+import LanguagesPage from './pages/LanguagesPage';
 import ModuleDashboard from '../../components/ModuleDashboard';
 
 const SettingsModule: React.FC = () => {
   const dashboardItems = [
+      { key: '/settings/languages', label: 'Nyelvek', icon: <GlobalOutlined /> },
       { key: '/settings/access-control', label: 'Beléptető rendszer', icon: <LockOutlined /> },
       { key: '/settings/attendance-kiosk', label: 'Jelenlét Kioszk', icon: <TabletOutlined /> },
       { key: '/settings/companies', label: 'Alap adatok', icon: <GlobalOutlined /> },
@@ -63,6 +65,7 @@ const SettingsModule: React.FC = () => {
   return (
     <Routes>
       <Route path="/" element={<ModuleDashboard title="Beállítások" items={dashboardItems} />} />
+      <Route path="/languages" element={<LanguagesPage />} />
       <Route path="/access-control" element={<AccessControlSettingsPage />} />
       <Route path="/companies" element={<CompanySettings />} />
       <Route path="/currencies" element={<CurrenciesPage />} />

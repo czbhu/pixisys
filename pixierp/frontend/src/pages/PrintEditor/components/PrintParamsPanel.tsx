@@ -1,12 +1,223 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Select, Input, InputNumber, Radio, Divider, Typography, Spin, Tooltip, Tag, Modal, Row, Col, Button, Table, Checkbox } from 'antd';
 import NumInput from '../../../components/NumInput';
-import { InfoCircleOutlined, CaretDownOutlined, CaretRightOutlined, AppstoreOutlined, MinusOutlined, PlusOutlined, DeleteOutlined, CopyOutlined } from '@ant-design/icons';
+import { InfoCircleOutlined, CaretDownOutlined, CaretRightOutlined, AppstoreOutlined, MinusOutlined, PlusOutlined, DeleteOutlined, CopyOutlined, TagsOutlined } from '@ant-design/icons';
 import type { PrintParams } from './Step1Params';
 import api from '../../../services/api';
 
 const { Text, Title } = Typography;
 const { Option } = Select;
+
+const VAT_MULT = 1.27;
+const fmtHuf = (n: number) => Math.round(n).toLocaleString('hu-HU') + ' Ft';
+
+interface BulkTierRow {
+  qty: number; total: number | null; unit_price: number | null;
+  loading: boolean; selected: boolean; label: string; sublabel?: string;
+}
+
+const BulkPricingSection: React.FC<{
+  params: PrintParams;
+  pricing: (Record<string, any>) | null;
+  rollRows?: { id: number; width_mm: number; height_mm: number; quantity: number }[];
+  rollRowPricing?: Record<number, any>;
+  calcType?: string;
+  boardSheetW?: number; boardSheetH?: number; boardBleed?: number;
+  boardForceRotate?: string;
+  clickSheetW?: number; clickSheetH?: number; clickBleed?: number;
+  clickForceRotate?: string;
+  clickSides?: number;
+  selectedPrintSvcId1?: number | null; selectedPrintSvcId2?: number | null;
+  flatSelectedIds?: number[]; flatFinishingIds?: number[];
+  selectedBoardPrintSvcId?: number | null;
+  onSelectedTiers?: (tiers: { qty: number; unit_price: number; total: number; label: string }[]) => void;
+}> = ({ params, pricing, rollRows, rollRowPricing, calcType, boardSheetW = 0, boardSheetH = 0, boardBleed = 0, boardForceRotate = 'auto', clickSheetW = 0, clickSheetH = 0, clickBleed = 0, clickForceRotate = 'auto', clickSides = 1, selectedPrintSvcId1, selectedPrintSvcId2, flatSelectedIds = [], flatFinishingIds = [], selectedBoardPrintSvcId, onSelectedTiers }) => {
+  const [tiers, setTiers] = useState<BulkTierRow[]>([]);
+  const abortRef = useRef<AbortController | null>(null);
+  const isMultiRow = Array.isArray(rollRows) && rollRows.length >= 2;
+
+  const calcOptimalMult = useCallback((rows: { quantity: number; roll_cols?: number }[], totalBase: number) => {
+    // Find smallest multiplier where every row fills complete strips AND total > current
+    let m = 1;
+    for (const r of rows) {
+      const cols = r.roll_cols || 0;
+      if (cols > 0) {
+        const strips = Math.ceil(r.quantity / cols);
+        const filled = strips * cols;
+        // multiplier needed to fill the last partial strip
+        if (filled > r.quantity) m = Math.max(m, Math.ceil(filled / r.quantity));
+      }
+    }
+    // Ensure at least one step above current (multiply by at least 2 if already optimal)
+    if (m * totalBase <= totalBase) m = 2;
+    return m;
+  }, []);
+
+  const calcOptimalQtySingle = useCallback(() => {
+    const bd: any = pricing;
+    const qty = params.quantity || 1;
+    // For single roll row, roll_cols lives in rollRowPricing, not on the combined pricing object
+    const singleRowCols = (rollRows?.length === 1 && rollRowPricing)
+      ? (rollRowPricing[rollRows[0].id]?.roll_cols ?? 0) : 0;
+    const ips = bd?.items_per_sheet || bd?.roll_cols || singleRowCols || 0;
+    if (ips <= 0) return qty + 1; // no capacity info — just go one above
+    const sheets = Math.ceil(qty / ips);
+    let opt = sheets * ips;
+    // Ensure strictly greater than current quantity
+    if (opt <= qty) opt = (sheets + 1) * ips;
+    return opt;
+  }, [pricing, params.quantity, rollRows, rollRowPricing]);
+
+  useEffect(() => {
+    if (!pricing) { setTiers([]); return; }
+    if (abortRef.current) abortRef.current.abort();
+    abortRef.current = new AbortController();
+    const signal = abortRef.current.signal;
+
+    if (isMultiRow) {
+      const baseRows = rollRows!.map(r => ({ ...r, roll_cols: (rollRowPricing ?? {})[r.id]?.roll_cols ?? 0 }));
+      const totalBase = baseRows.reduce((s, r) => s + r.quantity, 0);
+      const optMult = calcOptimalMult(baseRows, totalBase);
+      const mults = [optMult, optMult * 5, optMult * 10];
+      setTiers(mults.map((m, i) => ({
+        qty: m, total: null, unit_price: null, loading: true, selected: false,
+        label: `${m} garnitúra${i === 0 ? ' (optimális)' : ''}`,
+        sublabel: `${(m * totalBase).toLocaleString('hu-HU')} db összesen`,
+      })));
+      const sharedP = {
+        material_id: (pricing as any)?._material_id ?? params.material_id ?? null,
+        print_service_id: (pricing as any)?._print_service_id ?? null,
+        bleed_mm: (pricing as any)?._bleed_mm ?? boardBleed,
+        force_rotate: (pricing as any)?._force_rotate ?? null,
+      };
+      const endpoint = calcType === 'click_sheet_print'
+        ? '/printshop/orders/calculate-price-click/'
+        : '/printshop/orders/calculate-price-multi/';
+      mults.forEach((mult, idx) => {
+        const items = baseRows.map(r => ({ width_mm: r.width_mm, height_mm: r.height_mm, quantity: r.quantity * mult }));
+        if (calcType === 'click_sheet_print') {
+          // sum individual click calls
+          Promise.all(items.map(item => api.post(endpoint, {
+            ...item, sheet_count: params.sheet_count ?? 1, print_sides: clickSides,
+            print_service_id_1: selectedPrintSvcId1 ?? null,
+            print_service_id_2: clickSides === 2 ? (selectedPrintSvcId2 ?? null) : null,
+            sheet_w_mm: clickSheetW, sheet_h_mm: clickSheetH,
+            bleed_mm: clickBleed, material_id: params.material_id ?? null,
+            selected_service_ids: flatSelectedIds, finishing_service_ids: flatFinishingIds,
+          }, { signal } as any).then(r => r.data.total ?? 0).catch(() => 0)))
+            .then(totals => {
+              const tot = totals.reduce((s, t) => s + t, 0);
+              const totalQty = mult * totalBase;
+              setTiers(prev => prev.map((t, i) => i === idx ? { ...t, total: tot, unit_price: totalQty > 0 ? tot / totalQty : 0, loading: false } : t));
+            }).catch(() => setTiers(prev => prev.map((t, i) => i === idx ? { ...t, loading: false } : t)));
+        } else if (calcType === 'sheet_print') {
+          // sum individual sheet calls
+          Promise.all(items.map(item => api.post('/printshop/orders/calculate-price/', {
+            ...item, sides: params.sides, side1_mode: params.side1_mode, side2_mode: params.side2_mode,
+            binding: params.binding, folding_count: params.folding_count, sheet_count: 1,
+            selected_service_ids: flatSelectedIds, finishing_service_ids: flatFinishingIds,
+            print_service_id: selectedBoardPrintSvcId || undefined,
+            ...(selectedBoardPrintSvcId ? { sheet_w_mm: boardSheetW, sheet_h_mm: boardSheetH, bleed_mm: boardBleed, material_id: params.material_id || undefined } : {}),
+          }, { signal } as any).then(r => r.data.total ?? 0).catch(() => 0)))
+            .then(totals => {
+              const tot = totals.reduce((s, t) => s + t, 0);
+              const totalQty = mult * totalBase;
+              setTiers(prev => prev.map((t, i) => i === idx ? { ...t, total: tot, unit_price: totalQty > 0 ? tot / totalQty : 0, loading: false } : t));
+            }).catch(() => setTiers(prev => prev.map((t, i) => i === idx ? { ...t, loading: false } : t)));
+        } else {
+          api.post('/printshop/orders/calculate-price-multi/', { items, ...sharedP }, { signal } as any)
+            .then(r => {
+              const tot = typeof r.data.total === 'number' ? r.data.total : 0;
+              const totalQty = mult * totalBase;
+              setTiers(prev => prev.map((t, i) => i === idx ? { ...t, total: tot, unit_price: totalQty > 0 ? tot / totalQty : 0, loading: false } : t));
+            }).catch(() => setTiers(prev => prev.map((t, i) => i === idx ? { ...t, loading: false } : t)));
+        }
+      });
+    } else {
+      const optQty = calcOptimalQtySingle();
+      const tierQtys = [optQty, optQty * 5, optQty * 10];
+      setTiers(tierQtys.map((q, i) => ({
+        qty: q, total: null, unit_price: null, loading: true, selected: false,
+        label: i === 0 ? `Optimális (${q} db)` : `${i === 1 ? '5' : '10'}× optimális (${q} db)`,
+      })));
+      const isClick = calcType === 'click_sheet_print';
+      tierQtys.forEach((qty, idx) => {
+        const p = isClick
+          ? api.post('/printshop/orders/calculate-price-click/', {
+              width_mm: params.width_mm, height_mm: params.height_mm, quantity: qty, sheet_count: params.sheet_count ?? 1,
+              print_service_id_2: clickSides === 2 ? (selectedPrintSvcId2 ?? null) : null,
+              sheet_w_mm: clickSheetW, sheet_h_mm: clickSheetH, bleed_mm: clickBleed,
+              material_id: params.material_id ?? null, selected_service_ids: flatSelectedIds,
+              finishing_service_ids: flatFinishingIds,
+            }, { signal } as any)
+          : api.post('/printshop/orders/calculate-price/', {
+              width_mm: params.width_mm, height_mm: params.height_mm, quantity: qty,
+              sides: params.sides, side1_mode: params.side1_mode, side2_mode: params.side2_mode,
+              binding: params.binding, folding_count: params.folding_count, material_id: params.material_id,
+              selected_service_ids: flatSelectedIds, finishing_service_ids: flatFinishingIds,
+              print_service_id: selectedBoardPrintSvcId || undefined,
+              ...(selectedBoardPrintSvcId ? { sheet_w_mm: boardSheetW, sheet_h_mm: boardSheetH, bleed_mm: boardBleed } : {}),
+            }, { signal } as any);
+        p.then(r => setTiers(prev => prev.map((t, i) => i === idx ? { ...t, total: r.data.total, unit_price: r.data.unit_price, loading: false } : t)))
+         .catch(() => setTiers(prev => prev.map((t, i) => i === idx ? { ...t, loading: false } : t)));
+      });
+    }
+    return () => abortRef.current?.abort();
+  }, [pricing, params, isMultiRow, rollRows, rollRowPricing, calcType, boardSheetW, boardSheetH, boardBleed, boardForceRotate, clickSheetW, clickSheetH, clickBleed, clickForceRotate, clickSides, selectedPrintSvcId1, selectedPrintSvcId2, flatSelectedIds, flatFinishingIds, selectedBoardPrintSvcId]); // eslint-disable-line
+
+  useEffect(() => {
+    onSelectedTiers?.(tiers.filter(t => t.selected && t.total != null && t.unit_price != null)
+      .map(t => ({ qty: t.qty, unit_price: t.unit_price!, total: t.total!, label: t.label })));
+  }, [tiers]); // eslint-disable-line
+
+  const toggleSelect = (idx: number) => setTiers(prev => prev.map((t, i) => i === idx ? { ...t, selected: !t.selected } : t));
+
+  if (!pricing || tiers.length === 0) return null;
+
+  return (
+    <div style={{ margin: '4px 0 6px', padding: '8px 10px', background: '#f0f9ff', borderRadius: 7, border: '1px solid #bae7ff' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 8 }}>
+        <TagsOutlined style={{ color: '#0958d9', fontSize: 13 }} />
+        <Text strong style={{ fontSize: 11, color: '#0958d9' }}>Többet, jobban megéri:</Text>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+        {tiers.map((tier, idx) => (
+          <div key={idx} onClick={() => tier.unit_price != null && toggleSelect(idx)}
+            style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '5px 8px', borderRadius: 6,
+              cursor: tier.unit_price != null ? 'pointer' : 'default',
+              background: tier.selected ? '#e6f4ff' : '#fff',
+              border: tier.selected ? '1.5px solid #1677ff' : '1px solid #e0e0e0',
+              transition: 'all .12s' }}
+          >
+            <Checkbox checked={tier.selected} onChange={() => toggleSelect(idx)} onClick={e => e.stopPropagation()} style={{ flexShrink: 0 }} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 10, color: '#888', marginBottom: 1 }}>{tier.label}</div>
+              {tier.loading ? <Spin size="small" /> : tier.unit_price != null ? (
+                <>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 7, flexWrap: 'wrap' }}>
+                    <Text strong style={{ fontSize: 14, color: '#0958d9' }}>
+                      {tier.qty.toLocaleString('hu-HU')} {isMultiRow ? 'garnitúra' : 'db'}
+                    </Text>
+                    <Text strong style={{ fontSize: 13, color: '#389e0d' }}>
+                      {Math.round(tier.unit_price).toLocaleString('hu-HU')} Ft/db
+                    </Text>
+                  </div>
+                  {tier.sublabel && <div style={{ fontSize: 10, color: '#8c8c8c' }}>{tier.sublabel}</div>}
+                </>
+              ) : <Text type="secondary" style={{ fontSize: 10 }}>–</Text>}
+            </div>
+            {!tier.loading && tier.total != null && (
+              <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                <div style={{ fontSize: 11, color: '#595959' }}>{fmtHuf(tier.total)}</div>
+                <div style={{ fontSize: 10, color: '#8c8c8c' }}>{fmtHuf(tier.total * VAT_MULT)} <span style={{ color: '#ccc' }}>+ÁFA</span></div>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
 
 interface SizePreset { id: number; name: string; width_mm: string; height_mm: string; }
 interface ProductTemplateSize {
@@ -43,6 +254,7 @@ interface MaterialDetail {
   name: string;
   code?: string | null;
   material_group?: number | null;
+  material_groups?: number[];
   width?: number | null;
   length?: number | null;
   width_mm?: number | null;
@@ -186,6 +398,11 @@ interface Props {
   onServicesChange?: (s1: number[][], s2: number[][], fin: number[][]) => void;
   onCustomCostChange?: (items: CustomCostItemPanel[]) => void;
   isAdmin: boolean;
+  onBulkTiersChange?: (tiers: { qty: number; unit_price: number; total: number; label: string }[]) => void;
+  onProductIdChange?: (id: number | null) => void;
+  onCustomNameChange?: (name: string) => void;
+  onProductNameChange?: (name: string) => void;
+  bypassMaterialValidation?: boolean;
 }
 
 const COLOR_MODE_OPTIONS = [
@@ -248,11 +465,15 @@ export interface CustomCostItemPanel {
   ref_id?: number | null;
 }
 
-const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, onTemplateCategoriesChange, onServicesChange, onCustomCostChange, isAdmin }) => {
+const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, onTemplateCategoriesChange, onServicesChange, onCustomCostChange, isAdmin, onBulkTiersChange, onProductIdChange, onCustomNameChange, onProductNameChange, bypassMaterialValidation }) => {
   const [priceOpen, setPriceOpen] = useState(true);
   const [presets, setPresets] = useState<SizePreset[]>([]);
+  const [customProductName, setCustomProductName] = useState('');
   const [products, setProducts] = useState<ProductTemplate[]>([]);
-  const [allMaterials, setAllMaterials] = useState<MaterialDetail[]>([]);  const [selectedProductId, setSelectedProductId] = useState<number | null>(() => {
+  const [allMaterials, setAllMaterials] = useState<MaterialDetail[]>([]);
+  // Remembers which material was selected per product so switching back restores it
+  const productMaterialMap = useRef<Record<number, number | null>>({});
+  const [selectedProductId, setSelectedProductId] = useState<number | null>(() => {
     try { const s = localStorage.getItem('pixierp_editor_state'); if (s) return JSON.parse(s).selected_product_id ?? null; } catch {} return null;
   });
   const [selectedPreset, setSelectedPreset] = useState<number | null>(null);
@@ -273,7 +494,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
   const [clickSheetW, setClickSheetW] = useState<number>(_cs.sheetW ?? 330);
   const [clickSheetH, setClickSheetH] = useState<number>(_cs.sheetH ?? 487);
   const [clickBleed, setClickBleed] = useState<number>(_cs.bleed ?? 3);
-  const [clickSides, setClickSides] = useState<1 | 2>((_cs.sides as 1 | 2) ?? 1);
+  const [clickSides, setClickSides] = useState<1 | 2>(1);
   const clickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const restoringRef = useRef(true); // true during initial load
 
@@ -491,10 +712,12 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
 
   useEffect(() => { calculatePrice(params); }, [params, flatSelectedIds, flatFinishingIds, selectedBoardPrintSvcId, selectedBoardPrintSvcId2, boardSheetW, boardSheetH, boardBleed, boardForceRotate, rollEqualPieces]); // eslint-disable-line
 
-  // Auto-initialize one row when a roll_print product is first selected
+  // Auto-initialize one row when a roll/sheet/click product is first selected
   useEffect(() => {
     const calcType = products.find(p => p.id === selectedProductId)?.calculator_type;
-    if (calcType !== 'roll_print') return;
+    if (!['roll_print', 'sheet_print', 'click_sheet_print'].includes(calcType ?? '')) return;
+    // Non-roll products always use mm — reset unit to avoid stale cm/m conversion
+    if (calcType !== 'roll_print') setRollDimUnit('mm');
     if (rollRows.length === 0) {
       // Restore from localStorage if saved (e.g. from a previous PrintShop session for this product)
       try {
@@ -524,9 +747,23 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
     } catch {}
   }, [rollRows, rollRowsEnabled]);
 
+  // Keep params.width_mm/height_mm in sync with rollRows[0] so auto-name and validation have correct dimensions
+  useEffect(() => {
+    if (!rollRowsEnabled || rollRows.length === 0) return;
+    const calcType = products.find(p => p.id === selectedProductId)?.calculator_type;
+    if (calcType !== 'click_sheet_print' && calcType !== 'sheet_print' && calcType !== 'roll_print') return;
+    const row = rollRows[0];
+    if (row.width_mm !== params.width_mm || row.height_mm !== params.height_mm || row.quantity !== params.quantity) {
+      onChange({ ...params, width_mm: row.width_mm, height_mm: row.height_mm, quantity: row.quantity });
+    }
+  }, [rollRows]); // eslint-disable-line
+
   // Combined multi-row calculation for roll products — one combined API call
   useEffect(() => {
-    if (!rollRowsEnabled || rollRows.length === 0 || !selectedBoardPrintSvcId) return;
+    const _calcType = products.find(p => p.id === selectedProductId)?.calculator_type;
+    if (!rollRowsEnabled || rollRows.length === 0 || !selectedBoardPrintSvcId || _calcType !== 'roll_print') return;
+    if (rollRows.some(r => r.width_mm <= 0 || r.height_mm <= 0)) return;
+    if (!params.material_id) return;
     if (rollCalcTimerRef.current) clearTimeout(rollCalcTimerRef.current);
     rollCalcTimerRef.current = setTimeout(async () => {
       try {
@@ -555,6 +792,10 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
           ...data,
           quantity: data.total_qty,
           boards_needed: data.strip_count,
+          _print_service_id: selectedBoardPrintSvcId || null,
+          _material_id: params.material_id || null,
+          _bleed_mm: boardBleed || 0,
+          _force_rotate: boardForceRotate === 'auto' ? null : boardForceRotate === 'rotated',
           _rollRows: rollRows.map((r, i) => ({
             width_mm: r.width_mm, height_mm: r.height_mm, quantity: r.quantity,
             ...(data.items_layout?.[i] ?? {}),
@@ -566,11 +807,179 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
     }, 600);
   }, [rollRows, rollRowsEnabled, selectedBoardPrintSvcId, boardSheetW, boardSheetH, boardBleed, boardForceRotate, rollEqualPieces, flatSelectedIds, flatFinishingIds, onPriceChange]); // eslint-disable-line
 
-  // ── Click-sheet-print calculation ────────────────────────────────────────
+  // Multi-row calculation for sheet_print — individual calculate-price call per row, summed
+  useEffect(() => {
+    const calcType = products.find(p => p.id === selectedProductId)?.calculator_type;
+    if (!rollRowsEnabled || rollRows.length === 0 || calcType !== 'sheet_print') return;
+    if (rollRows.some(r => r.width_mm <= 0 || r.height_mm <= 0)) return;
+    if (rollCalcTimerRef.current) clearTimeout(rollCalcTimerRef.current);
+    rollCalcTimerRef.current = setTimeout(async () => {
+      const rowResults: Record<number, any> = {};
+      let totalPrice = 0; let totalQty = 0; let lastData: any = null;
+      let totalPaperCost = 0; let totalBoardMaterialCost = 0;
+      let totalPrintCost1 = 0; let totalPrintCost2 = 0;
+      let totalFinishingCost = 0; let totalServiceCost = 0;
+      const allServiceBreakdowns: any[][] = [];
+      const allPrintServiceItems: any[][] = [];
+      for (const row of rollRows) {
+        try {
+          const res = await api.post('/printshop/orders/calculate-price/', {
+            width_mm: row.width_mm, height_mm: row.height_mm, quantity: row.quantity,
+            sides: params.sides, side1_mode: params.side1_mode, side2_mode: params.side2_mode,
+            binding: params.binding, folding_count: params.folding_count, sheet_count: 1,
+            selected_service_ids: flatSelectedIds, finishing_service_ids: flatFinishingIds,
+            print_service_id: selectedBoardPrintSvcId || undefined,
+            ...(selectedBoardPrintSvcId ? {
+              sheet_w_mm: boardSheetW, sheet_h_mm: boardSheetH, bleed_mm: boardBleed,
+              force_rotate: boardForceRotate === 'auto' ? null : boardForceRotate === 'rotated',
+              material_id: params.material_id || undefined,
+            } : {}),
+          });
+          rowResults[row.id] = {
+            total: res.data.total, unit_price: res.data.unit_price, items_per_sheet: res.data.items_per_sheet,
+            boards_needed: res.data.boards_needed ?? 1,
+            board_material_price_per_board: res.data.board_material_price_per_board ?? 0,
+          };
+          totalPrice += res.data.total; totalQty += row.quantity;
+          totalPaperCost += res.data.paper_cost ?? 0;
+          totalBoardMaterialCost += res.data.board_material_cost ?? 0;
+          totalPrintCost1 += res.data.print_cost_side1 ?? 0;
+          totalPrintCost2 += res.data.print_cost_side2 ?? 0;
+          totalFinishingCost += res.data.finishing_cost ?? 0;
+          totalServiceCost += res.data.service_cost ?? 0;
+          if (res.data.service_breakdown) allServiceBreakdowns.push(res.data.service_breakdown);
+          if (res.data.print_service_items) allPrintServiceItems.push(res.data.print_service_items);
+          lastData = res.data;
+        } catch {}
+      }
+      // Merge service_breakdown items across rows (same id: sum totals and item units)
+      const mergeServiceBreakdown = (groups: any[][]): any[] => {
+        const map: Record<number, any> = {};
+        for (const sbs of groups) {
+          for (const sb of sbs ?? []) {
+            if (!map[sb.id]) {
+              map[sb.id] = { ...sb, items: sb.items ? sb.items.map((it: any) => ({ ...it })) : [] };
+            } else {
+              map[sb.id].total += sb.total;
+              for (const it of (sb.items ?? [])) {
+                const ex = map[sb.id].items.find((e: any) => e.name === it.name);
+                if (ex) { ex.units = (ex.units ?? 0) + it.units; ex.total = (ex.total ?? 0) + it.total; }
+                else map[sb.id].items.push({ ...it });
+              }
+            }
+          }
+        }
+        return Object.values(map);
+      };
+      setRollRowPricing(rowResults);
+      if (lastData && totalQty > 0) {
+        // For board/UV products: rows share the same physical boards.
+        // Correct total = totalPrice × (rawPrint + sharedBoardCost) / (rawPrint + summedBoardCosts).
+        const pricePerBoard: number = lastData.board_material_price_per_board ?? 0;
+        const isBoardProduct = totalBoardMaterialCost > 0 && pricePerBoard > 0;
+        let correctedBoardMaterialCost = totalBoardMaterialCost;
+        if (isBoardProduct) {
+          const maxBoardsNeeded = Math.max(...rollRows.map(r => rowResults[r.id]?.boards_needed ?? 1));
+          correctedBoardMaterialCost = pricePerBoard * maxBoardsNeeded;
+          if (totalBoardMaterialCost > correctedBoardMaterialCost + 0.01) {
+            const rawNonBoard = totalPrintCost1 + totalPrintCost2 + totalFinishingCost + totalServiceCost + totalPaperCost;
+            const originalRawTotal = rawNonBoard + totalBoardMaterialCost;
+            if (originalRawTotal > 0) {
+              totalPrice = totalPrice * (rawNonBoard + correctedBoardMaterialCost) / originalRawTotal;
+              rollRows.forEach(r => {
+                rowResults[r.id].total = totalPrice * (r.quantity / totalQty);
+                rowResults[r.id].unit_price = rowResults[r.id].total / r.quantity;
+              });
+              setRollRowPricing({ ...rowResults });
+            }
+          }
+        }
+        const combined: any = {
+          ...lastData, total: totalPrice, unit_price: totalPrice / totalQty, quantity: totalQty,
+          paper_cost: totalPaperCost,
+          board_material_cost: correctedBoardMaterialCost,
+          print_cost_side1: totalPrintCost1, print_cost_side2: totalPrintCost2,
+          finishing_cost: totalFinishingCost, service_cost: totalServiceCost,
+          service_breakdown: mergeServiceBreakdown(allServiceBreakdowns),
+          // Flatten print_service_items from all rows (keep separate since price_per varies by size)
+          print_service_items: allPrintServiceItems.flat(),
+          _rollRows: rollRows.map(r => ({ width_mm: r.width_mm, height_mm: r.height_mm, quantity: r.quantity, ...(rowResults[r.id] ?? {}) })),
+        };
+        setPricing(combined); onPriceChange?.(combined);
+      }
+    }, 600);
+  }, [rollRows, rollRowsEnabled, selectedProductId, products, params.sides, params.side1_mode, params.side2_mode, params.binding, params.folding_count, params.material_id, flatSelectedIds, flatFinishingIds, selectedBoardPrintSvcId, boardSheetW, boardSheetH, boardBleed, boardForceRotate, onPriceChange]); // eslint-disable-line
+
+  // Multi-row calculation for click_sheet_print — per-row calculate-price-click, summed
+  useEffect(() => {
+    const product = products.find(p => p.id === selectedProductId);
+    if (!rollRowsEnabled || rollRows.length === 0 || product?.calculator_type !== 'click_sheet_print') return;
+    if (rollRows.some(r => r.width_mm <= 0 || r.height_mm <= 0)) return;
+    if (rollCalcTimerRef.current) clearTimeout(rollCalcTimerRef.current);
+    rollCalcTimerRef.current = setTimeout(async () => {
+      const rowResults: Record<number, any> = {};
+      let totalPrice = 0; let totalQty = 0; let lastData: any = null;
+      let totalSheets = 0; let totalClicks = 0;
+      let totalMatCost = 0; let totalPrintCost1 = 0; let totalPrintCost2 = 0;
+      const allPrintItems1: any[][] = []; const allPrintItems2: any[][] = []; const allMatItems: any[][] = [];
+      const svcId1 = (selectedPrintSvcId1 != null && selectedPrintSvcId1 > 0) ? selectedPrintSvcId1 : null;
+      const svcId2 = (selectedPrintSvcId2 != null && selectedPrintSvcId2 > 0) ? selectedPrintSvcId2 : null;
+      for (const row of rollRows) {
+        try {
+          const res = await api.post('/printshop/orders/calculate-price-click/', {
+            width_mm: row.width_mm, height_mm: row.height_mm, quantity: row.quantity, sheet_count: params.sheet_count ?? 1,
+            print_sides: clickSides, print_service_id_1: svcId1,
+            print_service_id_2: clickSides === 2 ? svcId2 : null,
+            sheet_w_mm: clickSheetW, sheet_h_mm: clickSheetH, bleed_mm: clickBleed,
+            material_id: params.material_id ?? null,
+            selected_service_ids: flatSelectedIds, finishing_service_ids: flatFinishingIds,
+            force_rotate: clickForceRotate === 'auto' ? null : clickForceRotate === 'rotated',
+            fix_cost_first_side_only: product?.fix_cost_first_side_only ?? false,
+          });
+          rowResults[row.id] = { total: res.data.total, unit_price: res.data.unit_price, sheets_needed: res.data.sheets_needed };
+          totalPrice += res.data.total; totalQty += row.quantity;
+          totalSheets += res.data.sheets_needed ?? 0;
+          totalClicks += res.data.clicks_total ?? 0;
+          totalMatCost += res.data.material_cost ?? 0;
+          totalPrintCost1 += res.data.print_cost_side1 ?? 0;
+          totalPrintCost2 += res.data.print_cost_side2 ?? 0;
+          if (res.data.print_service_items_1) allPrintItems1.push(res.data.print_service_items_1);
+          if (res.data.print_service_items_2) allPrintItems2.push(res.data.print_service_items_2);
+          if (res.data.material_items) allMatItems.push(res.data.material_items);
+          lastData = res.data;
+        } catch {}
+      }
+      // Merge item arrays by name, summing units and totals
+      const mergeItems = (groups: any[][]): any[] => {
+        const map: Record<string, any> = {};
+        for (const items of groups) {
+          for (const it of items ?? []) {
+            if (!map[it.name]) map[it.name] = { ...it };
+            else { map[it.name] = { ...map[it.name], units: map[it.name].units + it.units, total: map[it.name].total + it.total }; }
+          }
+        }
+        return Object.values(map);
+      };
+      setRollRowPricing(rowResults);
+      if (lastData && totalQty > 0) {
+        const combined: any = {
+          ...lastData, total: totalPrice, unit_price: totalPrice / totalQty, quantity: totalQty,
+          sheets_needed: totalSheets, clicks_total: totalClicks,
+          material_cost: totalMatCost, print_cost_side1: totalPrintCost1, print_cost_side2: totalPrintCost2,
+          print_service_items_1: mergeItems(allPrintItems1),
+          print_service_items_2: mergeItems(allPrintItems2),
+          material_items: mergeItems(allMatItems),
+          _rollRows: rollRows.map(r => ({ width_mm: r.width_mm, height_mm: r.height_mm, quantity: r.quantity, ...(rowResults[r.id] ?? {}) })),
+        };
+        setClickPricing(combined); onPriceChange?.(combined);
+      }
+    }, 600);
+  }, [rollRows, rollRowsEnabled, selectedProductId, products, params.material_id, params.sheet_count, flatSelectedIds, flatFinishingIds, clickSides, selectedPrintSvcId1, selectedPrintSvcId2, clickSheetW, clickSheetH, clickBleed, clickForceRotate, onPriceChange]); // eslint-disable-line
   // Paraméteres kalkuláció: az ívméret értékek paraméterként jönnek be, nem a closure-ból
   const calculateClickPriceWith = useCallback(async (sw: number, sh: number, bleedVal: number, rotateVal: string) => {
     const product = products.find(p => p.id === selectedProductId);
     if (!product || product.calculator_type !== 'click_sheet_print') return;
+    if (rollRowsEnabled) return; // multi-row mode handles pricing
     const mySeq = ++calcSeqRef.current;
     setCalcLoading(true);
     try {
@@ -676,17 +1085,14 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
     const sg2 = product.service_groups_2 ?? [];
     const sgf = product.finishing_service_groups ?? [];
     const allIds = Array.from(new Set([...sg1.flat(), ...sg2.flat(), ...sgf.flat()]));
-    if (allIds.length === 0) { setAllServices([]); setSelectedServices1([]); setSelectedServices2([]); setSelectedFinishingServices([]); return; }
-    api.get(`/manufacturing/services/?ids=${allIds.join(',')}&page_size=200`)
-      .then(res => {
-        const data: ServiceDetail[] = Array.isArray(res.data) ? res.data : (res.data.results ?? []);
-        setAllServices(data);
-      })
-      .catch(() => setAllServices([]));
     if (restoringRef.current) {
-      // On initial load, keep the restored selections AND custom costs (already set from localStorage)
       restoringRef.current = false;
+      if (!customProductName) {
+        update({ product_name: product.name });
+      }
+      onProductNameChange?.(product.name);
     } else {
+      onProductNameChange?.(product.name);
       // User changed product — reset selections AND custom costs
       setSelectedServices1(sg1.map(() => []));
       setSelectedServices2(sg2.map(() => []));
@@ -694,6 +1100,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
       setCustomCostItems([]);
       try { localStorage.removeItem('pixierp_custom_cost_items'); } catch {}
     }
+    if (allIds.length === 0) { setAllServices([]); setSelectedServices1([]); setSelectedServices2([]); setSelectedFinishingServices([]); return; }
   }, [selectedProductId, products]); // eslint-disable-line
 
   const update = (partial: Partial<PrintParams>) => {
@@ -706,35 +1113,62 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
   };
 
   const handleProductChange = (productId: number | undefined) => {
+    setCustomProductName('');  // also notify parent so autoName uses product's auto-name
+    onCustomNameChange?.('');
     if (!productId) {
       setSelectedProductId(null); setProductSizeKey(null);
       onTemplateCategoriesChange?.([]);
+      onProductIdChange?.(null);
       try { const s = localStorage.getItem('pixierp_editor_state'); if (s) { const o = JSON.parse(s); delete o.selected_product_id; delete o.template_category_ids; localStorage.setItem('pixierp_editor_state', JSON.stringify(o)); } } catch {}
       return;
     }
     setSelectedProductId(productId);
+    onProductIdChange?.(productId);
     try { const s = localStorage.getItem('pixierp_editor_state'); const o = s ? JSON.parse(s) : {}; o.selected_product_id = productId; localStorage.setItem('pixierp_editor_state', JSON.stringify(o)); } catch {}
     const product = products.find(p => p.id === productId);
     if (!product) return;
     onTemplateCategoriesChange?.(product.template_categories ?? []);
     setSelectedPreset(null);
-    // Reset click-state for new product
+    // Reset click-state for new product — always start 1-sided
     setClickPricing(null);
     setSelectedPrintSvcId1(null);
     setSelectedPrintSvcId2(null);
-    setClickSides((product.print_sides ?? 1) as 1 | 2);
+    setClickSides(1);
     // Egyedi költségek törlése termékváltáskor
     setCustomCostItems([]);
     try { localStorage.removeItem('pixierp_custom_cost_items'); } catch {}
-    // UV táblás/tekercses termék: alapból 1 oldalas nyomtatás, sheet_count reset
-    if (isBoardOrRollOrScreen(product.calculator_type)) {
-      update({ sides: '1', side2_mode: 'none', sheet_count: 1 });
-    }
-    // Auto-select material if exactly one is available
+    // Always reset to 1-sided on product switch
+    update({ sides: '1', side2_mode: 'none', ...(isBoardOrRollOrScreen(product.calculator_type) ? { sheet_count: 1 } : {}) });
+    // Reset material: clear if not valid for the new product
     const mats = product.allowed_materials_details ?? [];
-    if (mats.length === 1) {
+    const allowedGroups = product.allowed_material_groups ?? [];
+
+    // Save current material for the product we're leaving (only if it was valid for that product)
+    if (selectedProductId != null && params.material_id != null) {
+      productMaterialMap.current[selectedProductId] = params.material_id;
+    }
+
+    // Determine which material to use for the new product
+    const isMaterialAllowed = (matId: number | null | undefined): boolean => {
+      if (matId == null) return false;
+      if (mats.some(m => m.id === matId)) return true;
+      if (mats.length === 0 && allowedGroups.length === 0) return true; // no restriction
+      if (allowedGroups.length > 0 && allMaterials.some(m => m.id === matId && (
+        (m.material_group != null && allowedGroups.includes(m.material_group)) ||
+        (m.material_groups ?? []).some((g: number) => allowedGroups.includes(g))
+      ))) return true;
+      return false;
+    };
+
+    const savedForNewProduct = productMaterialMap.current[productId];
+    if (isMaterialAllowed(savedForNewProduct)) {
+      // Restore the material that was previously on this product
+      update({ material_id: savedForNewProduct! });
+    } else if (isMaterialAllowed(params.material_id)) {
+      // Current material works for the new product — keep it
+    } else if (mats.length > 0) {
       update({ material_id: mats[0].id });
-    } else if (mats.length === 0) {
+    } else {
       update({ material_id: null });
     }
     // Táblás/tekercses UV: alapból az első nyomtatási szolgáltatás kiválasztva
@@ -765,6 +1199,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
       setProductSizeKey('custom');
       update({ product_name: product.name });
     }
+    onProductNameChange?.(product.name);
   };
 
   const handleProductSizeChange = (key: string) => {
@@ -883,7 +1318,10 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
     const allowedGroups = selectedProduct?.allowed_material_groups ?? [];
     if (allowedSpecific.length === 0 && allowedGroups.length === 0) return allMaterials;
     const groupFiltered = allowedGroups.length > 0
-      ? allMaterials.filter(m => m.material_group != null && allowedGroups.includes(m.material_group))
+      ? allMaterials.filter(m =>
+          (m.material_group != null && allowedGroups.includes(m.material_group)) ||
+          (m.material_groups ?? []).some((g: number) => allowedGroups.includes(g))
+        )
       : [];
     if (allowedSpecific.length === 0) return groupFiltered;
     if (allowedGroups.length === 0) return allowedSpecific;
@@ -893,6 +1331,30 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
   }, [selectedProduct, allMaterials]);
   const activePricing = isClickSheet ? null : pricing;
   const activeClickPricing = isClickSheet ? clickPricing : null;
+
+  // For multi-row mode, is_per_unit items scale by total row quantity instead of the manually entered quantity
+  const multiRowQty = rollRowsEnabled && rollRows.length > 1 ? rollRows.reduce((s, r) => s + r.quantity, 0) : null;
+  const effectiveCustomTotal = useMemo(() =>
+    customCostItems.reduce((s, ci) =>
+      s + (ci.is_per_unit && multiRowQty != null ? ci.selling_unit_price * multiRowQty : ci.selling_price), 0
+    ), [customCostItems, multiRowQty]); // eslint-disable-line
+
+  // Validate material after product/materials change — clear if not in the allowed list
+  useEffect(() => {
+    if (bypassMaterialValidation) return;  // trust saved material when editing existing item
+    if (!selectedProductId || allMaterials.length === 0) return;
+    if (!params.material_id) {
+      // No material selected — auto-pick first allowed for any product type
+      if (materials.length > 0) {
+        update({ material_id: materials[0].id });
+      }
+      return;
+    }
+    const isValid = materials.some((m: any) => m.id === params.material_id);
+    if (!isValid) {
+      update({ material_id: materials.length > 0 ? materials[0].id : null });
+    }
+  }, [selectedProductId, materials, allMaterials.length]); // eslint-disable-line
 
   // Auto-select first material when board/roll product loads and no material is selected
   useEffect(() => {
@@ -938,13 +1400,12 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
     if (!isBoardOrRoll || isRoll) return;
     const sc: any[] = (activePricing as any)?.size_comparison ?? [];
     if (sc.length === 0) return;
-    const hasMatch = sc.some((s: any) => Math.abs(s.size_mm[0] - boardSheetW) < 2 && Math.abs(s.size_mm[1] - boardSheetH) < 2);
-    if (hasMatch) return;
     const best = sc.find((s: any) => s.is_best) ?? sc[0];
-    if (best) {
-      setBoardSheetW(best.size_mm[0]);
-      setBoardSheetH(best.size_mm[1]);
-    }
+    if (!best) return;
+    // Skip only if already on the best entry
+    if (Math.abs(best.size_mm[0] - boardSheetW) < 2 && Math.abs(best.size_mm[1] - boardSheetH) < 2) return;
+    setBoardSheetW(best.size_mm[0]);
+    setBoardSheetH(best.size_mm[1]);
   }, [(activePricing as any)?.size_comparison]); // eslint-disable-line
 
   // Roll auto méret: ha size_comparison megérkezik, automatikusan az optimális tekercsszélességet állítjuk be
@@ -982,6 +1443,26 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
   return (
     <>
     <div style={{ padding: '8px 12px', flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+      <SectionLabel label="Név" />
+      <Input
+        size="small"
+        placeholder={selectedProduct
+          ? `${selectedProduct.name}${params.width_mm && params.height_mm ? ` – ${params.width_mm}×${params.height_mm} mm` : ''}`
+          : 'Automatikus (termék neve – méret)'}
+        value={customProductName}
+        onChange={e => {
+          setCustomProductName(e.target.value);
+          update({ product_name: e.target.value || (selectedProduct?.name ?? '') });
+          onCustomNameChange?.(e.target.value);
+        }}
+        onClear={() => {
+          setCustomProductName('');
+          update({ product_name: selectedProduct?.name ?? '' });
+          onCustomNameChange?.('');
+        }}
+        style={{ marginBottom: 8 }}
+        allowClear
+      />
       <SectionLabel label="Termék" />
       <Select
         allowClear
@@ -1000,10 +1481,10 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
       </Select>
 
       <>
-        {selectedProduct?.calculator_type !== 'roll_print' && <SectionLabel label="Méret" />}
+        {selectedProduct?.calculator_type !== 'roll_print' && !rollRowsEnabled && <SectionLabel label="Méret" />}
 
         {/* If selected product has sizes, show them; otherwise show generic presets */}
-        {selectedProduct?.calculator_type !== 'roll_print' && (selectedProduct && selectedProduct.sizes.length > 0 ? (
+        {selectedProduct?.calculator_type !== 'roll_print' && !rollRowsEnabled && (selectedProduct && selectedProduct.sizes.length > 0 ? (
           <Select
             value={productSizeKey ?? undefined}
             onChange={handleProductSizeChange}
@@ -1039,7 +1520,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
           </Select>
         ))}
 
-        {selectedProduct?.calculator_type !== 'roll_print' && <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 2 }}>
+        {selectedProduct?.calculator_type !== 'roll_print' && !rollRowsEnabled && <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 2 }}>
           <NumInput
             size="small"
             min={wMin} max={wMax}
@@ -1093,16 +1574,29 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
           );
         })()}
 
-          {/* Tekercses nyomtatás: mindig a multi-sor panel jelenik meg */}
-          {selectedProduct?.calculator_type === 'roll_print' && (
+          {/* Multi-sor panel: roll_print, sheet_print, click_sheet_print */}
+          {rollRowsEnabled && (
+            ['roll_print', 'sheet_print', 'click_sheet_print'].includes(selectedProduct?.calculator_type ?? '')
+          ) && (
             <>
               <div style={{ border: '1px solid #d6e4ff', borderRadius: 6, padding: 8, marginBottom: 8, background: '#f0f5ff' }}>
                 <div style={{ display: 'flex', alignItems: 'center', marginBottom: 6, gap: 6 }}>
                   <span style={{ fontSize: 11, fontWeight: 600, color: '#0958d9', flex: 1 }}>Méretek & mennyiségek</span>
-                  <Select size="small" value={rollDimUnit} onChange={(v: 'mm'|'cm'|'m') => {
-                    // Convert existing rows to new unit (keep mm storage, just re-display)
-                    setRollDimUnit(v);
-                  }} style={{ width: 64 }} options={[{value:'mm',label:'mm'},{value:'cm',label:'cm'},{value:'m',label:'m'}]} />
+                  {selectedProduct?.calculator_type === 'roll_print' && (
+                    <Select size="small" value={rollDimUnit} onChange={(v: 'mm'|'cm'|'m') => {
+                      setRollDimUnit(v);
+                    }} style={{ width: 64 }} options={[{value:'mm',label:'mm'},{value:'cm',label:'cm'},{value:'m',label:'m'}]} />
+                  )}
+                  {selectedProduct?.calculator_type === 'sheet_print' && (
+                    <Select size="small" value={rollDimUnit} onChange={(v: 'mm'|'cm'|'m') => {
+                      setRollDimUnit(v);
+                    }} style={{ width: 64 }} options={[{value:'mm',label:'mm'},{value:'cm',label:'cm'},{value:'m',label:'m'}]} />
+                  )}
+                  {selectedProduct?.calculator_type === 'click_sheet_print' && (
+                    <Select size="small" value={rollDimUnit} onChange={(v: 'mm'|'cm'|'m') => {
+                      setRollDimUnit(v);
+                    }} style={{ width: 64 }} options={[{value:'mm',label:'mm'},{value:'cm',label:'cm'},{value:'m',label:'m'}]} />
+                  )}
                 </div>
                   {(() => {
                     const toMm = (v: number) => rollDimUnit === 'cm' ? v * 10 : rollDimUnit === 'm' ? v * 1000 : v;
@@ -1110,14 +1604,15 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                     const step = rollDimUnit === 'm' ? 0.001 : rollDimUnit === 'cm' ? 0.1 : 1;
                     const prec = rollDimUnit === 'm' ? 3 : rollDimUnit === 'cm' ? 1 : 0;
                     return rollRows.map((row) => (
-                      <div key={row.id} style={{ display: 'flex', gap: 4, alignItems: 'center', marginBottom: 4, width: '100%' }}>
-                        <NumInput size="small" min={step} step={step} precision={prec} style={{ flex: 2, minWidth: 0 }} value={Math.round(fromMm(row.width_mm) * 10 ** prec) / 10 ** prec}
+                      <div key={row.id} style={{ marginBottom: 4 }}>
+                      <div style={{ display: 'flex', gap: 4, alignItems: 'center', width: '100%' }}>
+                        <NumInput size="small" min={step} step={step} precision={prec} style={{ width: 72, flexShrink: 0 }} value={Math.round(fromMm(row.width_mm) * 10 ** prec) / 10 ** prec}
                           onChange={v => setRollRows(rs => rs.map(r => r.id === row.id ? { ...r, width_mm: Math.round(toMm(v ?? fromMm(r.width_mm))) } : r))} />
                         <Text style={{ fontSize: 11, color: '#888', flexShrink: 0 }}>×</Text>
-                        <NumInput size="small" min={step} step={step} precision={prec} style={{ flex: 2, minWidth: 0 }} value={Math.round(fromMm(row.height_mm) * 10 ** prec) / 10 ** prec}
+                        <NumInput size="small" min={step} step={step} precision={prec} style={{ width: 72, flexShrink: 0 }} value={Math.round(fromMm(row.height_mm) * 10 ** prec) / 10 ** prec}
                           onChange={v => setRollRows(rs => rs.map(r => r.id === row.id ? { ...r, height_mm: Math.round(toMm(v ?? fromMm(r.height_mm))) } : r))} />
                         <Text style={{ fontSize: 10, color: '#aaa', flexShrink: 0 }}>{rollDimUnit}</Text>
-                        <NumInput size="small" min={1} style={{ flex: 1, minWidth: 0 }} value={row.quantity} addonAfter="db"
+                        <NumInput size="small" min={1} style={{ width: 96, flexShrink: 0 }} value={row.quantity} addonAfter="db"
                           onChange={v => setRollRows(rs => rs.map(r => r.id === row.id ? { ...r, quantity: v ?? r.quantity } : r))} />
                         {rollRowPricing[row.id] && (
                           <Text style={{ fontSize: 11, color: '#52c41a', fontWeight: 600, flexShrink: 0 }}>
@@ -1127,11 +1622,36 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                         <Button size="small" type="text" danger icon={<DeleteOutlined />} style={{ flexShrink: 0 }}
                           onClick={() => { const next = rollRows.filter(r => r.id !== row.id); setRollRows(next); }} />
                       </div>
+                      {(() => {
+                        const ips = rollRowPricing[row.id]?.items_per_sheet;
+                        // Direct size check: item larger than board in both orientations
+                        const noFitNormal = row.width_mm > boardSheetW || row.height_mm > boardSheetH;
+                        const noFitRotated = row.height_mm > boardSheetW || row.width_mm > boardSheetH;
+                        const doesntFit = (ips != null && ips === 0) || (rollRowPricing[row.id] && selectedBoardPrintSvcId && noFitNormal && noFitRotated);
+                        if (!doesntFit) return null;
+                        // Calculate boards needed per item for tiling
+                        const tilesWn = Math.ceil(row.width_mm / boardSheetW);
+                        const tilesHn = Math.ceil(row.height_mm / boardSheetH);
+                        const tilesWr = Math.ceil(row.height_mm / boardSheetW);
+                        const tilesHr = Math.ceil(row.width_mm / boardSheetH);
+                        const tilesN = tilesWn * tilesHn;
+                        const tilesR = tilesWr * tilesHr;
+                        const boardsPerItem = Math.min(tilesN, tilesR);
+                        return (
+                          <div style={{ fontSize: 10, color: '#fa8c16', paddingLeft: 2, marginTop: 1 }}>
+                            {selectedProduct?.calculator_type === 'roll_print'
+                              ? `⚠ Nem fér fel a tekercs szélességre, ezért ${boardsPerItem} tekercscsík szükséges (${boardsPerItem * row.quantity} csík összesen)`
+                              : `⚠ Nem fér fel egy táblára – 1 db = ${boardsPerItem} tábla szükséges (${boardsPerItem * row.quantity} tábla összesen)`
+                            }
+                          </div>
+                        );
+                      })()}
+                      </div>
                     ));
                   })()}
                   <Button size="small" icon={<PlusOutlined />} onClick={() => {
                     const id = rollRowIdRef.current++;
-                    setRollRows(rs => [...rs, { id, width_mm: params.width_mm ?? 0, height_mm: params.height_mm ?? 0, quantity: 1 }]);
+                    setRollRows(rs => { const last = rs[rs.length - 1]; return [...rs, { id, width_mm: last?.width_mm || 0, height_mm: last?.height_mm || 0, quantity: 1 }]; });
                   }} style={{ fontSize: 11, marginTop: 2 }}>Sor hozzáadása</Button>
                   {rollRows.length > 0 && (() => {
                     const totalQty = rollRows.reduce((s, r) => s + r.quantity, 0);
@@ -1181,7 +1701,11 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                 onChange={e => {
                   const v = e.target.value as 1 | 2;
                   setClickSides(v);
-                  if (v !== 2) setSelectedPrintSvcId2(null);
+                  if (v !== 2) {
+                    setSelectedPrintSvcId2(null);
+                  } else if (!selectedPrintSvcId2 && clickSvcOptions.length > 0) {
+                    setSelectedPrintSvcId2(clickSvcOptions[0].id);
+                  }
                 }}
                 size="small"
                 optionType="button"
@@ -1580,8 +2104,8 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
           )}
 
           {/* ── Egyedi költség (ha allow_custom_cost) ─────────────── */}
-          {selectedProduct?.allow_custom_cost && (() => {
-            const customTotal = customCostItems.reduce((s, ci) => s + ci.selling_price, 0);
+          {isAdmin && selectedProduct?.allow_custom_cost && (() => {
+            const customTotal = effectiveCustomTotal;
             const costColumns = [
               {
                 title: '', key: 'per_unit', width: 32,
@@ -1779,8 +2303,8 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
             );
           })()}
 
-          {selectedProduct?.calculator_type !== 'roll_print' && <SectionLabel label="Mennyiség" />}
-          {selectedProduct?.calculator_type !== 'roll_print' && (
+          {selectedProduct?.calculator_type !== 'roll_print' && !rollRowsEnabled && <SectionLabel label="Mennyiség" />}
+          {selectedProduct?.calculator_type !== 'roll_print' && !rollRowsEnabled && (
             <NumInput
               size="small"
               min={1}
@@ -1849,7 +2373,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
           const best = applicable.length > 0 ? applicable[0] : null;
           const discountAmt = best ? (best.discount_type === 'percent' ? Math.round(total * best.discount_value / 100) : best.discount_value) : 0;
           const hasDiscount = best && discountAmt > 0;
-          const customTotal = customCostItems.reduce((s, ci) => s + ci.selling_price, 0);
+          const customTotal = effectiveCustomTotal;
           const grandTotal = total + customTotal;
           const grandUnit = (activePricing.quantity || 1) > 0 ? grandTotal / (activePricing.quantity || 1) : 0;
           const discountedTotal = grandTotal - discountAmt;
@@ -1884,6 +2408,24 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
       </div>
 
       {/* Collapsible price breakdown (admin only) */}
+      {(isClickSheet ? activeClickPricing : activePricing) && (
+        <BulkPricingSection
+          params={params}
+          pricing={isClickSheet ? activeClickPricing as any : activePricing as any}
+          rollRows={rollRowsEnabled ? rollRows : undefined}
+          rollRowPricing={rollRowsEnabled ? rollRowPricing : undefined}
+          calcType={selectedProduct?.calculator_type}
+          boardSheetW={boardSheetW} boardSheetH={boardSheetH}
+          boardBleed={boardBleed} boardForceRotate={boardForceRotate}
+          clickSheetW={clickSheetW} clickSheetH={clickSheetH}
+          clickBleed={clickBleed} clickForceRotate={clickForceRotate}
+          clickSides={clickSides}
+          selectedPrintSvcId1={selectedPrintSvcId1} selectedPrintSvcId2={selectedPrintSvcId2}
+          flatSelectedIds={flatSelectedIds} flatFinishingIds={flatFinishingIds}
+          selectedBoardPrintSvcId={selectedBoardPrintSvcId}
+          onSelectedTiers={onBulkTiersChange}
+        />
+      )}
       {isAdmin && (isClickSheet ? activeClickPricing : activePricing) && (
         <>
           <Divider style={{ margin: '6px 0' }} />
@@ -1964,7 +2506,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                         {/* Alapanyag */}
                         {activeClickPricing.material_cost > 0 && (
                           <>
-                            <div style={{ marginTop: 2 }}>Alapanyag – <em>{activeClickPricing.material_name ?? '—'}</em>: <strong>{fmt(activeClickPricing.material_cost)}</strong></div>
+                            <div style={{ marginTop: 2 }}>Alapanyag – <em>{activeClickPricing.material_name ?? '—'}</em>{activeClickPricing.sheet_w_mm ? <span style={{ color: '#888', fontSize: 11 }}> ({activeClickPricing.sheet_w_mm}×{activeClickPricing.sheet_h_mm} mm)</span> : ''}: <strong>{fmt(activeClickPricing.material_cost)}</strong></div>
                             {renderItems(activeClickPricing.material_items)}
                           </>
                         )}
@@ -2087,7 +2629,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                   {activePricing.paper_cost > 0 && <div>Papír: <strong>{fmt(activePricing.paper_cost)}</strong></div>}
                   {/* Anyagköltség (táblás UV) */}
                   {(activePricing as any).board_material_cost > 0 && (
-                    <div>Anyagköltség{(activePricing as any).board_material_label ? ` (${(activePricing as any).board_material_label})` : ''}: <strong>{fmt((activePricing as any).board_material_cost)}</strong>
+                    <div>Anyagköltség{(activePricing as any).board_material_name ? <> – <em>{(activePricing as any).board_material_name}</em></> : (activePricing as any).board_material_label ? ` (${(activePricing as any).board_material_label})` : ''}: <strong>{fmt((activePricing as any).board_material_cost)}</strong>
                       {(activePricing as any).material_breakdown && (() => {
                         const mb = (activePricing as any).material_breakdown;
                         const isM2 = mb.unit === 'm2';
@@ -2148,10 +2690,15 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                   {activePricing.finishing_cost > 0 && <div>Kötészet: <strong>{fmt(activePricing.finishing_cost)}</strong></div>}
                   {(activePricing.service_breakdown ?? []).length > 0 && (
                     <>
-                      {(activePricing.service_breakdown ?? []).map(sb => (
+                      {(activePricing.service_breakdown ?? []).map((sb: any) => (
                         <div key={sb.id} style={{ paddingLeft: 8, color: '#555' }}>
                           {sb.name}: <strong>{fmt(sb.total)}</strong>
                           {sb.setup_cost > 0 && <span style={{ fontSize: 10, color: '#aaa' }}> (beáll.: {fmt(sb.setup_cost)})</span>}
+                          {(sb.items ?? []).map((it: any, ii: number) => (
+                            <div key={ii} style={{ paddingLeft: 10, fontSize: 11, color: '#666' }}>
+                              {it.name}: {Number(it.units).toLocaleString('hu-HU', { maximumFractionDigits: 3 })} {it.unit ?? 'db'} × {Number(it.price_per).toLocaleString('hu-HU', { minimumFractionDigits: 2 })} Ft/{it.unit ?? 'db'} = <strong>{fmt(it.total)}</strong>
+                            </div>
+                          ))}
                         </div>
                       ))}
                       <div>Extrák: <strong>{fmt(activePricing.service_cost ?? 0)}</strong></div>
@@ -2159,21 +2706,38 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                   )}
                   <Divider style={{ margin: '4px 0' }} />
                   {customCostItems.length > 0 && (() => {
-                    const customTotal = customCostItems.reduce((s, ci) => s + ci.selling_price, 0);
-                    const baseUnitPrice = (params.quantity || 1) > 0 ? (activePricing.total || 0) / (params.quantity || 1) : 0;
+                    const customTotal = effectiveCustomTotal;
+                    const totalQty = multiRowQty ?? (params.quantity || 1);
+                    const baseUnitPrice = totalQty > 0 ? (activePricing.total || 0) / totalQty : 0;
                     return (
                       <>
                         <div style={{ fontSize: 11, color: '#888', marginBottom: 1 }}>
                           Egyedi költség nélkül: {baseUnitPrice.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} Ft/db · {fmt(activePricing.total || 0)}
                         </div>
-                        <div style={{ marginBottom: 2 }}>Egyedi költségek: <strong>{fmt(customTotal)}</strong></div>
+                        <div style={{ marginBottom: 2 }}>Egyedi költségek: <strong>{fmt(customTotal)}</strong>
+                          {customCostItems.map(ci => {
+                            const isPerUnitMultiRow = ci.is_per_unit && multiRowQty != null;
+                            const ciTotal = isPerUnitMultiRow ? ci.selling_unit_price * multiRowQty! : ci.selling_price;
+                            return (
+                              <div key={ci.id} style={{ paddingLeft: 10, fontSize: 11, color: '#555', marginTop: 2 }}>
+                                <span>{ci.name}: <strong>{fmt(ciTotal)}</strong></span>
+                                {isPerUnitMultiRow && rollRows.map(row => (
+                                  <div key={row.id} style={{ paddingLeft: 12, fontSize: 10, color: '#888' }}>
+                                    {row.width_mm}×{row.height_mm}mm: {row.quantity} db × {ci.selling_unit_price.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} Ft = {fmt(row.quantity * ci.selling_unit_price)}
+                                  </div>
+                                ))}
+                              </div>
+                            );
+                          })}
+                        </div>
                       </>
                     );
                   })()}
                   {(() => {
-                    const customTotal = customCostItems.reduce((s, ci) => s + ci.selling_price, 0);
+                    const customTotal = effectiveCustomTotal;
+                    const totalQty = multiRowQty ?? (params.quantity || 1);
                     const grandTotal = (activePricing.total || 0) + customTotal;
-                    const grandUnitPrice = (params.quantity || 1) > 0 ? grandTotal / (params.quantity || 1) : 0;
+                    const grandUnitPrice = totalQty > 0 ? grandTotal / totalQty : 0;
                     return (
                       <>
                         <div style={{ fontWeight: 600 }}>Összesen: {fmt(grandTotal)}</div>
@@ -2278,8 +2842,13 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
       >
         {(() => {
           const bleed = modalBleed ?? 0;
-          const pw = Number(params.width_mm) + 2 * bleed;
-          const ph = Number(params.height_mm) + 2 * bleed;
+          const IMPOS_COLORS = ['#bae0ff','#b7eb8f','#ffd591','#ffadd2','#d3adf7','#87e8de'];
+          // For roll_print, dimensions live in rollRows[0], not in params
+          const srcW = Number(params.width_mm) || (rollRowsEnabled && rollRows[0]?.width_mm) || 0;
+          const srcH = Number(params.height_mm) || (rollRowsEnabled && rollRows[0]?.height_mm) || 0;
+          const pw = srcW + 2 * bleed;
+          const ph = srcH + 2 * bleed;
+          if (pw <= 0 || ph <= 0) return <div style={{ padding: 24, textAlign: 'center', color: '#aaa' }}>Adjon meg méretet a kalkulátorban.</div>;
           // Táblás auto módban a legjobb anyagméret alapján számolunk (nem a modalSheetW/H)
           let sw = modalSheetW;
           let sh = modalSheetH;
@@ -2289,6 +2858,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
             if (_boardBest) { sw = _boardBest.size_mm[0]; sh = _boardBest.size_mm[1]; }
           }
           const isRollMode = isBoardImpositionMode && selectedProduct?.calculator_type === 'roll_print';
+          const isMultiRowSheet = rollRowsEnabled && rollRows.length > 1 && !isRollMode;
           // Roll: elforgatott elhelyezés is megvizsgálva (mint táblás)
           const rollColsNormal  = isRollMode ? Math.floor(sw / pw) : 0;
           const rollColsRotated = isRollMode ? Math.floor(sw / ph) : 0;
@@ -2476,9 +3046,19 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                 </Col>
                 <Col span={12}>
                   <Text strong style={{ display: 'block', marginBottom: 6 }}>Termékméret (mm)</Text>
-                  <div style={{ padding: '7px 11px', background: '#fafafa', border: '1px solid #d9d9d9', borderRadius: 6, fontSize: 13 }}>
-                    {params.width_mm} × {params.height_mm} mm
-                  </div>
+                  {isMultiRowSheet || (isRollMode && rollRowsEnabled && rollRows.length > 1) ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      {rollRows.map((r, i) => (
+                        <div key={r.id} style={{ padding: '4px 8px', background: IMPOS_COLORS[i % IMPOS_COLORS.length], border: '1px solid #d9d9d9', borderRadius: 5, fontSize: 12 }}>
+                          <span style={{ color: '#0958d9', fontWeight: 600 }}>{i + 1}.</span> {r.width_mm} × {r.height_mm} mm · {r.quantity} db
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div style={{ padding: '7px 11px', background: '#fafafa', border: '1px solid #d9d9d9', borderRadius: 6, fontSize: 13 }}>
+                      {params.width_mm} × {params.height_mm} mm
+                    </div>
+                  )}
                 </Col>
               </Row>
               <Row gutter={16} style={{ marginBottom: 16 }}>
@@ -2516,15 +3096,24 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                     const multiRows: any[] = (activePricing as any)._rollRows;
                     const rollW = sw;
                     const bleedVal = modalBleed;
-                    const COLORS = ['#bae0ff','#b7eb8f','#ffd591','#ffadd2','#d3adf7','#87e8de'];
-                    // Compute per-item effective dimensions (same rotation logic as backend)
+                    const COLORS = IMPOS_COLORS;
+                    // Compute per-item effective dimensions (same rotation+tiling logic as backend)
                     const itemInfos = multiRows.map((r: any, idx: number) => {
                       const pw_i = r.width_mm + 2 * bleedVal;
                       const ph_i = r.height_mm + 2 * bleedVal;
                       const colsN = pw_i > 0 ? Math.floor(rollW / pw_i) : 0;
                       const colsR = ph_i > 0 ? Math.floor(rollW / ph_i) : 0;
                       const useRot = colsR > colsN;
-                      return { idx, eff_w: useRot ? ph_i : pw_i, eff_h: useRot ? pw_i : ph_i, qty: r.quantity, label: `${r.width_mm}×${r.height_mm}mm` };
+                      let eff_w = useRot ? ph_i : pw_i;
+                      let eff_h = useRot ? pw_i : ph_i;
+                      let qty = r.quantity;
+                      let tiles = 1;
+                      if (eff_w > rollW && rollW > 0) {
+                        tiles = Math.ceil(eff_w / rollW);
+                        eff_w = rollW;
+                        qty = qty * tiles;
+                      }
+                      return { idx, eff_w, eff_h, qty, tiles, label: tiles > 1 ? `${r.width_mm}×${r.height_mm}mm (${tiles} csík)` : `${r.width_mm}×${r.height_mm}mm` };
                     });
                     // Greedy packing (same as backend)
                     const rem = itemInfos.map(it => ({ ...it, left: it.qty }));
@@ -2602,7 +3191,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                         </div>
                       </div>
                     );
-                  })() : (
+                  })() : isMultiRowSheet ? null : (
                   <div style={{ background: '#f5f5f5', borderRadius: 8, padding: 16, marginBottom: 16, textAlign: 'center' }}>
                     <div style={{ display: 'inline-block', border: '2px solid #1677ff', padding: 4, background: '#fff' }}>
                       <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, 1fr)`, gap: 2 }}>
@@ -2630,19 +3219,277 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                   </div>
                   )}
 
+                  {/* Multi-row: board → combined 2D shelf-packing; click → separate per-row grids */}
+                  {isMultiRowSheet && (() => {
+                    const COLORS = IMPOS_COLORS;
+                    const isBoard = isBoardImpositionMode;
+
+                    if (isBoard) {
+                      // Shelf packing: pack all items from all rows onto shared boards
+                      type Inst = { w: number; h: number; ci: number; ri: number; label: string };
+                      const insts: Inst[] = [];
+                      rollRows.forEach((row, ri) => {
+                        const rpw = row.width_mm + 2 * bleed;
+                        const rph = row.height_mm + 2 * bleed;
+                        if (rpw <= 0 || rph <= 0) return;
+                        // rotate if it fits better
+                        const useRot = modalForceRotate === 'rotated' ? true
+                          : modalForceRotate === 'normal' ? false
+                          : (Math.floor(sw / rph) * Math.floor(sh / rpw)) > (Math.floor(sw / rpw) * Math.floor(sh / rph));
+                        const ew = useRot ? rph : rpw;
+                        const eh = useRot ? rpw : rph;
+                        for (let q = 0; q < row.quantity; q++) insts.push({ w: ew, h: eh, ci: ri, ri, label: `${row.width_mm}×${row.height_mm}` });
+                      });
+                      // Sort by height desc for better shelf packing
+                      insts.sort((a, b) => b.h - a.h);
+
+                      // Pack onto boards
+                      type Placement = { x: number; y: number; w: number; h: number; ci: number; label: string };
+                      type Board = { placements: Placement[] };
+                      const boards: Board[] = [];
+                      let bPlacements: Placement[] = [];
+                      let shelves: { y: number; h: number; usedW: number }[] = [];
+                      const newBoard = () => { bPlacements = []; shelves = []; };
+                      newBoard();
+
+                      for (const inst of insts) {
+                        if (inst.w > sw || inst.h > sh) continue;
+                        let placed = false;
+                        for (const shelf of shelves) {
+                          if (shelf.usedW + inst.w <= sw && inst.h <= shelf.h) {
+                            bPlacements.push({ x: shelf.usedW, y: shelf.y, w: inst.w, h: inst.h, ci: inst.ci, label: inst.label });
+                            shelf.usedW += inst.w;
+                            placed = true; break;
+                          }
+                        }
+                        if (!placed) {
+                          const lastY = shelves.length > 0 ? shelves[shelves.length - 1].y + shelves[shelves.length - 1].h : 0;
+                          if (lastY + inst.h <= sh) {
+                            shelves.push({ y: lastY, h: inst.h, usedW: inst.w });
+                            bPlacements.push({ x: 0, y: lastY, w: inst.w, h: inst.h, ci: inst.ci, label: inst.label });
+                            placed = true;
+                          }
+                        }
+                        if (!placed) {
+                          boards.push({ placements: bPlacements });
+                          newBoard();
+                          shelves.push({ y: 0, h: inst.h, usedW: inst.w });
+                          bPlacements.push({ x: 0, y: 0, w: inst.w, h: inst.h, ci: inst.ci, label: inst.label });
+                        }
+                      }
+                      if (bPlacements.length > 0) boards.push({ placements: bPlacements });
+
+                      const DISP = 200;
+                      const scale = sw > 0 ? DISP / sw : 1;
+                      const dispH = Math.round(sh * scale);
+                      const totalBoards = boards.length;
+
+                      return (
+                        <div style={{ marginBottom: 8 }}>
+                          <div style={{ fontSize: 11, fontWeight: 600, color: '#0958d9', marginBottom: 6 }}>
+                            Kombinált táblás impozíció — {totalBoards} tábla
+                          </div>
+                          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                            {boards.slice(0, 6).map((board, bi) => (
+                              <div key={bi} style={{ textAlign: 'center' }}>
+                                <svg width={DISP} height={dispH} style={{ display: 'block', border: '1.5px solid #1677ff', borderRadius: 3, background: '#f5f5f5' }}>
+                                  {board.placements.map((p, pi) => {
+                                    const rx = Math.round(p.x * scale);
+                                    const ry = Math.round(p.y * scale);
+                                    const rw = Math.max(1, Math.round(p.w * scale) - 1);
+                                    const rh = Math.max(1, Math.round(p.h * scale) - 1);
+                                    return (
+                                      <g key={pi}>
+                                        <rect x={rx} y={ry} width={rw} height={rh} fill={COLORS[p.ci % COLORS.length]} stroke="#fff" strokeWidth={0.5} rx={1} />
+                                        {rh > 10 && rw > 16 && (
+                                          <text x={rx + rw / 2} y={ry + rh / 2 + 3} textAnchor="middle" fontSize={7} fill="#0958d9">{p.label}</text>
+                                        )}
+                                      </g>
+                                    );
+                                  })}
+                                </svg>
+                                <div style={{ fontSize: 10, color: '#888', marginTop: 2 }}>{bi + 1}. tábla</div>
+                              </div>
+                            ))}
+                            {boards.length > 6 && (
+                              <div style={{ display: 'flex', alignItems: 'center', color: '#888', fontSize: 11 }}>+{boards.length - 6} tábla</div>
+                            )}
+                          </div>
+                          <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                            {rollRows.map((row, ri) => (
+                              <span key={row.id} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11 }}>
+                                <span style={{ width: 10, height: 10, background: COLORS[ri % COLORS.length], border: '1px solid #ccc', display: 'inline-block', borderRadius: 2 }} />
+                                {row.width_mm}×{row.height_mm}mm ({row.quantity} db)
+                              </span>
+                            ))}
+                          </div>
+
+                          {/* Separate per-row grids below the combined view */}
+                          <div style={{ marginTop: 10, borderTop: '1px solid #e0e0e0', paddingTop: 10 }}>
+                            <div style={{ fontSize: 11, fontWeight: 600, color: '#666', marginBottom: 6 }}>Külön-külön táblán:</div>
+                            {rollRows.map((row, ri) => {
+                              const rpw = row.width_mm + 2 * bleed;
+                              const rph = row.height_mm + 2 * bleed;
+                              if (rpw <= 0 || rph <= 0) return null;
+                              const rfN = Math.floor(sw / rpw) * Math.floor(sh / rph);
+                              const rfR = Math.floor(sw / rph) * Math.floor(sh / rpw);
+                              const rRot = modalForceRotate === 'rotated' ? true : modalForceRotate === 'normal' ? false : rfR > rfN;
+                              const rW = rRot ? Math.floor(sw / rph) : Math.floor(sw / rpw);
+                              const rH = rRot ? Math.floor(sh / rpw) : Math.floor(sh / rph);
+                              const rFit = rW * rH;
+                              const rSheets = rFit > 0 ? Math.ceil(row.quantity / rFit) : 0;
+                              const CELL = 18;
+                              const cellH = rph > 0 ? Math.round(CELL * (rRot ? rpw / rph : rph / rpw)) : CELL;
+                              return (
+                                <div key={row.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 8 }}>
+                                  <span style={{ width: 8, height: 8, background: COLORS[ri % COLORS.length], border: '1px solid #ccc', display: 'inline-block', borderRadius: 2, marginTop: 4, flexShrink: 0 }} />
+                                  <div>
+                                    <div style={{ fontSize: 11, color: '#555', marginBottom: 4 }}>
+                                      {rFit === 0
+                                        ? (() => {
+                                            const tWn = Math.ceil(rpw / sw); const tHn = Math.ceil(rph / sh);
+                                            const tWr = Math.ceil(rph / sw); const tHr = Math.ceil(rpw / sh);
+                                            const tN = tWn * tHn; const tR = tWr * tHr;
+                                            const bpi = Math.min(tN, tR);
+                                            const useRot2 = tR < tN;
+                                            const tw = useRot2 ? tWr : tWn; const th = useRot2 ? tHr : tHn;
+                                            return <span style={{ color: '#fa8c16' }}>⚠ {row.width_mm}×{row.height_mm} mm – 1 db = {bpi} tábla ({tw}×{th} rács) · {bpi * row.quantity} tábla összesen</span>;
+                                          })()
+                                        : <>{row.width_mm}×{row.height_mm} mm · {rFit} db/tábla · {rSheets} tábla</>
+                                      }
+                                    </div>
+                                    {rFit > 0 && (
+                                      <div style={{ display: 'inline-block', border: `1px solid ${COLORS[ri % COLORS.length]}`, padding: 2, background: '#fff', borderRadius: 3 }}>
+                                        <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.min(rW, 10)}, ${CELL}px)`, gap: 1 }}>
+                                          {Array.from({ length: Math.min(rW * Math.min(rH, 3), 30) }).map((_, i) => (
+                                            <div key={i} style={{ width: CELL, height: cellH, background: COLORS[ri % COLORS.length], opacity: (i < row.quantity % rFit || row.quantity % rFit === 0) ? 1 : 0.25, border: '1px solid #fff', borderRadius: 1, fontSize: 6, color: '#0958d9', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{i + 1}</div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    )}
+                                    {rFit === 0 && (() => {
+                                      const tWn = Math.ceil(rpw / sw); const tHn = Math.ceil(rph / sh);
+                                      const tWr = Math.ceil(rph / sw); const tHr = Math.ceil(rpw / sh);
+                                      const useRot2 = tWr * tHr < tWn * tHn;
+                                      const tw = useRot2 ? tWr : tWn; const th = useRot2 ? tHr : tHn;
+                                      const itemW = useRot2 ? rph : rpw; const itemH = useRot2 ? rpw : rph;
+                                      const totalW = tw * sw; const totalH = th * sh;
+                                      const DISP = 220;
+                                      const scale = DISP / Math.max(totalW, totalH * (DISP / 80));
+                                      const svgW = Math.round(totalW * scale);
+                                      const svgH = Math.round(totalH * scale);
+                                      return (
+                                        <div style={{ marginTop: 4 }}>
+                                          <svg width={svgW} height={svgH} style={{ display: 'block', overflow: 'visible' }}>
+                                            {/* Board grid */}
+                                            {Array.from({ length: tw }).map((_, xi) =>
+                                              Array.from({ length: th }).map((_, yi) => (
+                                                <rect key={`b-${xi}-${yi}`}
+                                                  x={xi * sw * scale} y={yi * sh * scale}
+                                                  width={sw * scale - 1} height={sh * scale - 1}
+                                                  fill="#f0f5ff" stroke="#1677ff" strokeWidth={1} rx={2}
+                                                />
+                                              ))
+                                            )}
+                                            {/* Item outline spanning all boards */}
+                                            <rect x={0} y={0}
+                                              width={Math.min(itemW, totalW) * scale} height={Math.min(itemH, totalH) * scale}
+                                              fill={COLORS[ri % COLORS.length]} fillOpacity={0.5}
+                                              stroke={COLORS[ri % COLORS.length]} strokeWidth={1.5} rx={2}
+                                            />
+                                            {/* Board separator lines */}
+                                            {Array.from({ length: tw - 1 }).map((_, xi) => (
+                                              <line key={`v${xi}`} x1={(xi + 1) * sw * scale} y1={0} x2={(xi + 1) * sw * scale} y2={svgH} stroke="#1677ff" strokeWidth={1} strokeDasharray="3,2" />
+                                            ))}
+                                            {Array.from({ length: th - 1 }).map((_, yi) => (
+                                              <line key={`h${yi}`} x1={0} y1={(yi + 1) * sh * scale} x2={svgW} y2={(yi + 1) * sh * scale} stroke="#1677ff" strokeWidth={1} strokeDasharray="3,2" />
+                                            ))}
+                                            {/* Labels on each board */}
+                                            {Array.from({ length: tw }).map((_, xi) =>
+                                              Array.from({ length: th }).map((_, yi) => (
+                                                <text key={`l-${xi}-${yi}`}
+                                                  x={(xi + 0.5) * sw * scale} y={(yi + 0.5) * sh * scale + 4}
+                                                  textAnchor="middle" fontSize={9} fill="#0958d9" fontWeight={600}
+                                                >{xi + 1 + yi * tw}.</text>
+                                              ))
+                                            )}
+                                          </svg>
+                                          <div style={{ fontSize: 10, color: '#888', marginTop: 2 }}>
+                                            {tw}×{th} táblarács · 1 db = {tw * th} tábla ({row.width_mm}×{row.height_mm} mm → {Math.round(sw)}×{Math.round(sh)} mm/tábla)
+                                          </div>
+                                        </div>
+                                      );
+                                    })()}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    // Click: separate per-row grids
+                    return (
+                      <>
+                        {rollRows.map((row, ri) => {
+                          const rpw = row.width_mm + 2 * bleed;
+                          const rph = row.height_mm + 2 * bleed;
+                          if (rpw <= 0 || rph <= 0) return null;
+                          const rfN = Math.floor(sw / rpw) * Math.floor(sh / rph);
+                          const rfR = Math.floor(sw / rph) * Math.floor(sh / rpw);
+                          const rRot = modalForceRotate === 'rotated' ? true : modalForceRotate === 'normal' ? false : rfR > rfN;
+                          const rW = rRot ? Math.floor(sw / rph) : Math.floor(sw / rpw);
+                          const rH = rRot ? Math.floor(sh / rpw) : Math.floor(sh / rph);
+                          const rFit = rW * rH;
+                          const rSheets = rFit > 0 ? Math.ceil(row.quantity / rFit) : 0;
+                          const CELL = 20;
+                          const cellH = rph > 0 ? Math.round(CELL * (rRot ? rpw / rph : rph / rpw)) : CELL;
+                          return (
+                            <div key={row.id} style={{ marginBottom: 10, padding: '7px 10px', background: '#fafafa', borderRadius: 6, border: '1px solid #e0e0e0' }}>
+                              <div style={{ fontSize: 11, fontWeight: 600, color: rFit === 0 ? '#fa8c16' : '#0958d9', marginBottom: 5 }}>
+                                {rFit === 0
+                                  ? `⚠ ${ri + 1}. ${row.width_mm}×${row.height_mm} mm – Nem fér fel egy ívre, több íven lesz nyomtatva`
+                                  : `${ri + 1}. ${row.width_mm}×${row.height_mm} mm · ${row.quantity} db → ${rFit} db/ív · ${rSheets} ív`
+                                }
+                              </div>
+                              {rFit > 0 && (
+                                <div style={{ display: 'inline-block', border: '1px solid #bae7ff', padding: 2, background: '#fff', borderRadius: 3 }}>
+                                  <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.min(rW, 10)}, ${CELL}px)`, gap: 1 }}>
+                                    {Array.from({ length: Math.min(rW * Math.min(rH, 4), 40) }).map((_, i) => (
+                                      <div key={i} style={{ width: CELL, height: cellH, background: i < row.quantity % rFit || row.quantity % rFit === 0 ? '#bae0ff' : '#f0f0f0', border: '1px solid #91caff', borderRadius: 1, fontSize: 7, color: '#0958d9', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{i + 1}</div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </>
+                    );
+                  })()}
+
                   {/* Eredmények */}
                   {(() => {
                     // Roll FM számítás: sorok × tétel magasság / 1000, felfelé kerekítve 0.1m-re
                     const rollLengthFm = isRollMode && rollSheetsNeeded > 0
                       ? Math.ceil(rollSheetsNeeded * rollItemLen / 100) / 10
                       : null;
+                    // Multi-row click: use aggregated totals from activeClickPricing
+                    const multiClickSheets = isMultiRowSheet ? (activeClickPricing?.sheets_needed ?? 0) : null;
+                    const multiClickClicks = isMultiRowSheet && !isBoardImpositionMode ? (activeClickPricing?.clicks_total ?? 0) : null;
+                    const totalNyomat = isMultiRowSheet && !isBoardImpositionMode
+                      ? rollRows.reduce((s, r) => s + r.quantity, 0)
+                      : totalPieces;
                     return (
                   <Row gutter={12}>
+                    {multiClickSheets === null && (
                     <Col span={8} style={{ textAlign: 'center', background: '#f6ffed', borderRadius: 8, padding: '12px 8px' }}>
                       <div style={{ fontSize: 28, fontWeight: 700, color: '#52c41a' }}>{bestFit}</div>
                       <div style={{ fontSize: 11, color: '#666' }}>{isRollMode ? 'db / sor' : isBoardImpositionMode ? 'db / tábla' : 'db / ív'}</div>
                     </Col>
-                    <Col span={8} style={{ textAlign: 'center', background: '#e6f4ff', borderRadius: 8, padding: '12px 8px' }}>
+                    )}
+                    <Col span={multiClickSheets !== null ? 12 : 8} style={{ textAlign: 'center', background: '#e6f4ff', borderRadius: 8, padding: '12px 8px' }}>
                       {isRollMode && rollLengthFm != null ? (
                         <>
                           <div style={{ fontSize: 28, fontWeight: 700, color: '#1677ff' }}>{rollLengthFm.toFixed(1)}</div>
@@ -2650,14 +3497,14 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                         </>
                       ) : (
                         <>
-                          <div style={{ fontSize: 28, fontWeight: 700, color: '#1677ff' }}>{sheetsNeeded}</div>
-                          <div style={{ fontSize: 11, color: '#666' }}>{isBoardImpositionMode ? 'tábla' : 'ív'} ({totalPieces} nyomat)</div>
+                          <div style={{ fontSize: 28, fontWeight: 700, color: '#1677ff' }}>{multiClickSheets ?? sheetsNeeded}</div>
+                          <div style={{ fontSize: 11, color: '#666' }}>{isBoardImpositionMode ? 'tábla' : 'ív'} ({totalNyomat} nyomat)</div>
                         </>
                       )}
                     </Col>
                     {!isBoardImpositionMode && !isRollMode && (
-                    <Col span={8} style={{ textAlign: 'center', background: '#fff7e6', borderRadius: 8, padding: '12px 8px' }}>
-                      <div style={{ fontSize: 28, fontWeight: 700, color: '#fa8c16' }}>{clicks}</div>
+                    <Col span={multiClickSheets !== null ? 12 : 8} style={{ textAlign: 'center', background: '#fff7e6', borderRadius: 8, padding: '12px 8px' }}>
+                      <div style={{ fontSize: 28, fontWeight: 700, color: '#fa8c16' }}>{multiClickClicks ?? clicks}</div>
                       <div style={{ fontSize: 11, color: '#666' }}>klikk ({clickSides} oldal)</div>
                     </Col>
                     )}
@@ -2675,8 +3522,8 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                     )}
                   </div>
 
-                  {/* ── Produkciós ívek/táblák vizualizáció – csak nem tekercses módban ─── */}
-                  {!isRollMode && (() => {
+                  {/* ── Produkciós ívek/táblák vizualizáció – csak nem tekercses és nem multi-sor klikkdíjas módban ─── */}
+                  {!isRollMode && !isMultiRowSheet && (() => {
                     const remainingOnLast = totalPieces % bestFit;
                     const fullSheets = remainingOnLast === 0 ? sheetsNeeded : sheetsNeeded - 1;
                     const partialItems = remainingOnLast;
@@ -2979,9 +3826,67 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                   })()}
                 </>
               ) : (
-                <div style={{ textAlign: 'center', color: '#8c8c8c', padding: '32px 0' }}>
-                  A megadott ívméreten nem fér el a termék. Adj meg nagyobb ívméretet vagy csökkentsd a ráhagyást.
-                </div>
+                (() => {
+                  // Tiling case: item too large for one board
+                  if (isBoardImpositionMode && pw > 0 && ph > 0 && sw > 0 && sh > 0) {
+                    const tWn = Math.ceil(pw / sw); const tHn = Math.ceil(ph / sh);
+                    const tWr = Math.ceil(ph / sw); const tHr = Math.ceil(pw / sh);
+                    const tN = tWn * tHn; const tR = tWr * tHr;
+                    const useRot = tR < tN;
+                    const tw = useRot ? tWr : tWn; const th = useRot ? tHr : tHn;
+                    const bpi = useRot ? tR : tN;
+                    const itemW = useRot ? ph : pw; const itemH = useRot ? pw : ph;
+                    const DISP = 280;
+                    const scale = Math.min(DISP / (tw * sw), 120 / (th * sh));
+                    const svgW = Math.round(tw * sw * scale);
+                    const svgH = Math.round(th * sh * scale);
+                    const qty = params.quantity || 1;
+                    return (
+                      <div style={{ padding: '12px 0' }}>
+                        <div style={{ marginBottom: 8, color: '#fa8c16', fontWeight: 600, fontSize: 12 }}>
+                          ⚠ A termék nem fér fel egy táblára – tiling mód: 1 db = {bpi} tábla ({tw}×{th} rács) · {bpi * qty} tábla összesen
+                        </div>
+                        <div style={{ textAlign: 'center' }}>
+                          <svg width={svgW} height={svgH} style={{ display: 'inline-block', overflow: 'visible' }}>
+                            {Array.from({ length: tw }).map((_, xi) =>
+                              Array.from({ length: th }).map((_, yi) => (
+                                <rect key={`b-${xi}-${yi}`} x={xi * sw * scale} y={yi * sh * scale}
+                                  width={sw * scale - 1} height={sh * scale - 1}
+                                  fill="#f0f5ff" stroke="#1677ff" strokeWidth={1.5} rx={2} />
+                              ))
+                            )}
+                            <rect x={0} y={0} width={Math.min(itemW, tw * sw) * scale} height={Math.min(itemH, th * sh) * scale}
+                              fill="#bae0ff" fillOpacity={0.7} stroke="#0958d9" strokeWidth={2} rx={2} />
+                            {Array.from({ length: tw - 1 }).map((_, xi) => (
+                              <line key={`v${xi}`} x1={(xi + 1) * sw * scale} y1={0} x2={(xi + 1) * sw * scale} y2={svgH}
+                                stroke="#1677ff" strokeWidth={1} strokeDasharray="4,3" />
+                            ))}
+                            {Array.from({ length: th - 1 }).map((_, yi) => (
+                              <line key={`h${yi}`} x1={0} y1={(yi + 1) * sh * scale} x2={svgW} y2={(yi + 1) * sh * scale}
+                                stroke="#1677ff" strokeWidth={1} strokeDasharray="4,3" />
+                            ))}
+                            {Array.from({ length: tw }).map((_, xi) =>
+                              Array.from({ length: th }).map((_, yi) => (
+                                <text key={`l-${xi}-${yi}`} x={(xi + 0.5) * sw * scale} y={(yi + 0.5) * sh * scale + 4}
+                                  textAnchor="middle" fontSize={10} fill="#0958d9" fontWeight={700}>
+                                  {xi + 1 + yi * tw}.
+                                </text>
+                              ))
+                            )}
+                          </svg>
+                          <div style={{ fontSize: 11, color: '#888', marginTop: 6 }}>
+                            {Math.round(sw)}×{Math.round(sh)} mm/tábla · {tw}×{th} rács
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  }
+                  return (
+                    <div style={{ textAlign: 'center', color: '#8c8c8c', padding: '32px 0' }}>
+                      A megadott ívméreten nem fér el a termék. Adj meg nagyobb ívméretet vagy csökkentsd a ráhagyást.
+                    </div>
+                  );
+                })()
               )}
             </div>
           );

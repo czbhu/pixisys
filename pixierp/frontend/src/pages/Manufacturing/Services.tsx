@@ -695,6 +695,15 @@ const Services: React.FC = () => {
           default_source_unified: defaultSourceUnified,
       });
       form.setFieldValue('unit_selling_price', service.unit_selling_price);
+
+      // Load cost items from source service so they're pre-filled in the copy
+      api.get(`/manufacturing/service-cost-items/?service_id=${service.id}`)
+        .then(res => {
+          const items = Array.isArray(res.data) ? res.data : (res.data.results || []);
+          setAllCostItems(items.map((it: any) => ({ ...it, id: undefined, service: undefined })));
+        })
+        .catch(() => setAllCostItems([]));
+
       setModalVisible(true);
   };
 
@@ -758,6 +767,13 @@ const Services: React.FC = () => {
       } else {
         const res = await api.post('/manufacturing/services/', payload);
         savedService = res.data;
+        // Copy pre-filled cost items (from handleCopy) to the new service
+        const itemsToCopy = allCostItems.filter(it => !it.id);
+        if (itemsToCopy.length > 0) {
+          await Promise.all(itemsToCopy.map(it =>
+            api.post('/manufacturing/service-cost-items/', { ...it, id: undefined, service: savedService.id })
+          ));
+        }
         message.success('Szolgáltatás létrehozva');
       }
 

@@ -11,6 +11,11 @@ import {
   Tag,
   Switch,
   TreeSelect,
+  Drawer,
+  Tooltip,
+  Table,
+  Divider,
+  Select,
 } from 'antd';
 import {
   PlusOutlined,
@@ -18,6 +23,11 @@ import {
   DeleteOutlined,
   ExclamationCircleOutlined,
   DownloadOutlined,
+  GlobalOutlined,
+  ApiOutlined,
+  SyncOutlined,
+  CopyOutlined,
+  LinkOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import api from '../../services/api';
@@ -26,6 +36,8 @@ import EnhancedTable from '../../components/EnhancedTable';
 import ExportButton from '../../components/ExportButton';
 
 const { TextArea } = Input;
+
+const BASE_URL = window.location.origin;
 
 interface MaterialGroup {
   id: number;
@@ -39,6 +51,10 @@ interface MaterialGroup {
   parent?: number | null;
   parent_name?: string;
   children?: MaterialGroup[];
+  public_slug?: string | null;
+  public_title?: string;
+  public_description?: string;
+  show_prices?: boolean;
 }
 
 interface MaterialGroupFormValues {
@@ -59,6 +75,15 @@ const MaterialGroups: React.FC = () => {
   const [editingGroup, setEditingGroup] = useState<MaterialGroup | null>(null);
   const [initialFormValues, setInitialFormValues] = useState<MaterialGroupFormValues>({});
   const [form] = Form.useForm();
+  // API sync drawer
+  const [apiDrawerGroup, setApiDrawerGroup] = useState<MaterialGroup | null>(null);
+  const [apiSyncs, setApiSyncs] = useState<any[]>([]);
+  const [apiSyncsLoading, setApiSyncsLoading] = useState(false);
+  const [editingSync, setEditingSync] = useState<any | null>(null);
+  const [syncForm] = Form.useForm();
+  const [syncRunning, setSyncRunning] = useState<number | null>(null);
+  const [syncDrawerOpen, setSyncDrawerOpen] = useState(false);
+  const [syncSuppliers, setSyncSuppliers] = useState<{ id: number; name: string }[]>([]);
 
 
 
@@ -150,7 +175,11 @@ const MaterialGroups: React.FC = () => {
       name: group.name || '',
       description: group.description || '',
       is_active: !!group.is_active,
-    };
+      public_slug: group.public_slug || undefined,
+      public_title: group.public_title || '',
+      public_description: group.public_description || '',
+      show_prices: group.show_prices !== false,
+    } as any;
     setInitialFormValues(values);
     form.resetFields();
     form.setFieldsValue(values);
@@ -242,6 +271,62 @@ const MaterialGroups: React.FC = () => {
       }));
   };
 
+  // ── API sync functions ────────────────────────────────────────────────────
+  const openApiDrawer = async (group: MaterialGroup) => {
+    setApiDrawerGroup(group);
+    setSyncDrawerOpen(true);
+    setApiSyncsLoading(true);
+    try {
+      const [syncsRes, suppRes] = await Promise.all([
+        api.get(`/warehouse/material-group-api-syncs/?material_group=${group.id}`),
+        api.get('/crm/companies/?is_supplier=true&page_size=500'),
+      ]);
+      setApiSyncs(syncsRes.data.results ?? syncsRes.data ?? []);
+      const suppData = suppRes.data.results ?? suppRes.data ?? [];
+      setSyncSuppliers(suppData.map((s: any) => ({ id: s.id, name: s.name })));
+    } catch { message.error('Hiba betöltéskor'); }
+    finally { setApiSyncsLoading(false); }
+  };
+
+  const saveSync = async () => {
+    try {
+      const values = await syncForm.validateFields();
+      const payload = { ...values, material_group: apiDrawerGroup?.id };
+      if (editingSync?.id) {
+        await api.patch(`/warehouse/material-group-api-syncs/${editingSync.id}/`, payload);
+      } else {
+        await api.post('/warehouse/material-group-api-syncs/', payload);
+      }
+      message.success('Mentve');
+      setEditingSync(null);
+      syncForm.resetFields();
+      if (apiDrawerGroup) {
+        const res = await api.get(`/warehouse/material-group-api-syncs/?material_group=${apiDrawerGroup.id}`);
+        setApiSyncs(res.data.results ?? res.data ?? []);
+      }
+    } catch { message.error('Mentési hiba'); }
+  };
+
+  const runSync = async (syncId: number) => {
+    setSyncRunning(syncId);
+    try {
+      const res = await api.post(`/warehouse/material-group-api-syncs/${syncId}/run/`);
+      message.success(res.data.message || 'Szinkronizáció kész');
+      if (apiDrawerGroup) {
+        const r2 = await api.get(`/warehouse/material-group-api-syncs/?material_group=${apiDrawerGroup.id}`);
+        setApiSyncs(r2.data.results ?? r2.data ?? []);
+      }
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || 'Szinkronizációs hiba');
+    } finally { setSyncRunning(null); }
+  };
+
+  const deleteSync = async (id: number) => {
+    await api.delete(`/warehouse/material-group-api-syncs/${id}/`);
+    setApiSyncs(prev => prev.filter(s => s.id !== id));
+    message.success('Törölve');
+  };
+
   const columns: ColumnsType<MaterialGroup> = [
     {
       title: 'Gyűjtő neve',
@@ -307,16 +392,32 @@ const MaterialGroups: React.FC = () => {
       sorter: (a: any, b: any) => (a.created_by_name || '').localeCompare(b.created_by_name || '', 'hu'),
     },
     {
+      title: 'Publikus link',
+      key: 'public_slug',
+      render: (_, record: MaterialGroup) => record.public_slug ? (
+        <Space size={4}>
+          <Tag color="blue" icon={<LinkOutlined />}>{BASE_URL}/shop/{record.public_slug}</Tag>
+          <Tooltip title="Link másolása">
+            <Button size="small" icon={<CopyOutlined />} onClick={() => {
+              navigator.clipboard.writeText(`${BASE_URL}/shop/${record.public_slug}`);
+              message.success('Link másolva!');
+            }} />
+          </Tooltip>
+        </Space>
+      ) : <Tag color="default">Nincs publikus link</Tag>,
+    },
+    {
       title: 'Műveletek',
       key: 'actions',
-      width: 120,
+      width: 150,
       render: (_, record: MaterialGroup) => (
         <Space>
-          <Button
-            size="small"
-            icon={<EditOutlined />}
-            onClick={() => showEditModal(record)}
-          />
+          <Tooltip title="Szerkesztés">
+            <Button size="small" icon={<EditOutlined />} onClick={() => showEditModal(record)} />
+          </Tooltip>
+          <Tooltip title="API szinkronizáció beállítása">
+            <Button size="small" icon={<ApiOutlined />} onClick={() => openApiDrawer(record)} />
+          </Tooltip>
           <Popconfirm
             title={
               (record.materials_count > 0 || (record.children && record.children.length > 0))
@@ -329,9 +430,7 @@ const MaterialGroups: React.FC = () => {
             disabled={record.materials_count > 0 || (record.children && record.children.length > 0)}
           >
             <Button
-              size="small"
-              danger
-              icon={<DeleteOutlined />}
+              size="small" danger icon={<DeleteOutlined />}
               disabled={record.materials_count > 0 || (record.children && record.children.length > 0)}
             />
           </Popconfirm>
@@ -411,21 +510,151 @@ const MaterialGroups: React.FC = () => {
           </Form.Item>
 
           <Form.Item name="description" label="Leírás">
-            <TextArea
-              rows={3}
-              placeholder="Opcionális leírás a gyűjtőről"
-            />
+            <TextArea rows={3} placeholder="Opcionális leírás a gyűjtőről" />
           </Form.Item>
 
+          <Divider orientation="left" style={{ fontSize: 12, color: '#888' }}>Publikus oldal beállítások</Divider>
+
           <Form.Item
-            name="is_active"
-            label="Aktív"
-            valuePropName="checked"
+            name="public_slug"
+            label="Publikus link (slug)"
+            help={form.getFieldValue('public_slug') ? `${BASE_URL}/shop/${form.getFieldValue('public_slug')}` : 'pl. ajandektargyak → /shop/ajandektargyak'}
+            rules={[{ pattern: /^[a-z0-9-]*$/, message: 'Csak kisbetű, szám és kötőjel' }]}
           >
+            <Input placeholder="ajandektargyak" prefix={<GlobalOutlined />} addonBefore="/shop/" />
+          </Form.Item>
+
+          <Form.Item name="public_title" label="Publikus cím">
+            <Input placeholder="Ha üres, a kategória neve jelenik meg" />
+          </Form.Item>
+
+          <Form.Item name="public_description" label="Publikus leírás (HTML, opcionális)">
+            <TextArea rows={3} placeholder="<p>Termék kategória leírása...</p>" />
+          </Form.Item>
+
+          <Form.Item name="show_prices" label="Árak megjelenítése" valuePropName="checked">
+            <Switch checkedChildren="Igen" unCheckedChildren="Nem" />
+          </Form.Item>
+
+          <Form.Item name="is_active" label="Aktív" valuePropName="checked">
             <Switch />
           </Form.Item>
         </Form>
       </Modal>
+
+      {/* ── API Sync Drawer ──────────────────────────────────────────────── */}
+      <Drawer
+        title={<Space><ApiOutlined /> API szinkronizáció — {apiDrawerGroup?.name}</Space>}
+        open={syncDrawerOpen}
+        onClose={() => { setSyncDrawerOpen(false); setEditingSync(null); syncForm.resetFields(); }}
+        width={680}
+        destroyOnHidden
+      >
+        <Form form={syncForm} layout="vertical" onFinish={saveSync}>
+          <Form.Item name="name" label="Szinkron neve" rules={[{ required: true }]}>
+            <Input placeholder="pl. Webshop termékek" />
+          </Form.Item>
+          <Form.Item name="api_url" label="API URL" rules={[{ required: true, type: 'url' }]}>
+            <Input placeholder="https://api.example.com/products" />
+          </Form.Item>
+          <Form.Item name="api_method" label="HTTP metódus" initialValue="GET">
+            <Select options={[{ value: 'GET', label: 'GET' }, { value: 'POST', label: 'POST' }]} style={{ width: 120 }} />
+          </Form.Item>
+          <Form.Item name="api_headers" label='Fejlécek (JSON, pl. {"Authorization":"Bearer TOKEN"})'>
+            <Input.TextArea rows={2} placeholder='{"Authorization": "Bearer TOKEN"}' />
+          </Form.Item>
+          <Form.Item name="api_body" label="GET paraméterek / POST törzs (JSON)">
+            <Input.TextArea rows={2} placeholder='{"per_page": 100}' />
+          </Form.Item>
+          <Form.Item name="items_path" label='Tömb elérési útja a válaszban (pl. "results" vagy "data.items")'>
+            <Input placeholder="results" />
+          </Form.Item>
+          <Form.Item name="field_mapping" label='Mező-leképezés (JSON: külső mező → belső mező)' help='Belső mezők: name, code, description, unit_selling_price, unit, width, length, height, dimension_unit'>
+            <Input.TextArea rows={4} placeholder='{"termek_nev": "name", "cikkszam": "code", "ar": "unit_selling_price", "me": "unit"}' />
+          </Form.Item>
+          <Form.Item name="sync_interval_minutes" label="Frissítési gyakoriság" initialValue={1440}>
+            <Select style={{ width: 240 }} options={[
+              { value: 30,    label: '30 percenként' },
+              { value: 60,    label: 'Óránként' },
+              { value: 180,   label: '3 óránként' },
+              { value: 360,   label: '6 óránként' },
+              { value: 720,   label: '12 óránként' },
+              { value: 1440,  label: 'Naponta (ajánlott)' },
+              { value: 4320,  label: 'Háromnaponta' },
+              { value: 10080, label: 'Hetente' },
+            ]} />
+          </Form.Item>
+
+          <Form.Item name="default_supplier" label="Alapértelmezett beszállító" help="A szinkronizált termékek ehhez a beszállítóhoz lesznek rendelve">
+            <Select
+              allowClear showSearch placeholder="Válassz beszállítót (opcionális)"
+              filterOption={(input, opt) => String(opt?.label ?? '').toLowerCase().includes(input.toLowerCase())}
+              options={syncSuppliers.map(s => ({ value: s.id, label: s.name }))}
+              style={{ width: '100%' }}
+            />
+          </Form.Item>
+
+          <Form.Item name="default_markup_percentage" label="Haszonkulcs (%)" initialValue={0}
+            help="Eladási ár = Bsz. ár × (1 + haszonkulcs / 100). Pl. 30 → 30% felár. 0 = nincs számítás.">
+            <Input type="number" min={0} step={1} style={{ width: 140 }} addonAfter="%" />
+          </Form.Item>
+          <Form.Item name="is_active" label="Aktív" valuePropName="checked" initialValue={true}>
+            <Switch />
+          </Form.Item>
+          <Space>
+            <Button type="primary" htmlType="submit">{editingSync ? 'Frissítés' : 'Hozzáadás'}</Button>
+            {editingSync && <Button onClick={() => { setEditingSync(null); syncForm.resetFields(); }}>Mégse</Button>}
+          </Space>
+        </Form>
+
+        <Divider />
+
+        <Table
+          dataSource={apiSyncs}
+          rowKey="id"
+          loading={apiSyncsLoading}
+          size="small"
+          pagination={false}
+          columns={[
+            { title: 'Név', dataIndex: 'name', key: 'name' },
+            { title: 'URL', dataIndex: 'api_url', key: 'api_url', ellipsis: true, render: (u: string) => <a href={u} target="_blank" rel="noreferrer">{u}</a> },
+            { title: 'Gyakoriság', dataIndex: 'sync_interval_minutes', key: 'interval', width: 130,
+              render: (m: number) => {
+                const opts: Record<number, string> = { 30: '30 perc', 60: '1 óra', 180: '3 óra', 360: '6 óra', 720: '12 óra', 1440: 'Napi', 4320: '3 nap', 10080: 'Heti' };
+                return <Tag>{opts[m] || `${m} perc`}</Tag>;
+              },
+            },
+            { title: 'Státusz', dataIndex: 'last_sync_status', key: 'status', width: 90,
+              render: (s: string, r: any) => <Tooltip title={r.last_sync_message}><Tag color={s === 'ok' ? 'success' : s === 'error' ? 'error' : 'default'}>{r.last_sync_count > 0 ? `${r.last_sync_count} db` : s || '—'}</Tag></Tooltip>
+            },
+            { title: 'Műveletek', key: 'actions', width: 130,
+              render: (_: any, r: any) => (
+                <Space size={4}>
+                  <Tooltip title="Futtatás most">
+                    <Button size="small" icon={<SyncOutlined spin={syncRunning === r.id} />} loading={syncRunning === r.id} onClick={() => runSync(r.id)} />
+                  </Tooltip>
+                  <Tooltip title="Szerkesztés">
+                    <Button size="small" icon={<EditOutlined />} onClick={() => {
+                      setEditingSync(r);
+                      syncForm.setFieldsValue({
+                        ...r,
+                        api_headers: r.api_headers ? JSON.stringify(r.api_headers, null, 2) : '',
+                        api_body: r.api_body ? JSON.stringify(r.api_body, null, 2) : '',
+                        field_mapping: r.field_mapping ? JSON.stringify(r.field_mapping, null, 2) : '',
+                        default_supplier: r.default_supplier ?? undefined,
+                        default_markup_percentage: r.default_markup_percentage ?? 0,
+                      });
+                    }} />
+                  </Tooltip>
+                  <Popconfirm title="Törlés?" onConfirm={() => deleteSync(r.id)} okText="Törlés" cancelText="Mégse">
+                    <Button size="small" danger icon={<DeleteOutlined />} />
+                  </Popconfirm>
+                </Space>
+              ),
+            },
+          ]}
+        />
+      </Drawer>
     </div>
   );
 };

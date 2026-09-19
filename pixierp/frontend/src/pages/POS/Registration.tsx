@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { Button, Card, Form, Input, Modal, Select, Space, Switch, Tag, message } from 'antd';
+import { Button, Card, Form, Input, Modal, Select, Space, Switch, Tag, TreeSelect, message } from 'antd';
 import EnhancedTable from '../../components/EnhancedTable';
 import { EditOutlined, PlusOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import api from '../../services/api';
 import { deepSearchMatch } from '../../utils/searchUtils';
+
+const { SHOW_PARENT } = TreeSelect;
 
 interface CashRegisterOption {
   id: number;
@@ -15,7 +17,25 @@ interface CashRegisterOption {
 interface MaterialGroupOption {
   id: number;
   name: string;
+  parent: number | null;
 }
+
+// Recursively builds antd TreeSelect data (parent nodes contain their subcategories as children)
+const buildGroupTree = (groups: MaterialGroupOption[], parentId: number | null = null): any[] =>
+  groups
+    .filter(g => (g.parent ?? null) === parentId)
+    .map(g => ({
+      title: g.name,
+      value: g.id,
+      key: g.id,
+      children: buildGroupTree(groups, g.id),
+    }));
+
+// Selecting a parent category must include all of its subcategories too
+const collectGroupIdsWithDescendants = (id: number, groups: MaterialGroupOption[]): number[] => {
+  const children = groups.filter(g => g.parent === id);
+  return [id, ...children.flatMap(c => collectGroupIdsWithDescendants(c.id, groups))];
+};
 
 interface EmployeeOption {
   id: number;
@@ -23,6 +43,11 @@ interface EmployeeOption {
   user_first_name?: string;
   user_last_name?: string;
   user_username?: string;
+}
+
+interface WarehouseOption {
+  id: number;
+  name: string;
 }
 
 interface POSTerminal {
@@ -35,6 +60,8 @@ interface POSTerminal {
   show_all_categories: boolean;
   material_group_ids: number[];
   material_group_names: string[];
+  warehouse_ids: number[];
+  warehouse_names: string[];
   authorized_employee_ids: number[];
   authorized_employee_names: string[];
   is_active: boolean;
@@ -47,6 +74,7 @@ const Registration: React.FC = () => {
   const [terminals, setTerminals] = useState<POSTerminal[]>([]);
   const [cashRegisters, setCashRegisters] = useState<CashRegisterOption[]>([]);
   const [materialGroups, setMaterialGroups] = useState<MaterialGroupOption[]>([]);
+  const [warehouses, setWarehouses] = useState<WarehouseOption[]>([]);
   const [employees, setEmployees] = useState<EmployeeOption[]>([]);
   const [searchText, setSearchText] = useState('');
   const [form] = Form.useForm();
@@ -58,21 +86,24 @@ const Registration: React.FC = () => {
   const fetchAll = async () => {
     setLoading(true);
     try {
-      const [terminalsRes, cashRes, groupRes, employeeRes] = await Promise.all([
+      const [terminalsRes, cashRes, groupRes, warehouseRes, employeeRes] = await Promise.all([
         api.get('/pos/terminals/'),
         api.get('/finance/cash-registers/', { params: { is_active: true } }),
         api.get('/warehouse/material-groups/', { params: { is_active: true, page_size: 5000 } }),
+        api.get('/warehouse/warehouses/', { params: { is_active: true, page_size: 5000 } }),
         api.get('/hr/employees/', { params: { page_size: 5000 } }),
       ]);
 
       const terminalData = terminalsRes.data?.results || terminalsRes.data || [];
       const cashData = cashRes.data?.results || cashRes.data || [];
       const groupData = groupRes.data?.results || groupRes.data || [];
+      const warehouseData = warehouseRes.data?.results || warehouseRes.data || [];
       const employeeData = employeeRes.data?.results || employeeRes.data || [];
 
       setTerminals(Array.isArray(terminalData) ? terminalData : []);
       setCashRegisters(Array.isArray(cashData) ? cashData : []);
       setMaterialGroups(Array.isArray(groupData) ? groupData : []);
+      setWarehouses(Array.isArray(warehouseData) ? warehouseData : []);
       setEmployees(Array.isArray(employeeData) ? employeeData : []);
     } catch {
       message.error('Nem sikerült betölteni a POS regisztráció adatait');
@@ -88,6 +119,7 @@ const Registration: React.FC = () => {
       is_active: true,
       show_all_categories: true,
       material_group_ids: [],
+      warehouse_ids: [],
       authorized_employee_ids: [],
     });
     setModalOpen(true);
@@ -102,6 +134,7 @@ const Registration: React.FC = () => {
       cash_register: row.cash_register,
       show_all_categories: row.show_all_categories,
       material_group_ids: row.material_group_ids || [],
+      warehouse_ids: row.warehouse_ids || [],
       authorized_employee_ids: row.authorized_employee_ids || [],
       is_active: row.is_active,
     });
@@ -110,9 +143,15 @@ const Registration: React.FC = () => {
 
   const handleSubmit = async (values: any) => {
     try {
+      // Expand each selected category to include all of its subcategories
+      const expandedGroupIds = Array.from(new Set(
+        ((values.material_group_ids || []) as number[]).flatMap((id: number) =>
+          collectGroupIdsWithDescendants(id, materialGroups))
+      ));
       const payload = {
         ...values,
-        material_group_ids: values.show_all_categories ? [] : (values.material_group_ids || []),
+        material_group_ids: values.show_all_categories ? [] : expandedGroupIds,
+        warehouse_ids: values.warehouse_ids || [],
       };
 
       if (editing) {
@@ -151,6 +190,14 @@ const Registration: React.FC = () => {
           : (row.material_group_names || []).length
             ? row.material_group_names.join(', ')
             : '-',
+    },
+    {
+      title: 'Raktárak',
+      key: 'warehouse_names',
+      render: (_: any, row) =>
+        (row.warehouse_names || []).length
+          ? row.warehouse_names.join(', ')
+          : 'Összes',
     },
     {
       title: 'Jogosultak',
@@ -240,15 +287,30 @@ const Registration: React.FC = () => {
 
           {!showAllCategories && (
             <Form.Item name="material_group_ids" label="Kategóriák kiválasztása">
-              <Select mode="multiple" placeholder="Válassz kategóriákat">
-                {materialGroups.map((group) => (
-                  <Select.Option key={group.id} value={group.id}>
-                    {group.name}
-                  </Select.Option>
-                ))}
-              </Select>
+              <TreeSelect
+                treeData={buildGroupTree(materialGroups)}
+                treeCheckable
+                showCheckedStrategy={SHOW_PARENT}
+                treeDefaultExpandAll
+                placeholder="Válassz kategóriákat"
+                allowClear
+              />
             </Form.Item>
           )}
+
+          <Form.Item
+            name="warehouse_ids"
+            label="Raktárak"
+            help="Ha üres, minden raktárban lévő termék megjelenik. Ha meg van adva, csak a kiválasztott raktár(ak)ban lévő készlettel rendelkező termékek jelennek meg."
+          >
+            <Select mode="multiple" allowClear placeholder="Válassz raktárakat (üresen: összes)">
+              {warehouses.map((wh) => (
+                <Select.Option key={wh.id} value={wh.id}>
+                  {wh.name}
+                </Select.Option>
+              ))}
+            </Select>
+          </Form.Item>
 
           <Form.Item name="authorized_employee_ids" label="Jogosultak">
             <Select mode="multiple" placeholder="Válassz alkalmazottakat">

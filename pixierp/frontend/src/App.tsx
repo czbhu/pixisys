@@ -26,7 +26,10 @@ import PublicTicket from './pages/Public/PublicTicket';
 import PublicSite from './pages/Public/PublicSite';
 import ClientPortal from './pages/Public/ClientPortal';
 import ClientPortalLogin, { ClientPortalMagicLoginPage, ClientPortalForgotPassword } from './pages/Public/ClientPortalLogin';
+import ClientPortalPrintShop from './pages/Public/ClientPortalPrintShop';
 import KioskPage from './pages/Public/KioskPage';
+import PublicProductCatalog from './pages/Public/PublicProductCatalog';
+import PublicShopIndex from './pages/Public/PublicShopIndex';
 import SiteManagement from './pages/SiteManagement/SiteManagement';
 import SiteManagementPreview from './pages/SiteManagement/SiteManagementPreview';
 import POSSales from './pages/POS/Sales';
@@ -47,6 +50,8 @@ import CartDrawer from './components/Cart/CartDrawer';
 import { manufacturingService } from './services/manufacturingService';
 import { notificationWS } from './services/notificationWebSocket';
 import './App.css';
+import './i18n';
+import { TranslationProvider } from './contexts/TranslationContext';
 
 import { notificationService } from './services/notificationService';
 
@@ -62,6 +67,7 @@ function AppContent() {
   const location = useLocation();
   const isSitePreviewPage = /^\/site-management\/[^/]+$/.test(location.pathname);
   const isPublicPrintPreview = location.pathname.startsWith('/public/print-preview/');
+  const isPublicShopPath = location.pathname === '/shop' || location.pathname.startsWith('/shop/');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [mobileMenuVisible, setMobileMenuVisible] = useState(false);
@@ -263,6 +269,12 @@ function AppContent() {
     return <PrintPreviewPage />;
   }
 
+  // Public shop — no sidebar, no auth, accessible even when logged out
+  if (isPublicShopPath) {
+    const shopSlug = location.pathname.replace(/^\/shop\/?/, '').split('/')[0];
+    return shopSlug ? <PublicProductCatalog /> : <PublicShopIndex />;
+  }
+
   if (!user) {
     return (
       <Routes>
@@ -279,6 +291,8 @@ function AppContent() {
         <Route path="/portal/login" element={<ClientPortalLogin />} />
         <Route path="/portal/forgot-password" element={<ClientPortalForgotPassword />} />
         <Route path="/portal/magic/:token" element={<ClientPortalMagicLoginPage />} />
+        <Route path="/portal/printshop" element={<ClientPortalPrintShop />} />
+        <Route path="/kiosk" element={<KioskPage />} />
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     );
@@ -383,6 +397,7 @@ function AppContent() {
             <Route path="/portal/login" element={<ClientPortalLogin />} />
             <Route path="/portal/forgot-password" element={<ClientPortalForgotPassword />} />
             <Route path="/portal/magic/:token" element={<ClientPortalMagicLoginPage />} />
+            <Route path="/portal/printshop" element={<ClientPortalPrintShop />} />
             <Route path="/kiosk" element={<KioskPage />} />
             <Route path="/hr/*" element={<HRModule />} />
             <Route path="/sales/*" element={<SalesModule />} />
@@ -416,6 +431,7 @@ function App() {
     <ConfigProvider locale={huHU}>
       <SettingsProvider>
         <AuthProvider>
+          <TranslationProvider>
           <ActionHistoryProvider>
             <TimeTrackerProvider>
               <CartProvider>
@@ -425,6 +441,7 @@ function App() {
               </CartProvider>
             </TimeTrackerProvider>
           </ActionHistoryProvider>
+          </TranslationProvider>
         </AuthProvider>
       </SettingsProvider>
     </ConfigProvider>
