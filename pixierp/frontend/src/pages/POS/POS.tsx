@@ -46,6 +46,7 @@ interface Material {
   current_stock: number;
   discount_price?: number;
   material_group?: number | null;
+  material_groups?: number[] | null;
 }
 
 interface MaterialGroup {
@@ -99,6 +100,44 @@ const POS: React.FC<POSProps> = ({ showAllCategories = true, allowedMaterialGrou
   const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(null);
   const [selectedCategoryName, setSelectedCategoryName] = useState<string>('');
 
+  // Reszponzív mód: lg (992px) alatti képernyőkön a panelek egymás alá kerülnek
+  const [isMobile, setIsMobile] = useState(() => window.matchMedia('(max-width: 991px)').matches);
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 991px)');
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
+
+  // Táblamagasság mérése: a termékkosár/lista pontosan a rendelkezésre álló helyig érjen
+  // (a virtuális táblához numerikus scroll.y kell, ezért mérünk ResizeObserver-rel)
+  const productsWrapRef = useRef<HTMLDivElement>(null);
+  const cartWrapRef = useRef<HTMLDivElement>(null);
+  const [prodTableY, setProdTableY] = useState(420);
+  const [cartTableY, setCartTableY] = useState(320);
+
+  useEffect(() => {
+    const measure = () => {
+      const pw = productsWrapRef.current;
+      if (pw) {
+        const header = pw.querySelector('.ant-table-header') as HTMLElement | null;
+        setProdTableY(Math.max(180, pw.clientHeight - (header?.offsetHeight || 40) - 2));
+      }
+      const cw = cartWrapRef.current;
+      if (cw) {
+        const header = cw.querySelector('.ant-table-header') as HTMLElement | null;
+        setCartTableY(Math.max(120, cw.clientHeight - (header?.offsetHeight || 40) - 2));
+      }
+    };
+    measure();
+    const t = setTimeout(measure, 150); // a táblafejléc renderelése után újramér
+    const ro = new ResizeObserver(measure);
+    if (productsWrapRef.current) ro.observe(productsWrapRef.current);
+    if (cartWrapRef.current) ro.observe(cartWrapRef.current);
+    window.addEventListener('resize', measure);
+    return () => { clearTimeout(t); ro.disconnect(); window.removeEventListener('resize', measure); };
+  }, [isMobile, materials, categories]);
+
   // Get display tax number (full format if available)
   const getDisplayTaxNumber = (customer: Customer | null): string => {
     if (!customer) return '';
@@ -151,6 +190,16 @@ const POS: React.FC<POSProps> = ({ showAllCategories = true, allowedMaterialGrou
     filterMaterials();
   }, [searchText, materials, showAllCategories, allowedMaterialGroupIds, selectedCategoryId, categories]);
 
+  // Kategória modal megnyitásakor görgetés a kiválasztott kategória csempéjéhez
+  useEffect(() => {
+    if (!categoryModalOpen || selectedCategoryId === null) return;
+    const timer = setTimeout(() => {
+      const el = document.querySelector(`[data-cat-id="${selectedCategoryId}"]`);
+      el?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }, 150);
+    return () => clearTimeout(timer);
+  }, [categoryModalOpen, categoryModalParentId, selectedCategoryId]);
+
   useEffect(() => {
     const handleGlobalTyping = (event: KeyboardEvent) => {
       const activeElement = document.activeElement as HTMLElement | null;
@@ -190,40 +239,39 @@ const POS: React.FC<POSProps> = ({ showAllCategories = true, allowedMaterialGrou
     const body = document.querySelector('.pos-products-table .ant-table-body');
     if (!body) return;
 
-    const handleScroll = () => {
-      const rows = body.querySelectorAll('tbody tr');
-      if (!rows.length || !filteredMaterials.length) return;
+    const handleScroll = (e: Event) => {
+      if (!filteredMaterials.length) return;
 
-      const bodyRect = body.getBoundingClientRect();
-      let visibleRowIndex = -1;
+      // Virtuális táblánál a DOM-ban csak a látható sorok vannak, és a görgető
+      // elem a belső rc-virtual-list-holder: az indexet a scroll pozícióból
+      // számoljuk a tényleges sormagasság alapján.
+      const scrollEl = e.target as HTMLElement | null;
+      const scrollTop = scrollEl?.scrollTop ?? 0;
+      const firstRow = body.querySelector('tbody tr') as HTMLElement | null;
+      const rowHeight = firstRow?.offsetHeight || 30;
+      const rowIndex = Math.max(0, Math.min(
+        filteredMaterials.length - 1,
+        Math.round(scrollTop / rowHeight),
+      ));
 
-      for (let i = 0; i < rows.length; i++) {
-        const rowRect = rows[i].getBoundingClientRect();
-        if (rowRect.bottom > bodyRect.top + 10) {
-          visibleRowIndex = i;
-          break;
+      const item = filteredMaterials[rowIndex];
+      const firstLetter = (item?.name || '').charAt(0).toUpperCase();
+      if (firstLetter) {
+        setCurrentProductLetter(firstLetter);
+        setShowProductLetter(true);
+        if (productLetterTimeoutRef.current) {
+          window.clearTimeout(productLetterTimeoutRef.current);
         }
-      }
-
-      if (visibleRowIndex >= 0 && visibleRowIndex < filteredMaterials.length) {
-        const item = filteredMaterials[visibleRowIndex];
-        const firstLetter = (item?.name || '').charAt(0).toUpperCase();
-        if (firstLetter) {
-          setCurrentProductLetter(firstLetter);
-          setShowProductLetter(true);
-          if (productLetterTimeoutRef.current) {
-            window.clearTimeout(productLetterTimeoutRef.current);
-          }
-          productLetterTimeoutRef.current = window.setTimeout(() => {
-            setShowProductLetter(false);
-          }, 600);
-        }
+        productLetterTimeoutRef.current = window.setTimeout(() => {
+          setShowProductLetter(false);
+        }, 600);
       }
     };
 
-    body.addEventListener('scroll', handleScroll, { passive: true });
+    // capture: a virtuális lista belső konténerének scroll eseményét is elkapjuk
+    body.addEventListener('scroll', handleScroll, { passive: true, capture: true });
     return () => {
-      body.removeEventListener('scroll', handleScroll);
+      body.removeEventListener('scroll', handleScroll, { capture: true } as any);
       if (productLetterTimeoutRef.current) {
         window.clearTimeout(productLetterTimeoutRef.current);
       }
@@ -273,17 +321,26 @@ const POS: React.FC<POSProps> = ({ showAllCategories = true, allowedMaterialGrou
     return [id, ...children.flatMap(c => collectCategoryIdsWithDescendants(c.id, groups))];
   };
 
+  // Egy termék akkor tartozik egy (gyermekekkel bővített) kategória-halmazhoz,
+  // ha a material_group FK VAGY a material_groups M2M kapcsolat bármelyike illeszkedik.
+  // (A külső szinkronból származó termékek jellemzően csak M2M kapcsolattal rendelkeznek.)
+  const matchesAnyCategory = (mat: Material, ids: number[]): boolean => {
+    if (mat.material_group && ids.includes(mat.material_group)) return true;
+    if (mat.material_groups && mat.material_groups.some(id => ids.includes(id))) return true;
+    return false;
+  };
+
   const filterMaterials = () => {
     let categoryFiltered = showAllCategories
       ? materials
       : materials.filter((mat) => {
           if (!allowedMaterialGroupIds.length) return false;
-          return !!mat.material_group && allowedMaterialGroupIds.includes(mat.material_group);
+          return matchesAnyCategory(mat, allowedMaterialGroupIds);
         });
 
     if (selectedCategoryId !== null) {
       const idsWithDescendants = collectCategoryIdsWithDescendants(selectedCategoryId, categories);
-      categoryFiltered = categoryFiltered.filter(mat => !!mat.material_group && idsWithDescendants.includes(mat.material_group));
+      categoryFiltered = categoryFiltered.filter(mat => matchesAnyCategory(mat, idsWithDescendants));
     }
 
     if (!searchText) {
@@ -472,7 +529,7 @@ const POS: React.FC<POSProps> = ({ showAllCategories = true, allowedMaterialGrou
     {
       title: 'Művelet',
       key: 'action',
-      width: 56,
+      width: 72,
       className: 'pos-col-action',
       render: (_: any, record: Material) => (
         <Button
@@ -531,8 +588,11 @@ const POS: React.FC<POSProps> = ({ showAllCategories = true, allowedMaterialGrou
     {
       title: '',
       key: 'edit',
-      width: 44,
+      // 96px: a jobb szélre érő 56px-es virtuális scrollbar mellett is
+      // marad hely a ceruza gombnak (44px gomb + ~52px scroll-terület)
+      width: 96,
       fixed: 'right' as const,
+      align: 'left' as const,
       render: (_: any, record: Material) => (
         <Button
           icon={<EditOutlined />}
@@ -607,10 +667,15 @@ const POS: React.FC<POSProps> = ({ showAllCategories = true, allowedMaterialGrou
 
   // Main POS screen - all in one page
   return (
-    <div className="pos-content" style={{ padding: '12px 16px', height: 'calc(100vh - 64px)', overflow: 'hidden' }}>
+    <div
+      className="pos-content"
+      style={isMobile
+        ? { padding: '8px', minHeight: 'calc(100dvh - 64px)' }
+        : { padding: '12px 16px', height: 'calc(100vh - 64px)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
+    >
       {/* Last transaction - one row */}
       {lastTransaction && (
-        <Card size="small" style={{ marginBottom: '16px' }}>
+        <Card size="small" style={{ marginBottom: '16px', flex: '0 0 auto' }}>
           <Row gutter={16}>
             <Col span={12}>
               <Text strong>Utolsó vásárlás fizetett összeg: </Text>
@@ -628,7 +693,7 @@ const POS: React.FC<POSProps> = ({ showAllCategories = true, allowedMaterialGrou
         </Card>
       )}
 
-      <Row gutter={16} style={{ marginBottom: '10px' }}>
+      <Row gutter={[12, 8]} style={{ marginBottom: '10px', flex: '0 0 auto' }}>
         {/* Customer button */}
         <Col flex="auto">
           <Button
@@ -637,8 +702,8 @@ const POS: React.FC<POSProps> = ({ showAllCategories = true, allowedMaterialGrou
             onClick={() => setCustomerModalOpen(true)}
             size="large"
             block
-            style={{ 
-              height: '60px', 
+            style={{
+              height: isMobile ? '48px' : '60px',
               fontSize: '16px',
               padding: selectedCustomer ? '4px 12px' : undefined,
               whiteSpace: 'normal',
@@ -667,14 +732,15 @@ const POS: React.FC<POSProps> = ({ showAllCategories = true, allowedMaterialGrou
         </Col>
         
         {/* Discount toggle button */}
-        <Col>
+        <Col style={isMobile ? { flex: '1 1 100%' } : undefined}>
           <Button
             size="large"
             disabled={!selectedCustomer}
             onClick={() => setShowDiscountPrices((prev) => !prev)}
             style={{
-              height: '60px',
-              minWidth: '220px',
+              height: isMobile ? '48px' : '60px',
+              width: '100%',
+              minWidth: isMobile ? 0 : '220px',
               backgroundColor: showDiscountPrices ? '#52c41a' : '#8c8c8c',
               borderColor: showDiscountPrices ? '#52c41a' : '#8c8c8c',
               color: 'white',
@@ -687,12 +753,16 @@ const POS: React.FC<POSProps> = ({ showAllCategories = true, allowedMaterialGrou
         </Col>
       </Row>
 
-      <Row gutter={16}>
+      <Row
+        gutter={16}
+        style={isMobile ? { marginBottom: 8 } : { flex: '1 1 auto', minHeight: 0 }}
+      >
         {/* Products section - left side */}
-        <Col xs={24} lg={14}>
+        <Col xs={24} lg={14} style={isMobile ? { height: '58vh' } : { height: '100%', minHeight: 0 }}>
           <Card
+            className="pos-fill-card"
             title={
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div className="pos-toolbar" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                 <Title level={4} style={{ margin: 0 }}>Termékek</Title>
                 <Input
                   ref={searchInputRef}
@@ -707,7 +777,15 @@ const POS: React.FC<POSProps> = ({ showAllCategories = true, allowedMaterialGrou
                 <Button
                   icon={<AppstoreOutlined />}
                   type={selectedCategoryId !== null ? 'primary' : 'default'}
-                  onClick={() => { setCategoryModalParentId(null); setCategoryModalOpen(true); }}
+                  onClick={() => {
+                    // Ha már van kiválasztott kategória, a modal egyből annak a
+                    // szintjére nyisson (a kiválasztott csempe látszódjon).
+                    const sel = selectedCategoryId !== null
+                      ? categories.find(c => c.id === selectedCategoryId)
+                      : undefined;
+                    setCategoryModalParentId(sel?.parent ?? null);
+                    setCategoryModalOpen(true);
+                  }}
                 >
                   {selectedCategoryId !== null ? selectedCategoryName : 'Kategóriák'}
                 </Button>
@@ -722,9 +800,9 @@ const POS: React.FC<POSProps> = ({ showAllCategories = true, allowedMaterialGrou
               </div>
             }
             styles={{ header: { padding: '12px 16px' }, body: { padding: '8px' } }}
-            style={{ height: 'calc(100vh - 168px)' }}
+            style={{ height: '100%' }}
           >
-            <div style={{ position: 'relative' }}>
+            <div ref={productsWrapRef} className="pos-table-wrap" style={{ position: 'relative' }}>
               <Table
                 className="pos-products-table pos-compact-table"
                 dataSource={filteredMaterials}
@@ -732,7 +810,8 @@ const POS: React.FC<POSProps> = ({ showAllCategories = true, allowedMaterialGrou
                 rowKey="id"
                 loading={loadingMaterials}
                 pagination={false}
-                scroll={{ x: 'max-content', y: 'calc(100vh - 260px)' }}
+                virtual
+                scroll={{ x: 716, y: prodTableY }}
                 size="small"
                 tableLayout="fixed"
               />
@@ -759,8 +838,9 @@ const POS: React.FC<POSProps> = ({ showAllCategories = true, allowedMaterialGrou
         </Col>
 
         {/* Cart section - right side */}
-        <Col xs={24} lg={10}>
+        <Col xs={24} lg={10} style={isMobile ? undefined : { height: '100%', minHeight: 0 }}>
           <Card
+            className="pos-fill-card"
             title={
               <div className="pos-cart-header-row">
                 <Title level={4} style={{ margin: 0 }}>Kosár ({cartItems.length})</Title>
@@ -783,19 +863,21 @@ const POS: React.FC<POSProps> = ({ showAllCategories = true, allowedMaterialGrou
               </div>
             }
             styles={{ header: { padding: '12px 16px' }, body: { padding: '8px' } }}
-            style={{ height: 'calc(100vh - 168px)' }}
+            style={{ height: '100%' }}
           >
-            <Table
-              className="pos-cart-table pos-compact-table"
-              dataSource={cartItems}
-              columns={cartColumns}
-              rowKey={(item, index) => `${item.material_id}-${index}`}
-              pagination={false}
-              scroll={{ y: 'calc(100vh - 350px)' }}
-              size="small"
-              tableLayout="fixed"
-              locale={{ emptyText: 'Üres kosár' }}
-            />
+            <div ref={cartWrapRef} className="pos-table-wrap" style={isMobile ? { height: 300 } : undefined}>
+              <Table
+                className="pos-cart-table pos-compact-table"
+                dataSource={cartItems}
+                columns={cartColumns}
+                rowKey={(item, index) => `${item.material_id}-${index}`}
+                pagination={false}
+                scroll={{ y: cartTableY }}
+                size="small"
+                tableLayout="fixed"
+                locale={{ emptyText: 'Üres kosár' }}
+              />
+            </div>
           </Card>
         </Col>
       </Row>
@@ -990,6 +1072,7 @@ const POS: React.FC<POSProps> = ({ showAllCategories = true, allowedMaterialGrou
         onCancel={() => setCategoryModalOpen(false)}
         footer={null}
         width={640}
+        styles={{ body: { maxHeight: '62vh', overflowY: 'auto' } }}
       >
         {(() => {
           const currentParent = categories.find(c => c.id === categoryModalParentId) || null;
@@ -1037,6 +1120,7 @@ const POS: React.FC<POSProps> = ({ showAllCategories = true, allowedMaterialGrou
                     return (
                       <button
                         key={c.id}
+                        data-cat-id={c.id}
                         onClick={() => (childHasChildren ? setCategoryModalParentId(c.id) : selectCategory(c.id, c.name))}
                         style={{
                           width: 130, cursor: 'pointer', border: 'none', borderRadius: 10,

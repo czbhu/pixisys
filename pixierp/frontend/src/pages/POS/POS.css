@@ -115,11 +115,21 @@
 /* POS Sales - compact tables and touchscreen scrollbar */
 .pos-compact-table .ant-table-thead > tr > th {
   padding: 3px 6px !important;
-  font-size: 24px !important;
-  line-height: 1.1 !important;
+  font-size: 14px !important;
+  line-height: 1.2 !important;
+  white-space: nowrap !important;
 }
 
 .pos-compact-table .ant-table-tbody > tr > td {
+  padding: 2px 6px !important;
+  font-size: 24px !important;
+  line-height: 1.05 !important;
+}
+
+/* Virtuális tábla: a sorok/cellák DIV-ek — CSAK tipográfia!
+   (Fix sormagasság + flex itt szétszedte a táblát: a DIV sorok nem nyúlnak,
+   mint a <tr>, a 24px tartalom kilógott volna a 26px-es keretből.) */
+.pos-compact-table .ant-table-tbody-virtual .ant-table-row .ant-table-cell {
   padding: 2px 6px !important;
   font-size: 24px !important;
   line-height: 1.05 !important;
@@ -133,6 +143,25 @@
 .pos-cart-table .ant-table-body::-webkit-scrollbar {
   width: 56px;
   height: 56px;
+}
+
+/* Antd virtuális tábla saját scrollbar eleme — ez a valódi görgetősáv virtual módban */
+.pos-products-table .ant-table-tbody-virtual-scrollbar-vertical,
+.pos-cart-table .ant-table-tbody-virtual-scrollbar-vertical {
+  width: 56px !important;
+  background: #f1f1f1 !important;
+  border-radius: 16px !important;
+  cursor: pointer;
+}
+.pos-products-table .ant-table-tbody-virtual-scrollbar-thumb,
+.pos-cart-table .ant-table-tbody-virtual-scrollbar-thumb {
+  width: 40px !important;
+  border-radius: 24px !important;
+  background: #1890ff !important;
+}
+.pos-products-table .ant-table-tbody-virtual-scrollbar-thumb:hover,
+.pos-cart-table .ant-table-tbody-virtual-scrollbar-thumb:hover {
+  background: #40a9ff !important;
 }
 
 .pos-products-table .ant-table-body::-webkit-scrollbar-track,
@@ -302,4 +331,110 @@
 
 .pos-products-table .pos-col-name {
   padding-left: 3px !important;
+}
+
+/* ── Teljes magasságú panelek: a táblák pontosan a rendelkezésre álló helyig érnek ── */
+.pos-fill-card {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.pos-fill-card > .ant-card-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.pos-table-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.pos-table-wrap > .ant-table-wrapper {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* ── Mobil optimalizálás (≤767px) ── */
+@media (max-width: 767px) {
+  /* Fejléc: kompakt, óra/üdvözlés elrejtése, kisebb kassza összeg */
+  .pos-page-header {
+    padding: 0 8px !important;
+  }
+  .pos-h-title {
+    font-size: 13px !important;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 46vw;
+  }
+  .pos-h-clock,
+  .pos-h-welcome {
+    display: none !important;
+  }
+  .pos-h-cash {
+    font-size: 18px !important;
+    line-height: 24px !important;
+    padding: 1px 8px !important;
+  }
+
+  /* Terméktábla: kisebb betű, természetes sormagasság */
+  .pos-compact-table .ant-table-tbody > tr > td {
+    font-size: 15px !important;
+    line-height: 1.25 !important;
+  }
+  .pos-compact-table .ant-table-tbody > tr {
+    height: auto !important;
+  }
+  .pos-compact-table .ant-table-tbody-virtual .ant-table-row .ant-table-cell {
+    font-size: 15px !important;
+    line-height: 1.25 !important;
+  }
+  .pos-compact-table .ant-table-thead > tr > th {
+    font-size: 12px !important;
+    padding: 4px 6px !important;
+    white-space: nowrap !important;
+  }
+
+  /* Vékonyabb, de ujjbarát scrollbar */
+  .pos-products-table .ant-table-body::-webkit-scrollbar,
+  .pos-cart-table .ant-table-body::-webkit-scrollbar {
+    width: 40px;
+    height: 40px;
+  }
+  .pos-products-table .ant-table-body::-webkit-scrollbar-thumb,
+  .pos-cart-table .ant-table-body::-webkit-scrollbar-thumb {
+    border: 6px solid #f1f1f1;
+  }
+  .pos-products-table .ant-table-tbody-virtual-scrollbar-vertical,
+  .pos-cart-table .ant-table-tbody-virtual-scrollbar-vertical {
+    width: 40px !important;
+  }
+  .pos-products-table .ant-table-tbody-virtual-scrollbar-thumb,
+  .pos-cart-table .ant-table-tbody-virtual-scrollbar-thumb {
+    width: 28px !important;
+  }
+
+  /* Termék panel fejléc: kereső saját sorba, gombok mellé */
+  .pos-toolbar {
+    flex-wrap: wrap;
+  }
+  .pos-toolbar .pos-product-search {
+    flex: 1 1 100% !important;
+    margin: 4px 0;
+  }
+  .pos-toolbar .ant-typography {
+    font-size: 15px !important;
+  }
+
+  /* Kosár fejléc gombok kisebbek */
+  .pos-cart-header-row .ant-btn {
+    padding: 4px 8px;
+    font-size: 12px;
+  }
 }

@@ -6,6 +6,7 @@ from .models import (
     MaterialStock, MaterialReceipt, MaterialReceiptBatch, StockMovement,
     SupplierInvoice, InvoiceItem,
     ScrapRecord, ScrapItem, MaterialRemnant, MaterialGroupApiSync, MaterialBarcode,
+    Stocktake, StocktakeItem,
 )
 from apps.crm.models import Company
 
@@ -48,9 +49,13 @@ class MaterialGroupSerializer(serializers.ModelSerializer):
         url = getattr(obj, '_image_url', None)
         if not url:
             return None
-        if url.startswith('http'):
-            return url
-        return f"https://utteam.com/utt_img/product_images/640/{url.lstrip('/')}"
+        from urllib.parse import quote
+        if not url.startswith('http'):
+            url = f"https://utteam.com/utt_img/product_images/640/{url.lstrip('/')}"
+        # Helyi proxyn keresztül szolgáljuk ki (letöltés + 320px miniatűr +
+        # szerver oldali gyorsítótár + böngésző cache fejléc): a külső macma.hu /
+        # utteam.com képek közvetlen betöltése lassú a POS terminálokon.
+        return f"/api/v1/warehouse/material-groups/category-image/?u={quote(url, safe='')}"
 
 
 class MaterialGroupApiSyncSerializer(serializers.ModelSerializer):
@@ -698,3 +703,83 @@ class MaterialRemnantSerializer(serializers.ModelSerializer):
         if obj.created_by:
             return obj.created_by.get_full_name() or obj.created_by.username
         return ''
+
+
+class StocktakeItemSerializer(serializers.ModelSerializer):
+    """Leltár tétel: mennyiségek + számolt értékek."""
+    purchase_value = serializers.SerializerMethodField()
+    book_value = serializers.SerializerMethodField()
+
+    class Meta:
+        model = StocktakeItem
+        fields = [
+            'id', 'material', 'material_code', 'material_name', 'material_unit',
+            'book_quantity', 'counted_quantity', 'unit_cost_price', 'book_unit_value',
+            'purchase_value', 'book_value',
+        ]
+
+    def get_purchase_value(self, obj):
+        # Leltár értéke beszerzés alapján: megszámolt × beszerzési egységár
+        return float((obj.counted_quantity or 0) * (obj.unit_cost_price or 0))
+
+    def get_book_value(self, obj):
+        # Leltár értéke rögzítés (nyilvántartás) alapján
+        return float((obj.book_quantity or 0) * (obj.book_unit_value or 0))
+
+
+class StocktakeSerializer(serializers.ModelSerializer):
+    """Leltár jegyzőkönyv listához/retrieve-hoz összesített értékekkel."""
+    warehouse_name = serializers.CharField(source='warehouse.name', read_only=True)
+    created_by_name = serializers.SerializerMethodField()
+    item_count = serializers.SerializerMethodField()
+    purchase_value = serializers.SerializerMethodField()
+    book_value = serializers.SerializerMethodField()
+    difference = serializers.SerializerMethodField()
+    items = StocktakeItemSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Stocktake
+        fields = [
+            'id', 'warehouse', 'warehouse_name', 'date', 'created_by', 'created_by_name',
+            'note', 'updated_at', 'item_count', 'purchase_value', 'book_value', 'difference', 'items',
+        ]
+        read_only_fields = ['id', 'date', 'created_by', 'updated_at', 'warehouse']
+
+    def get_created_by_name(self, obj):
+        if obj.created_by:
+            return obj.created_by.get_full_name() or obj.created_by.username
+        return ''
+
+    def get_item_count(self, obj):
+        if hasattr(obj, '_prefetched_objects_cache') and 'items' in obj._prefetched_objects_cache:
+            return len(obj._prefetched_objects_cache['items'])
+        return obj.items.count()
+
+    def get_purchase_value(self, obj):
+        items = self._items_of(obj)
+        return float(sum((i.counted_quantity or 0) * (i.unit_cost_price or 0) for i in items))
+
+    def get_book_value(self, obj):
+        items = self._items_of(obj)
+        return float(sum((i.book_quantity or 0) * (i.book_unit_value or 0) for i in items))
+
+    def get_difference(self, obj):
+        items = self._items_of(obj)
+        purchase = sum((i.counted_quantity or 0) * (i.unit_cost_price or 0) for i in items)
+        book = sum((i.book_quantity or 0) * (i.book_unit_value or 0) for i in items)
+        return float(purchase - book)
+
+    def _items_of(self, obj):
+        if hasattr(obj, '_prefetched_objects_cache') and 'items' in obj._prefetched_objects_cache:
+            return obj._prefetched_objects_cache['items']
+        return list(obj.items.all())
+
+
+class StocktakeListSerializer(StocktakeSerializer):
+    """Leltár lista: items (tételek) nélkül, csak összesített értékekkel."""
+
+    class Meta(StocktakeSerializer.Meta):
+        fields = [f for f in StocktakeSerializer.Meta.fields if f != 'items']
+
+    def get_item_count(self, obj):
+        return obj.items.count()

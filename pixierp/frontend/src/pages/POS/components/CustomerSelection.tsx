@@ -92,6 +92,12 @@ interface Props {
   isModal?: boolean;
 }
 
+// Modul-szintű ügyfél lista cache: a POS "Nyugtás" gombbal gyakran nyitott modal
+// ne kérje le újra a (lassú, PixInvoice-proxyn átjáró) teljes listát minden egyes
+// megnyitáskor — csak ha lejárt a TTL vagy újra kell tölteni (új/módosított ügyfél).
+let customerListCache: { data: Customer[]; ts: number } | null = null;
+const CUSTOMER_CACHE_TTL_MS = 5 * 60 * 1000; // 5 perc
+
 const CustomerSelection: React.FC<Props> = ({
   selectedCustomer,
   onChange,
@@ -193,20 +199,18 @@ const CustomerSelection: React.FC<Props> = ({
           const style = document.createElement('style');
           style.id = styleId;
           style.textContent = `
-            .customer-selection-modal .ant-table-body::-webkit-scrollbar {
-              width: 40px !important;
-              height: 40px !important;
-            }
-            .customer-selection-modal .ant-table-body::-webkit-scrollbar-track {
+            .customer-selection-modal .ant-table-tbody-virtual-scrollbar-vertical {
+              width: 44px !important;
               background: #f1f1f1 !important;
-              border-radius: 10px !important;
+              border-radius: 12px !important;
+              cursor: pointer;
             }
-            .customer-selection-modal .ant-table-body::-webkit-scrollbar-thumb {
+            .customer-selection-modal .ant-table-tbody-virtual-scrollbar-thumb {
+              width: 30px !important;
+              border-radius: 12px !important;
               background: #1890ff !important;
-              border-radius: 10px !important;
-              border: 5px solid #f1f1f1 !important;
             }
-            .customer-selection-modal .ant-table-body::-webkit-scrollbar-thumb:hover {
+            .customer-selection-modal .ant-table-tbody-virtual-scrollbar-thumb:hover {
               background: #40a9ff !important;
             }
           `;
@@ -226,42 +230,34 @@ const CustomerSelection: React.FC<Props> = ({
 
   // Track scroll for alphabetical index
   useEffect(() => {
-    const handleScroll = () => {
+    const handleScroll = (e: Event) => {
       const tableBody = document.querySelector('.customer-selection-modal .ant-table-body');
       if (!tableBody || filteredCustomers.length === 0) return;
-      
-      // Find the first VISIBLE row using getBoundingClientRect for pixel-perfect accuracy
-      const containerRect = tableBody.getBoundingClientRect();
-      const rows = Array.from(tableBody.querySelectorAll('tbody tr')) as HTMLElement[];
-      
-      // Find first row that is visible in viewport (top edge is within container)
-      let visibleRowIndex = -1;
-      for (let i = 0; i < rows.length; i++) {
-        const rowRect = rows[i].getBoundingClientRect();
-        // Check if row's top is at or below container's top (visible)
-        if (rowRect.top >= containerRect.top - 5) { // -5px tolerance
-          visibleRowIndex = i;
-          break;
-        }
-      }
-      
-      console.log('[AlphabetIndex] visibleRowIndex:', visibleRowIndex, 'totalRows:', rows.length);
-      
-      if (visibleRowIndex >= 0 && visibleRowIndex < filteredCustomers.length) {
-        const visibleCustomer = filteredCustomers[visibleRowIndex];
-        if (visibleCustomer?.name) {
-          const firstLetter = visibleCustomer.name.charAt(0).toUpperCase();
-          console.log('[AlphabetIndex] Setting letter:', firstLetter, 'for customer:', visibleCustomer.name);
-          setCurrentLetter(firstLetter);
-        }
+
+      // Virtuális táblánál a görgető elem a belső rc-virtual-list-holder, és a
+      // DOM-ban csak a látható sorok élnek: az indexet a scroll pozícióból
+      // számoljuk a tényleges sormagasság alapján.
+      const scrollEl = e.target as HTMLElement | null;
+      const scrollTop = scrollEl?.scrollTop ?? 0;
+      const firstRow = tableBody.querySelector('tbody tr') as HTMLElement | null;
+      const rowHeight = firstRow?.offsetHeight || 39;
+      const rowIndex = Math.max(0, Math.min(
+        filteredCustomers.length - 1,
+        Math.round(scrollTop / rowHeight),
+      ));
+
+      const visibleCustomer = filteredCustomers[rowIndex];
+      if (visibleCustomer?.name) {
+        setCurrentLetter(visibleCustomer.name.charAt(0).toUpperCase());
       }
     };
 
     // Find the customer modal table body element (not other tables on the page!)
     const tableBody = document.querySelector('.customer-selection-modal .ant-table-body');
     if (tableBody) {
-      tableBody.addEventListener('scroll', handleScroll);
-      return () => tableBody.removeEventListener('scroll', handleScroll);
+      // capture: a virtuális lista belső konténerének scroll eseményét is elkapjuk
+      tableBody.addEventListener('scroll', handleScroll, { passive: true, capture: true });
+      return () => tableBody.removeEventListener('scroll', handleScroll, { capture: true } as any);
     }
   }, [filteredCustomers]);
 
@@ -278,22 +274,22 @@ const CustomerSelection: React.FC<Props> = ({
           const tableBody = document.querySelector('.customer-selection-modal .ant-table-body') as HTMLElement;
           
           if (tableBody) {
-            // Find the actual row element and scroll it into view
+            // Virtuális táblánál a cél sor gyakran nincs a DOM-ban: közvetlenül
+            // a görgető elemet állítjuk (index × sormagasság), ha kell.
+            const scroller = (tableBody.querySelector('.rc-virtual-list-holder') as HTMLElement)
+              || (tableBody as HTMLElement);
+            const firstRow = tableBody.querySelector('tbody tr') as HTMLElement | null;
+            const rowHeight = firstRow?.offsetHeight || 39;
             const rows = Array.from(tableBody.querySelectorAll('tbody tr')) as HTMLElement[];
             const targetRow = rows[index];
-            
-            if (targetRow) {
-              console.log('[AutoScroll] Scrolling to row:', index, 'using scrollIntoView');
-              
-              // Scroll the row into view at the top of the container
+
+            if (targetRow && scroller === tableBody) {
               targetRow.scrollIntoView({ block: 'start', behavior: 'auto' });
-              
-              setSelectedRow(filteredCustomers[index]);
             } else {
-              console.log('[AutoScroll] Target row element not found!');
+              scroller.scrollTop = Math.max(0, index * rowHeight);
             }
-          } else {
-            console.log('[AutoScroll] Table body NOT FOUND!');
+
+            setSelectedRow(filteredCustomers[index]);
           }
         } else {
           console.log('[AutoScroll] Customer not found in filtered list (index -1)');
@@ -302,13 +298,20 @@ const CustomerSelection: React.FC<Props> = ({
     }
   }, [modalVisible, isModal, lastSelectedCustomerId, filteredCustomers, loading]);
 
-  const fetchCustomers = async () => {
+  const fetchCustomers = async (force = false) => {
+    // Cache hit: azonnal adjuk ki a listát, háttérben nem töltünk újra
+    if (!force && customerListCache && Date.now() - customerListCache.ts < CUSTOMER_CACHE_TTL_MS) {
+      setCustomers(customerListCache.data);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
       const response = await api.get('/crm/companies/', {
-        params: { page_size: 1000, type: 'customer' }
+        params: { page_size: 1000, type: 'customer', compact: 1 }
       });
       const data = response.data.results || response.data;
+      customerListCache = { data, ts: Date.now() };
       setCustomers(data);
     } catch (error) {
       console.error('Error fetching customers:', error);
@@ -546,7 +549,7 @@ const CustomerSelection: React.FC<Props> = ({
         onChange(response.data);
         saveLastSelectedCustomer(response.data.id);
         setModalVisible(false);
-        fetchCustomers();
+        fetchCustomers(true);
       } else {
         // Create new customer
         const response = await api.post('/crm/companies/', {
@@ -561,7 +564,7 @@ const CustomerSelection: React.FC<Props> = ({
         onChange(response.data);
         saveLastSelectedCustomer(response.data.id);
         setModalVisible(false);
-        fetchCustomers();
+        fetchCustomers(true);
       }
     } catch (error) {
       console.error('Error saving customer:', error);
@@ -574,25 +577,28 @@ const CustomerSelection: React.FC<Props> = ({
       title: 'Ügyfél neve',
       dataIndex: 'name',
       key: 'name',
+      width: 280,
       ellipsis: true,
     },
     {
       title: 'Adószám',
       dataIndex: 'tax_number',
       key: 'tax_number',
-      width: 150,
+      width: 130,
+      ellipsis: true,
     },
     {
       title: 'Irányítószám',
       dataIndex: 'postal_code',
       key: 'postal_code',
-      width: 120,
+      width: 110,
     },
     {
       title: 'Város',
       dataIndex: 'city',
       key: 'city',
       width: 150,
+      ellipsis: true,
     },
     {
       title: 'Cím',
@@ -618,45 +624,62 @@ const CustomerSelection: React.FC<Props> = ({
       <>
         <style>
           {`
-            /* Force scrollbar visibility and styling */
-            .customer-selection-modal .ant-table-body {
-              overflow-y: scroll !important;
-              scrollbar-width: thick !important;
-              scrollbar-color: #1890ff #f1f1f1 !important;
-            }
-            
-            /* WebKit scrollbar - wider and more visible */
-            .customer-selection-modal .ant-table-body::-webkit-scrollbar {
-              width: 40px !important;
-              display: block !important;
-            }
-            
-            .customer-selection-modal .ant-table-body::-webkit-scrollbar-track {
+            /* Antd virtuális tábla: az antd SAJÁT scrollbar elemet renderel — ezt stílusozzuk */
+            .customer-selection-modal .ant-table-tbody-virtual-scrollbar-vertical {
+              width: 44px !important;
               background: #f1f1f1 !important;
-              border-radius: 10px !important;
+              border-radius: 12px !important;
+              cursor: pointer;
             }
-            
-            .customer-selection-modal .ant-table-body::-webkit-scrollbar-thumb {
+            .customer-selection-modal .ant-table-tbody-virtual-scrollbar-thumb {
+              width: 30px !important;
+              border-radius: 12px !important;
               background: #1890ff !important;
-              border-radius: 10px !important;
-              border: 5px solid #f1f1f1 !important;
             }
-            
-            .customer-selection-modal .ant-table-body::-webkit-scrollbar-thumb:hover {
+            .customer-selection-modal .ant-table-tbody-virtual-scrollbar-thumb:hover {
               background: #40a9ff !important;
             }
             
-            /* Row hover and selection colors */
+            /* Natív scrollbar (nem-virtuális tartalék) */
+            .customer-selection-modal .ant-table-body {
+              scrollbar-width: thick !important;
+              scrollbar-color: #1890ff #f1f1f1 !important;
+            }
+            .customer-selection-modal .ant-table-body::-webkit-scrollbar {
+              width: 44px !important;
+              display: block !important;
+            }
+            .customer-selection-modal .ant-table-body::-webkit-scrollbar-track {
+              background: #f1f1f1 !important;
+              border-radius: 12px !important;
+            }
+            .customer-selection-modal .ant-table-body::-webkit-scrollbar-thumb {
+              background: #1890ff !important;
+              border-radius: 12px !important;
+              border: 6px solid #f1f1f1 !important;
+              min-height: 80px !important;
+            }
+
+            /* Virtuális tábla sorai DIV-ek: .ant-table-row + .ant-table-cell */
+            .customer-selection-modal .ant-table-row:hover .ant-table-cell {
+              background-color: #f0f7ff !important;
+            }
+            .customer-selection-modal .ant-table-row.selected-row .ant-table-cell {
+              background-color: #e6f4ff !important;
+            }
+            .customer-selection-modal .ant-table-row.selected-row:hover .ant-table-cell {
+              background-color: #bae0ff !important;
+            }
+
+            /* Nem-virtuális tartalék (tr + td) */
             .customer-selection-modal .ant-table-tbody > tr:hover > td {
-              background-color: #e6f7ff !important;
+              background-color: #f0f7ff !important;
             }
-            
             .customer-selection-modal .ant-table-tbody > tr.selected-row > td {
-              background-color: #69c0ff !important;
+              background-color: #e6f4ff !important;
             }
-            
             .customer-selection-modal .ant-table-tbody > tr.selected-row:hover > td {
-              background-color: #91d5ff !important;
+              background-color: #bae0ff !important;
             }
           `}
         </style>
@@ -672,7 +695,7 @@ const CustomerSelection: React.FC<Props> = ({
 
         <div className="customer-selection-modal" style={{ display: 'flex', gap: 16, height: 'calc(100vh - 200px)', position: 'relative' }}>
           {/* Táblázat - 90% */}
-          <div style={{ flex: '0 0 90%', position: 'relative' }}>
+          <div style={{ flex: '0 0 90%', position: 'relative', maxWidth: 880, minWidth: 0 }}>
             <Table
               columns={columns}
               dataSource={filteredCustomers}
@@ -680,7 +703,9 @@ const CustomerSelection: React.FC<Props> = ({
               rowKey="id"
               size="small"
               pagination={false}
-              scroll={{ y: 'calc(100vh - 240px)' }}
+              virtual
+              tableLayout="fixed"
+              scroll={{ x: 870, y: Math.max(240, window.innerHeight - 240) }}
               onRow={(record) => ({
                 onClick: () => setSelectedRow(record),
                 className: selectedRow?.id === record.id ? 'selected-row' : ''
@@ -1176,33 +1201,46 @@ const CustomerSelection: React.FC<Props> = ({
       >
         <style>
           {`
-            .ant-table-body::-webkit-scrollbar {
-              width: 40px;
+            /* Antd virtuális tábla saját scrollbar eleme */
+            .ant-table-tbody-virtual-scrollbar-vertical {
+              width: 44px !important;
+              background: #f1f1f1 !important;
+              border-radius: 12px !important;
+              cursor: pointer;
             }
-            .ant-table-body::-webkit-scrollbar-track {
-              background: #f1f1f1;
-              border-radius: 10px;
+            .ant-table-tbody-virtual-scrollbar-thumb {
+              width: 30px !important;
+              border-radius: 12px !important;
+              background: #1890ff !important;
             }
-            .ant-table-body::-webkit-scrollbar-thumb {
-              background: #1890ff;
-              border-radius: 10px;
-              border: 5px solid #f1f1f1;
-            }
-            .ant-table-body::-webkit-scrollbar-thumb:hover {
-              background: #40a9ff;
+            .ant-table-tbody-virtual-scrollbar-thumb:hover {
+              background: #40a9ff !important;
             }
             .ant-table-body {
               scrollbar-width: thick;
               scrollbar-color: #1890ff #f1f1f1;
             }
-            .ant-table-row:hover {
-              background-color: #e6f7ff !important;
+            .ant-table-body::-webkit-scrollbar {
+              width: 44px;
             }
-            .ant-table-row.selected-row {
-              background-color: #69c0ff !important;
+            .ant-table-body::-webkit-scrollbar-track {
+              background: #f1f1f1;
+              border-radius: 12px;
             }
-            .ant-table-row.selected-row:hover {
-              background-color: #91d5ff !important;
+            .ant-table-body::-webkit-scrollbar-thumb {
+              background: #1890ff;
+              border-radius: 12px;
+              border: 6px solid #f1f1f1;
+              min-height: 80px;
+            }
+            .ant-table-row:hover .ant-table-cell {
+              background-color: #f0f7ff !important;
+            }
+            .ant-table-row.selected-row .ant-table-cell {
+              background-color: #e6f4ff !important;
+            }
+            .ant-table-row.selected-row:hover .ant-table-cell {
+              background-color: #bae0ff !important;
             }
           `}
         </style>
@@ -1216,7 +1254,7 @@ const CustomerSelection: React.FC<Props> = ({
           prefix={<SearchOutlined />}
         />
 
-        <div style={{ position: 'relative' }}>
+        <div style={{ position: 'relative', maxWidth: 880, minWidth: 0 }}>
           <Table
             columns={columns}
             dataSource={filteredCustomers}
@@ -1224,7 +1262,9 @@ const CustomerSelection: React.FC<Props> = ({
             rowKey="id"
             size="small"
             pagination={false}
-            scroll={{ y: 'calc(100vh - 300px)' }}
+            virtual
+            tableLayout="fixed"
+            scroll={{ x: 870, y: Math.max(240, window.innerHeight - 300) }}
             onRow={(record) => ({
               onClick: () => setSelectedRow(record),
               className: selectedRow?.id === record.id ? 'selected-row' : ''

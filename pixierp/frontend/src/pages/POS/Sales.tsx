@@ -233,8 +233,14 @@ const Sales = () => {
         },
         {
             key: 'toggle-view',
-            icon: viewMode === 'admin' ? <ShopOutlined /> : <SettingOutlined />,
-            label: viewMode === 'admin' ? 'Kassza (értékesítés)' : 'Adminisztráció',
+            icon: viewMode === 'admin'
+                ? <ShopOutlined style={{ fontSize: 20 }} />
+                : <SettingOutlined style={{ fontSize: 20 }} />,
+            label: (
+                <span style={{ fontSize: 18, fontWeight: 600, display: 'inline-block', padding: '10px 0' }}>
+                    {viewMode === 'admin' ? 'Kassza (értékesítés)' : 'Adminisztráció'}
+                </span>
+            ),
         },
         {
             type: 'divider',
@@ -257,7 +263,7 @@ const Sales = () => {
 
     return (
         <Layout style={{ minHeight: '100vh', background: '#f0f2f5' }}>
-            <Header style={{
+            <Header className="pos-page-header" style={{
                 background: '#001529',
                 padding: '0 24px',
                 display: 'flex',
@@ -269,13 +275,14 @@ const Sales = () => {
                 height: '64px'
             }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                    <Text strong style={{ color: 'white', fontSize: '18px' }}>
+                    <Text className="pos-h-title" strong style={{ color: 'white', fontSize: '18px' }}>
                         PixiERP Dashboard v1.3.0 | {posTerminalName} - Értékesítés
                     </Text>
                     <Space size={8}>
                         <Text style={{ color: 'white' }}>Kasszában:</Text>
                         <Tag
                             color={posCashInfo ? 'green' : 'default'}
+                            className="pos-h-cash"
                             style={{
                                 marginRight: 0,
                                 fontSize: '36px',
@@ -294,7 +301,7 @@ const Sales = () => {
                     </Space>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                    <Text style={{ color: 'white', fontSize: '16px' }}>
+                    <Text className="pos-h-clock" style={{ color: 'white', fontSize: '16px' }}>
                         {currentTime.format('YYYY-MM-DD HH:mm:ss')}
                     </Text>
                     <Button
@@ -304,7 +311,7 @@ const Sales = () => {
                         style={{ color: 'white' }}
                     />
                     <Space>
-                        <span style={{ color: 'white' }}>Üdvözöljük, {user?.first_name || user?.username}!</span>
+                        <span className="pos-h-welcome" style={{ color: 'white' }}>Üdvözöljük, {user?.first_name || user?.username}!</span>
                         <Dropdown
                             menu={{
                                 items: userMenuItems,

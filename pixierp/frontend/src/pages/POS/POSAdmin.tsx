@@ -1,15 +1,17 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   Card, Button, Row, Col, Typography, Input, Table, Modal, Form, InputNumber, Select,
-  DatePicker, message, Space, Statistic, Empty, Steps,
+  DatePicker, message, Space, Statistic, Empty, Steps, Tag,
 } from 'antd';
 import {
   TagsOutlined, PercentageOutlined, InboxOutlined, FileSearchOutlined, DollarOutlined,
   ArrowLeftOutlined, PrinterOutlined, PlusOutlined, MinusOutlined, SearchOutlined,
+  ScanOutlined, CameraOutlined, EditOutlined, DeleteOutlined,
 } from '@ant-design/icons';
 import { QRCodeSVG } from 'qrcode.react';
 import dayjs from 'dayjs';
 import api from '../../services/api';
+import QRScannerModal from '../../components/QRScannerModal';
 
 const { Title, Text } = Typography;
 
@@ -1015,15 +1017,37 @@ const ReceiptScreen: React.FC<{ onBack: () => void; allowedWarehouseIds: number[
 };
 
 // ── D. Leltár ────────────────────────────────────────────────────────────────
+interface StocktakeRow {
+  material: number;
+  material_code: string;
+  material_name: string;
+  material_unit: string;
+  book_quantity: number;
+}
+
+const ST_PAGE_SIZE = 50;
+
+const fmtFt = (v: number) => `${new Intl.NumberFormat('hu-HU', { maximumFractionDigits: 0 }).format(v || 0)} Ft`;
+
 const StocktakeScreen: React.FC<{ onBack: () => void; allowedWarehouseIds: number[] }> = ({ onBack, allowedWarehouseIds }) => {
   const [warehouses, setWarehouses] = useState<any[]>([]);
   const [warehouseId, setWarehouseId] = useState<number | null>(null);
-  const [rows, setRows] = useState<any[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [rows, setRows] = useState<StocktakeRow[]>([]);
   const [counts, setCounts] = useState<Record<number, number>>({});
-  const [savingId, setSavingId] = useState<number | null>(null);
-  const [addSearch, setAddSearch] = useState<MaterialLite[]>([]);
-  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [step, setStep] = useState(0); // 0 = leltár lista, 1 = raktár kiválasztása, 2 = számlálás
+  const [stList, setStList] = useState<any[]>([]);
+  const [stLoading, setStLoading] = useState(false);
+  const [editSt, setEditSt] = useState<any | null>(null);
+  const [editNote, setEditNote] = useState('');
+  const [editSaving, setEditSaving] = useState(false);
+  const [barcode, setBarcode] = useState('');
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [highlightId, setHighlightId] = useState<number | null>(null);
+  const [page, setPage] = useState(1);
+  const [search, setSearch] = useState('');
+  const barcodeRef = useRef<any>(null);
 
   useEffect(() => {
     api.get('/warehouse/warehouses/', { params: { is_active: true, page_size: 500 } })
@@ -1037,115 +1061,464 @@ const StocktakeScreen: React.FC<{ onBack: () => void; allowedWarehouseIds: numbe
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const loadInventory = useCallback((whId: number) => {
+  const countedOf = (r: StocktakeRow) => (counts[r.material] !== undefined ? counts[r.material] : 0);
+
+  const loadStocktakes = useCallback(() => {
+    setStLoading(true);
+    api.get('/warehouse/stocktakes/')
+      .then(r => setStList(r.data.results || r.data || []))
+      .catch(() => message.error('Nem sikerült betölteni a leltárakat'))
+      .finally(() => setStLoading(false));
+  }, []);
+
+  useEffect(() => { loadStocktakes(); }, [loadStocktakes]);
+
+  const loadRows = useCallback((whId: number, initCountsToBook = false) => {
     setLoading(true);
-    api.get('/warehouse/inventory/', { params: { warehouse: whId, page_size: 2000 } })
-      .then(r => setRows(r.data.results || r.data || []))
-      .catch(() => message.error('Nem sikerült betölteni a leltárt'))
+    api.get('/warehouse/materials/stocktake/', { params: { warehouse: whId } })
+      .then(r => {
+        const items: StocktakeRow[] = r.data.items || [];
+        setRows(items);
+        setCounts(initCountsToBook
+          ? Object.fromEntries(items.map(r => [r.material, r.book_quantity]))
+          : {});
+        setPage(1);
+      })
+      .catch(() => message.error('Nem sikerült betölteni a leltári listát'))
       .finally(() => setLoading(false));
   }, []);
 
-  useEffect(() => { if (warehouseId) loadInventory(warehouseId); }, [warehouseId, loadInventory]);
+  const startStocktake = () => {
+    if (!warehouseId) { message.warning('Először válassz raktárat!'); return; }
+    setStep(2);
+    loadRows(warehouseId);
+    setTimeout(() => barcodeRef.current?.focus(), 250);
+  };
 
-  const saveCount = async (row: any) => {
-    const counted = counts[row.id];
-    if (counted === undefined) return;
-    setSavingId(row.id);
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter(r =>
+      r.material_code.toLowerCase().includes(q) ||
+      r.material_name.toLowerCase().includes(q)
+    );
+  }, [rows, search]);
+
+  // Zöld: nyilvántartott = megszámolt | Piros: nyilvántartott > megszámolt | Sárga: nyilvántartott < megszámolt
+  const stats = useMemo(() => {
+    let green = 0, red = 0, yellow = 0;
+    for (const r of rows) {
+      const c = countedOf(r);
+      if (Math.abs(c - r.book_quantity) < 0.001) green++;
+      else if (r.book_quantity > c) red++;
+      else yellow++;
+    }
+    return { green, red, yellow, total: rows.length };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, counts]);
+
+  const rowClass = (r: StocktakeRow) => {
+    const c = countedOf(r);
+    let cls = Math.abs(c - r.book_quantity) < 0.001 ? 'st-row-green' : (r.book_quantity > c ? 'st-row-red' : 'st-row-yellow');
+    if (highlightId === r.material) cls += ' st-row-flash';
+    return cls;
+  };
+
+  const jumpToMaterial = (matId: number) => {
+    let idx = filtered.findIndex(r => r.material === matId);
+    if (idx === -1) {
+      // Ha épp szűrés van és a sor nem látszik, szűrés törlése
+      setSearch('');
+      idx = rows.findIndex(r => r.material === matId);
+    }
+    if (idx === -1) {
+      message.warning('Ez a termék nem szerepel a kiválasztott raktár leltárában (nincs készletsora itt).');
+      return;
+    }
+    setPage(Math.floor(idx / ST_PAGE_SIZE) + 1);
+    setHighlightId(matId);
+    setTimeout(() => {
+      const tr = document.querySelector(`tr[data-row-key="${matId}"]`);
+      tr?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      const input = document.getElementById(`st-count-${matId}`) as HTMLInputElement | null;
+      input?.focus();
+      input?.select();
+    }, 150);
+    setTimeout(() => setHighlightId(null), 3000);
+  };
+
+  const handleBarcode = async (raw: string) => {
+    const code = raw.trim();
+    if (!code) return;
+    setBarcode('');
+    // 1) cikkszám egyezés
+    let matId: number | undefined = rows.find(r => r.material_code.toLowerCase() === code.toLowerCase())?.material;
+    // 2) vonalkód keresés
+    if (!matId) {
+      try {
+        const res = await api.get('/warehouse/material-barcodes/', { params: { code } });
+        const list = res.data.results || res.data || [];
+        if (list.length > 0) matId = list[0].material;
+      } catch { /* ignore */ }
+    }
+    if (!matId) {
+      message.warning(`Ismeretlen kód: ${code}`);
+      barcodeRef.current?.focus();
+      return;
+    }
+    jumpToMaterial(matId);
+  };
+
+  const saveStocktake = () => {
+    if (!warehouseId) return;
+    const changing = stats.red + stats.yellow;
+    if (changing === 0) { message.info('Nincs eltérés a leltárban, nincs mit rögzíteni.'); return; }
+    Modal.confirm({
+      title: 'Leltár rögzítése',
+      width: 560,
+      content: (
+        <div>
+          <p>Biztosan rögzíted a leltárt?</p>
+          <Space wrap>
+            <Tag color="green" style={{ fontSize: 14, padding: '4px 10px' }}>Egyezik: {stats.green}</Tag>
+            <Tag color="red" style={{ fontSize: 14, padding: '4px 10px' }}>Hiány: {stats.red}</Tag>
+            <Tag color="gold" style={{ fontSize: 14, padding: '4px 10px' }}>Többlet: {stats.yellow}</Tag>
+          </Space>
+          <p style={{ color: '#999', marginTop: 12 }}>
+            A nyilvántartott készlet a megszámolt értékre módosul ({changing} termék).
+            Figyelem: a nem módosított sorok megszámolt értéke 0, így a fel nem számolt termékek készlete nullázódik!
+          </p>
+        </div>
+      ),
+      okText: 'Rögzítés',
+      cancelText: 'Mégse',
+      onOk: async () => {
+        setSaving(true);
+        try {
+          const items = rows.map(r => ({ material: r.material, counted: countedOf(r) }));
+          const res = await api.post('/warehouse/materials/stocktake-save/', { warehouse: warehouseId, items });
+          message.success(`Leltár rögzítve: ${res.data.updated} módosítva, ${res.data.created} létrehozva, ${res.data.unchanged} egyező`);
+          setStep(0);
+          setSearch('');
+          loadStocktakes();
+        } catch (err: any) {
+          message.error(err?.response?.data?.error || 'Hiba a leltár rögzítése során');
+        } finally {
+          setSaving(false);
+        }
+      },
+    });
+  };
+
+  const openEdit = (row: any) => {
+    setEditSt(row);
+    setEditNote(row.note || '');
+    api.get(`/warehouse/stocktakes/${row.id}/`)
+      .then(r => setEditSt(r.data))
+      .catch(() => message.error('Nem sikerült betölteni a leltár részleteit'));
+  };
+
+  const saveNote = async () => {
+    if (!editSt) return;
+    setEditSaving(true);
     try {
-      const res = await api.patch(`/warehouse/inventory/${row.id}/`, { quantity: counted });
-      setRows(prev => prev.map(r => r.id === row.id ? res.data : r));
-      message.success('Leltár rögzítve');
+      await api.patch(`/warehouse/stocktakes/${editSt.id}/`, { note: editNote });
+      message.success('Megjegyzés mentve');
+      setEditSt(null);
+      loadStocktakes();
     } catch {
       message.error('Hiba a mentés során');
     } finally {
-      setSavingId(null);
+      setEditSaving(false);
     }
   };
 
-  const searchToAdd = (val: string) => {
-    if (searchTimer.current) clearTimeout(searchTimer.current);
-    searchTimer.current = setTimeout(() => {
-      if (!val.trim()) { setAddSearch([]); return; }
-      api.get('/warehouse/materials/', { params: { search: val, page_size: 20, is_active: true } })
-        .then(r => setAddSearch(r.data.results || r.data || []))
-        .catch(() => {});
-    }, 300);
+  const confirmDeleteSt = (row: any) => {
+    Modal.confirm({
+      title: 'Leltár törlése',
+      content: (
+        <div>
+          <p>Biztosan törlöd a(z) <b>{row.warehouse_name}</b> raktár {dayjs(row.date).format('YYYY-MM-DD HH:mm')}-i leltárát?</p>
+          <p style={{ color: '#cf1322' }}>Figyelem: a leltár rögzítésekor végrehajtott készletkorrekciók nem lesznek visszavonva!</p>
+        </div>
+      ),
+      okText: 'Törlés',
+      okButtonProps: { danger: true },
+      cancelText: 'Mégse',
+      onOk: async () => {
+        try {
+          await api.delete(`/warehouse/stocktakes/${row.id}/`);
+          message.success('Leltár törölve');
+          loadStocktakes();
+        } catch {
+          message.error('Hiba a törlés során');
+        }
+      },
+    });
   };
 
-  const addToInventory = async (materialId: number) => {
-    if (!warehouseId) return;
-    try {
-      const res = await api.post('/warehouse/inventory/', { material: materialId, warehouse: warehouseId, quantity: 0 });
-      setRows(prev => [res.data, ...prev]);
-      setAddSearch([]);
-      message.success('Hozzáadva a leltárhoz');
-    } catch (err: any) {
-      message.error(err?.response?.data?.error || 'Hiba a hozzáadás során (talán már szerepel a listában)');
-    }
-  };
+  const summaryBox = (label: string, value: number, colors: { bg: string; border: string; text: string }) => (
+    <div style={{
+      flex: '1 1 150px', background: colors.bg, border: `1px solid ${colors.border}`,
+      borderRadius: 10, padding: '10px 16px', textAlign: 'center', minWidth: 150,
+    }}>
+      <div style={{ fontSize: 28, fontWeight: 700, color: colors.text, lineHeight: 1.2 }}>{value}</div>
+      <div style={{ color: colors.text, fontSize: 14 }}>{label}</div>
+    </div>
+  );
 
   return (
     <div>
-      <ScreenHeader title="Leltár" onBack={onBack} />
-      <Card style={{ marginBottom: 16 }}>
-        <Space wrap size="middle">
-          <Select
-            size="large"
-            style={{ width: 260 }}
-            placeholder="Válassz raktárat"
-            value={warehouseId}
-            onChange={setWarehouseId}
-            options={warehouses.map(w => ({ value: w.id, label: w.name }))}
+      <style>{`
+        .st-row-green > td { background: #f6ffed !important; }
+        .st-row-red > td { background: #fff1f0 !important; }
+        .st-row-yellow > td { background: #fffbe6 !important; }
+        .st-row-green:hover > td, .st-row-red:hover > td, .st-row-yellow:hover > td { filter: brightness(0.96); }
+        @keyframes st-flash { 0%, 100% { outline-color: rgba(22,119,255,0); } 50% { outline-color: rgba(22,119,255,1); } }
+        .st-row-flash > td { outline: 3px solid rgba(22,119,255,0.9); outline-offset: -3px; animation: st-flash 0.8s ease-in-out 3; }
+        .st-count-input .ant-input-number-input { font-size: 18px; text-align: center; font-weight: 600; }
+      `}</style>
+      <ScreenHeader
+        title="Leltár"
+        onBack={onBack}
+        extra={
+          step === 0 ? (
+            <Button type="primary" size="large" icon={<PlusOutlined />} onClick={() => setStep(1)}>
+              Új leltár
+            </Button>
+          ) : step === 1 ? (
+            <Button size="large" onClick={() => setStep(0)}>Vissza a leltárakhoz</Button>
+          ) : (
+            <Space>
+              <Button size="large" onClick={() => { setStep(0); setSearch(''); }}>Leltárak</Button>
+              <Button type="primary" size="large" loading={saving} onClick={saveStocktake}>
+                Leltár rögzítése ({stats.red + stats.yellow} eltérés)
+              </Button>
+            </Space>
+          )
+        }
+      />
+      <Steps
+        current={step}
+        size="small"
+        style={{ marginBottom: 24, maxWidth: 760 }}
+        items={[{ title: 'Leltárak' }, { title: 'Raktár kiválasztása' }, { title: 'Termékek megszámolása' }]}
+      />
+
+      {step === 0 ? (
+        <Card>
+          <Table
+            rowKey="id"
+            loading={stLoading}
+            dataSource={stList}
+            pagination={{ pageSize: 15, showTotal: t => `Összesen ${t} leltár` }}
+            locale={{ emptyText: <Empty description="Még nincs rögzített leltár – kezdj egy újat az 'Új leltár' gombbal!" /> }}
+            columns={[
+              {
+                title: 'Dátum', dataIndex: 'date', key: 'date', width: 200,
+                render: (v: string, r: any) => (
+                  <div>
+                    <div style={{ fontWeight: 600 }}>{dayjs(v).format('YYYY-MM-DD HH:mm')}</div>
+                    <div style={{ color: '#999', fontSize: 12 }}>{r.warehouse_name}</div>
+                  </div>
+                ),
+              },
+              { title: 'Készítette', dataIndex: 'created_by_name', key: 'created_by_name', width: 160, render: (v: string) => v || '-' },
+              {
+                title: 'Leltár értéke (beszerzés)', dataIndex: 'purchase_value', key: 'purchase_value', width: 200, align: 'right' as const,
+                render: (v: number) => <span style={{ fontWeight: 600 }}>{fmtFt(v)}</span>,
+              },
+              {
+                title: 'Leltár értéke (rögzítés)', dataIndex: 'book_value', key: 'book_value', width: 200, align: 'right' as const,
+                render: (v: number) => fmtFt(v),
+              },
+              {
+                title: 'Eltérés', dataIndex: 'difference', key: 'difference', width: 170, align: 'right' as const,
+                render: (v: number) => {
+                  if (Math.abs(v) < 0.01) return <Tag>0 Ft</Tag>;
+                  return <Tag color={v < 0 ? 'red' : 'gold'}>{(v > 0 ? '+' : '') + new Intl.NumberFormat('hu-HU', { maximumFractionDigits: 0 }).format(v)} Ft</Tag>;
+                },
+              },
+              { title: 'Megjegyzés', dataIndex: 'note', key: 'note', ellipsis: true, render: (v: string) => v || '-' },
+              {
+                title: 'Műveletek', key: 'ops', width: 230,
+                render: (_: any, r: any) => (
+                  <Space>
+                    <Button icon={<EditOutlined />} onClick={() => openEdit(r)}>Szerkesztés</Button>
+                    <Button danger icon={<DeleteOutlined />} onClick={() => confirmDeleteSt(r)}>Törlés</Button>
+                  </Space>
+                ),
+              },
+            ]}
           />
-          <Select
-            size="large"
-            style={{ width: 360 }}
-            showSearch
-            filterOption={false}
-            placeholder="Termék hozzáadása a leltárhoz..."
-            onSearch={searchToAdd}
-            value={null}
-            onSelect={(v: any) => addToInventory(v)}
-            options={addSearch.map(m => ({ value: m.id, label: `${m.name} (${m.code})` }))}
-          />
-        </Space>
-      </Card>
-      <Card>
-        <Table
-          rowKey="id"
-          loading={loading}
-          dataSource={rows}
-          pagination={{ pageSize: 20 }}
-          locale={{ emptyText: <Empty description="Nincs leltári tétel ebben a raktárban" /> }}
-          columns={[
-            { title: 'Cikkszám', dataIndex: 'material_code', key: 'material_code', width: 140 },
-            { title: 'Név', dataIndex: 'material_name', key: 'material_name' },
-            { title: 'Nyilvántartott', dataIndex: 'quantity', key: 'quantity', width: 140,
-              render: (v: number, r: any) => `${v} ${r.material_unit || ''}` },
-            {
-              title: 'Megszámolt', key: 'counted', width: 200,
-              render: (_: any, r: any) => (
-                <InputNumber
+        </Card>
+      ) : step === 1 ? (
+        <Card style={{ maxWidth: 560 }}>
+          <Space direction="vertical" size="large" style={{ width: '100%' }}>
+            <Text strong style={{ fontSize: 18 }}>Melyik raktárban véggezzük a leltárt?</Text>
+            <Select
+              size="large"
+              style={{ width: '100%' }}
+              placeholder="Válassz raktárat"
+              value={warehouseId}
+              onChange={setWarehouseId}
+              options={warehouses.map(w => ({ value: w.id, label: w.name }))}
+            />
+            <Button type="primary" size="large" block icon={<FileSearchOutlined />} onClick={startStocktake}>
+              Leltár indítása
+            </Button>
+          </Space>
+        </Card>
+      ) : (
+        <>
+          <Card style={{ marginBottom: 16 }}>
+            <Space wrap size="middle" style={{ marginBottom: 12, width: '100%', justifyContent: 'space-between' }}>
+              <Space.Compact style={{ flex: '1 1 420px', minWidth: 320 }}>
+                <Input
+                  ref={barcodeRef}
                   size="large"
-                  style={{ width: 140 }}
-                  min={0}
-                  value={counts[r.id] !== undefined ? counts[r.id] : r.quantity}
-                  onChange={(v) => setCounts(prev => ({ ...prev, [r.id]: v ?? 0 }))}
+                  prefix={<ScanOutlined />}
+                  placeholder="Vonalkód / cikkszám beolvasása → Enter: ugrás a sorra"
+                  value={barcode}
+                  onChange={e => setBarcode(e.target.value)}
+                  onPressEnter={() => handleBarcode(barcode)}
+                  allowClear
                 />
-              ),
-            },
-            {
-              title: '', key: 'save', width: 120,
-              render: (_: any, r: any) => (
-                <Button type="primary" size="large" loading={savingId === r.id} onClick={() => saveCount(r)}>
-                  Mentés
+                <Button size="large" icon={<CameraOutlined />} onClick={() => setCameraOpen(true)} title="Beolvasás kamerával">
+                  Kamera
                 </Button>
-              ),
-            },
-          ]}
-          scroll={{ y: 'calc(100vh - 420px)' }}
-        />
-      </Card>
+              </Space.Compact>
+              <Input
+                size="large"
+                prefix={<SearchOutlined />}
+                placeholder="Szűrés cikkszám/névre"
+                value={search}
+                onChange={e => { setSearch(e.target.value); setPage(1); }}
+                style={{ width: 280 }}
+                allowClear
+              />
+            </Space>
+            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+              {summaryBox('Egyezik (zöld)', stats.green, { bg: '#f6ffed', border: '#b7eb8f', text: '#389e0d' })}
+              {summaryBox('Hiány (piros)', stats.red, { bg: '#fff1f0', border: '#ffa39e', text: '#cf1322' })}
+              {summaryBox('Többlet (sárga)', stats.yellow, { bg: '#fffbe6', border: '#ffe58f', text: '#d48806' })}
+              {summaryBox('Összes termék', stats.total, { bg: '#f5f5f5', border: '#d9d9d9', text: '#555' })}
+            </div>
+          </Card>
+          <Card>
+            <Table
+              rowKey="material"
+              loading={loading}
+              dataSource={filtered}
+              rowClassName={rowClass as any}
+              pagination={{
+                pageSize: ST_PAGE_SIZE,
+                current: page,
+                onChange: p => setPage(p),
+                showSizeChanger: false,
+                showTotal: t => `Összesen ${t} termék`,
+              }}
+              locale={{ emptyText: <Empty description="Nincs a szűrésnek megfelelő termék" /> }}
+              columns={[
+                { title: 'Cikkszám', dataIndex: 'material_code', key: 'material_code', width: 160 },
+                { title: 'Név', dataIndex: 'material_name', key: 'material_name' },
+                {
+                  title: 'Nyilvántartott', dataIndex: 'book_quantity', key: 'book_quantity', width: 160,
+                  render: (v: number, r: StocktakeRow) => (
+                    <span style={{ fontWeight: 600 }}>
+                      {Number(v).toLocaleString('hu-HU', { maximumFractionDigits: 3 })} {r.material_unit}
+                    </span>
+                  ),
+                },
+                {
+                  title: 'Megszámolt', key: 'counted', width: 170,
+                  render: (_: any, r: StocktakeRow) => (
+                    <InputNumber
+                      id={`st-count-${r.material}`}
+                      className="st-count-input"
+                      size="large"
+                      style={{ width: 130 }}
+                      min={0}
+                      value={counts[r.material] ?? 0}
+                      onChange={v => setCounts(prev => ({ ...prev, [r.material]: v ?? 0 }))}
+                    />
+                  ),
+                },
+                {
+                  title: 'Eltérés', key: 'diff', width: 110,
+                  render: (_: any, r: StocktakeRow) => {
+                    const d = Math.round((countedOf(r) - r.book_quantity) * 1000) / 1000;
+                    if (Math.abs(d) < 0.001) return <Tag color="green">0</Tag>;
+                    return <Tag color={d < 0 ? 'red' : 'gold'}>{d > 0 ? '+' : ''}{d}</Tag>;
+                  },
+                },
+              ]}
+              scroll={{ y: 'calc(100vh - 560px)' }}
+            />
+          </Card>
+        </>
+      )}
+
+      <Modal
+        title={editSt ? `Leltár szerkesztése – ${editSt.warehouse_name} (${dayjs(editSt.date).format('YYYY-MM-DD HH:mm')})` : 'Leltár'}
+        open={!!editSt}
+        onCancel={() => setEditSt(null)}
+        width={960}
+        footer={[
+          <Button key="close" size="large" onClick={() => setEditSt(null)}>Bezárás</Button>,
+          <Button key="save" type="primary" size="large" loading={editSaving} onClick={saveNote}>Megjegyzés mentése</Button>,
+        ]}
+      >
+        {editSt && (
+          <>
+            <Space wrap style={{ marginBottom: 12 }}>
+              <Tag color="green" style={{ fontSize: 14 }}>Beszerzés: {fmtFt(editSt.purchase_value)}</Tag>
+              <Tag color="blue" style={{ fontSize: 14 }}>Rögzítés: {fmtFt(editSt.book_value)}</Tag>
+              <Tag color={editSt.difference < 0 ? 'red' : 'gold'} style={{ fontSize: 14 }}>
+                Eltérés: {(editSt.difference > 0 ? '+' : '') + new Intl.NumberFormat('hu-HU', { maximumFractionDigits: 0 }).format(editSt.difference)} Ft
+              </Tag>
+              <Tag style={{ fontSize: 14 }}>{editSt.item_count} tétel</Tag>
+            </Space>
+            <Table
+              size="small"
+              rowKey="id"
+              dataSource={editSt.items || []}
+              pagination={{ pageSize: 10, showTotal: t => `Összesen ${t} tétel` }}
+              columns={[
+                { title: 'Cikkszám', dataIndex: 'material_code', key: 'material_code', width: 110 },
+                { title: 'Név', dataIndex: 'material_name', key: 'material_name', ellipsis: true },
+                {
+                  title: 'Nyilvántartott', dataIndex: 'book_quantity', key: 'book_quantity', width: 130, align: 'right' as const,
+                  render: (v: any, r: any) => `${Number(v).toLocaleString('hu-HU', { maximumFractionDigits: 3 })} ${r.material_unit}`,
+                },
+                {
+                  title: 'Megszámolt', dataIndex: 'counted_quantity', key: 'counted_quantity', width: 120, align: 'right' as const,
+                  render: (v: any, r: any) => `${Number(v).toLocaleString('hu-HU', { maximumFractionDigits: 3 })} ${r.material_unit}`,
+                },
+                { title: 'Besz. ár', dataIndex: 'unit_cost_price', key: 'unit_cost_price', width: 110, align: 'right' as const, render: (v: any) => fmtFt(Number(v)) },
+                { title: 'Érték (beszerzés)', dataIndex: 'purchase_value', key: 'purchase_value', width: 140, align: 'right' as const, render: (v: any) => fmtFt(Number(v)) },
+                { title: 'Érték (rögzítés)', dataIndex: 'book_value', key: 'book_value', width: 140, align: 'right' as const, render: (v: any) => fmtFt(Number(v)) },
+              ]}
+            />
+            <div style={{ marginTop: 12 }}>
+              <Text strong>Megjegyzés:</Text>
+              <Input.TextArea
+                rows={2}
+                value={editNote}
+                onChange={e => setEditNote(e.target.value)}
+                placeholder="Pl. ki végezte a leltározást, rendellenességek..."
+              />
+            </div>
+          </>
+        )}
+      </Modal>
+
+      <QRScannerModal
+        open={cameraOpen}
+        onClose={() => setCameraOpen(false)}
+        onScan={(d) => { setCameraOpen(false); handleBarcode(d); }}
+        title="Vonalkód beolvasása"
+      />
     </div>
   );
 };

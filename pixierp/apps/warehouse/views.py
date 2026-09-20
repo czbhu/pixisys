@@ -1,5 +1,6 @@
 from rest_framework import viewsets, status, generics
 from rest_framework.decorators import action
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.pagination import PageNumberPagination
@@ -17,6 +18,7 @@ from .models import (
     MaterialStock, MaterialReceipt, MaterialReceiptBatch, StockMovement,
     SupplierInvoice, InvoiceItem,
     ScrapRecord, ScrapItem, MaterialGroupApiSync, MaterialBarcode,
+    Stocktake, StocktakeItem,
 )
 from .serializers import (
     MaterialTypeSerializer, MaterialGroupSerializer, MaterialSerializer, WarehouseSerializer, 
@@ -27,7 +29,7 @@ from .serializers import (
     SupplierInvoiceSerializer, InvoiceItemSerializer,
     ScrapRecordSerializer, ScrapItemSerializer,
     MaterialGroupApiSyncSerializer, PublicMaterialSerializer,
-    MaterialBarcodeSerializer, POSProductSerializer,
+    MaterialBarcodeSerializer, POSProductSerializer, StocktakeSerializer,
 )
 from apps.crm.models import Company
 
@@ -99,9 +101,66 @@ class MaterialGroupViewSet(viewsets.ModelViewSet):
         if page is not None:
             return self.get_paginated_response(serializer.data)
         return Response(serializer.data)
-    
+
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
+
+    # Kategória képek proxy: engedélyezett külső hostok
+    CATEGORY_IMAGE_HOSTS = {'macma.hu', 'www.macma.hu', 'utteam.com', 'www.utteam.com'}
+
+    @action(detail=False, methods=['get'], url_path='category-image', permission_classes=[AllowAny])
+    def category_image(self, request):
+        """Kategória/termék kép proxy gyorsítótárral és kicsinyítéssel.
+
+        A külső (macma.hu/utteam.com) képek helyett a saját szerverünkről szolgáljuk ki
+        a képeket: első kérésnél letölti, 320px-es JPEG miniatűrre zsugorítja, és a
+        MEDIA_ROOT/category_cache mappába menti. A válasz hosszú távú Cache-Control
+        fejlécet kap, így a böngésző csak egyszer kéri. Az <img> tagek nem küldenek
+        JWT tokent, ezért a végpont publikus (host whitelist védi az SSRF-től).
+        """
+        import hashlib
+        from urllib.parse import urlparse
+        from django.conf import settings as dj_settings
+        from django.http import HttpResponse
+        from django.shortcuts import redirect
+
+        url = request.query_params.get('u', '')
+        parsed = urlparse(url)
+        if parsed.scheme not in ('http', 'https') or (parsed.hostname or '') not in self.CATEGORY_IMAGE_HOSTS:
+            return HttpResponse('Érvénytelen kép URL.', status=400)
+
+        key = hashlib.sha256(url.encode('utf-8')).hexdigest()[:24]
+        cache_dir = os.path.join(dj_settings.MEDIA_ROOT, 'category_cache')
+        path = os.path.join(cache_dir, f'{key}.jpg')
+
+        if not os.path.exists(path):
+            try:
+                os.makedirs(cache_dir, exist_ok=True)
+                # macma.hu blokkolja az alap python-requests UA-t → böngésző UA kell
+                r = requests.get(
+                    url, timeout=6,
+                    headers={'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36'},
+                )
+                r.raise_for_status()
+                from PIL import Image
+                img = Image.open(__import__('io').BytesIO(r.content)).convert('RGB')
+                img.thumbnail((320, 320))
+                tmp = f'{path}.{os.getpid()}.tmp'
+                img.save(tmp, 'JPEG', quality=78, optimize=True)
+                os.replace(tmp, path)  # atomi: párhuzamos kérések biztonságban
+            except Exception:
+                # Fallback: a böngésző töltse közvetlenül az eredeti URL-ről
+                return redirect(url)
+
+        try:
+            with open(path, 'rb') as f:
+                data = f.read()
+        except OSError:
+            return redirect(url)
+
+        resp = HttpResponse(data, content_type='image/jpeg')
+        resp['Cache-Control'] = 'public, max-age=2592000, immutable'
+        return resp
 
 
 
@@ -214,7 +273,13 @@ class MaterialViewSet(viewsets.ModelViewSet):
     def pos_products(self, request):
         """Minimális, gyors, lapozás nélküli terméklista a Kassza (POS) képernyőhöz.
         Csak a ténylegesen megjelenített mezőket adja vissza (nincs drága join/számítás),
-        így nagy tételszám (pár ezer termék) mellett is gyorsan betöltődik egyetlen kérésben."""
+        így nagy tételszám (pár ezer termék) mellett is gyorsan betöltődik egyetlen kérésben.
+
+        Optimalizálva: Exists al-lekérdezések a join+DISTINCT helyett, valamint values()
+        a teljes modell-példányok betöltése helyett — pár ezer terméknél nagyságrenddel gyorsabb."""
+        from django.db.models import Exists, OuterRef
+        from apps.warehouse.models import MaterialStock, MaterialVariant
+
         queryset = Material.objects.filter(is_product=True)
 
         is_active = request.query_params.get('is_active')
@@ -223,23 +288,210 @@ class MaterialViewSet(viewsets.ModelViewSet):
 
         warehouse_ids = request.query_params.get('warehouse_ids')
         if warehouse_ids:
-            from apps.warehouse.models import MaterialVariant
             parts = [w.strip() for w in warehouse_ids.split(',') if w.strip()]
             has_no_wh = '0' in parts
             wid_list = [w for w in parts if w.isdigit() and w != '0']
-            api_synced_mat_ids = MaterialVariant.objects.values_list('material_id', flat=True).distinct()
-            if has_no_wh and wid_list:
-                queryset = queryset.filter(
-                    Q(stocks__warehouse_id__in=wid_list) |
-                    (Q(stocks__isnull=True) & ~Q(id__in=api_synced_mat_ids))
-                ).distinct()
-            elif has_no_wh:
-                queryset = queryset.filter(stocks__isnull=True).exclude(id__in=api_synced_mat_ids)
-            elif wid_list:
-                queryset = queryset.filter(stocks__warehouse_id__in=wid_list).distinct()
 
-        serializer = POSProductSerializer(queryset, many=True)
-        return Response(serializer.data)
+            has_stock_in_wh = MaterialStock.objects.filter(material=OuterRef('pk'), warehouse_id__in=wid_list)
+            has_any_stock = MaterialStock.objects.filter(material=OuterRef('pk'))
+            is_api_synced = MaterialVariant.objects.filter(material=OuterRef('pk'))
+
+            if has_no_wh and wid_list:
+                # Készlet az adott raktárakban VAGY (sehol nincs készlet ÉS nem API-szinkronizált)
+                queryset = queryset.filter(
+                    Exists(has_stock_in_wh) |
+                    (~Exists(has_any_stock) & ~Exists(is_api_synced))
+                )
+            elif has_no_wh:
+                queryset = queryset.filter(~Exists(has_any_stock)).filter(~Exists(is_api_synced))
+            elif wid_list:
+                queryset = queryset.filter(Exists(has_stock_in_wh))
+
+        # values(): nincs modell-példány hidratálás és DRF serializer overhead
+        rows = list(queryset.values(
+            'id', 'code', 'name', 'description', 'unit',
+            'material_group', 'unit_selling_price', 'promo_price',
+        ).order_by('name'))
+
+        # M2M kategóriák (material_groups) egy tömeges lekérdezéssel: a POS
+        # kategória-szűrése FK mellett M2M kapcsolatra is illeszkedik
+        groups_map = {}
+        mat_ids = [v['id'] for v in rows]
+        if mat_ids:
+            M2M = Material.material_groups.through
+            for mid, gid in M2M.objects.filter(material_id__in=mat_ids).values_list('material_id', 'materialgroup_id'):
+                groups_map.setdefault(mid, []).append(gid)
+
+        data = [
+            {
+                'id': v['id'],
+                'code': v['code'],
+                'name': v['name'],
+                'description': v['description'],
+                'unit': v['unit'],
+                'material_group': v['material_group'],
+                'material_groups': groups_map.get(v['id'], []),
+                'net_price': float(v['unit_selling_price'] or 0),
+                'gross_price': round(float(v['unit_selling_price'] or 0) * 1.27, 2),
+                'vat_rate': 27.0,
+                'current_stock': 0,
+                'discount_price': float(v['promo_price']) if v['promo_price'] is not None else None,
+            }
+            for v in rows
+        ]
+        return Response(data)
+
+    @action(detail=False, methods=['get'], url_path='stocktake')
+    def stocktake(self, request):
+        """Leltárhoz terméklista a kiválasztott raktárral: cikkszám, név, nyilvántartott mennyiség.
+
+        CSAK az adott raktárban készletsorral (MaterialStock) rendelkező termékeket listázza.
+        A nyilvántartott mennyiség = az adott raktárban lévő készletsorok mennyiségének összege.
+        Alapból aktív termékeket; all=true esetén inaktívakat is.
+        """
+        warehouse_id = request.query_params.get('warehouse')
+        if not warehouse_id or not str(warehouse_id).isdigit():
+            return Response({'error': 'A warehouse (raktár) megadása kötelező.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            warehouse = Warehouse.objects.get(pk=warehouse_id)
+        except Warehouse.DoesNotExist:
+            return Response({'error': 'Nem létező raktár.'}, status=status.HTTP_404_NOT_FOUND)
+
+        include_all = str(request.query_params.get('all', '')).lower() in ('1', 'true', 'yes')
+        queryset = (
+            Material.objects
+            .filter(is_active=True, stocks__warehouse=warehouse)
+            .annotate(book_quantity=Sum('stocks__quantity'))
+        )
+        if not include_all:
+            queryset = queryset.filter(is_product=True)
+
+        data = [
+            {
+                'material': m.id,
+                'material_code': m.code,
+                'material_name': m.name,
+                'material_unit': m.unit or '',
+                'book_quantity': float(m.book_quantity or 0),
+            }
+            for m in queryset.order_by('name')
+        ]
+        return Response({'warehouse': warehouse.id, 'warehouse_name': warehouse.name, 'count': len(data), 'items': data})
+
+    @action(detail=False, methods=['post'], url_path='stocktake-save')
+    def stocktake_save(self, request):
+        """Leltár rögzítése: a megadott megszámolt mennyiségekre korrigálja a raktári készletet.
+
+        Body: {"warehouse": <id>, "items": [{"material": <id>, "counted": <szám>}, ...], "note": "..."}
+        Csak az eltérő tételeket módosítja; a különbséget a legutolsó készletsorra rángenivel,
+        illetve hiány esetén (csökkenés) a sorokat legújabbtól haladva csökkenti.
+        """
+        from decimal import Decimal, InvalidOperation
+
+        warehouse_id = request.data.get('warehouse')
+        items = request.data.get('items')
+        if not warehouse_id or not str(warehouse_id).isdigit():
+            return Response({'error': 'A warehouse (raktár) megadása kötelező.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            warehouse = Warehouse.objects.get(pk=warehouse_id)
+        except Warehouse.DoesNotExist:
+            return Response({'error': 'Nem létező raktár.'}, status=status.HTTP_404_NOT_FOUND)
+        if not isinstance(items, list) or not items:
+            return Response({'error': 'Az items lista megadása kötelező.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        summary = {'updated': 0, 'created': 0, 'unchanged': 0, 'skipped': 0, 'adjustments': []}
+        errors = []
+        with transaction.atomic():
+            stocktake = Stocktake.objects.create(
+                warehouse=warehouse,
+                created_by=request.user if request.user.is_authenticated else None,
+                note=str(request.data.get('note') or ''),
+            )
+            for item in items:
+                material_id = item.get('material')
+                counted_raw = item.get('counted')
+                if material_id is None or counted_raw is None:
+                    summary['skipped'] += 1
+                    continue
+                try:
+                    counted = Decimal(str(counted_raw)).quantize(Decimal('0.001'))
+                except (InvalidOperation, ValueError):
+                    errors.append({'material': material_id, 'error': 'Érvénytelen megszámolt mennyiség.'})
+                    continue
+                if counted < 0:
+                    errors.append({'material': material_id, 'error': 'A megszámolt mennyiség nem lehet negatív.'})
+                    continue
+                try:
+                    material = Material.objects.get(pk=material_id)
+                except Material.DoesNotExist:
+                    errors.append({'material': material_id, 'error': 'Nem létező termék.'})
+                    continue
+
+                stocks = list(
+                    MaterialStock.objects
+                    .select_for_update()
+                    .filter(material_id=material_id, warehouse=warehouse)
+                    .order_by('-created_at', '-id')
+                )
+                total = sum((s.quantity for s in stocks), Decimal('0'))
+                delta = counted - total
+
+                # Jegyzőkönyv tétel rögzítése ársnapshotokkal
+                stock_value = sum((s.quantity * s.unit_value for s in stocks), Decimal('0'))
+                book_unit_value = (stock_value / total).quantize(Decimal('0.01')) if total > 0 else Decimal('0')
+                StocktakeItem.objects.create(
+                    stocktake=stocktake,
+                    material=material,
+                    material_code=material.code,
+                    material_name=material.name,
+                    material_unit=material.unit or '',
+                    book_quantity=total,
+                    counted_quantity=counted,
+                    unit_cost_price=material.unit_cost_price or 0,
+                    book_unit_value=book_unit_value,
+                )
+
+                if abs(delta) < Decimal('0.001'):
+                    summary['unchanged'] += 1
+                    continue
+
+                if not stocks:
+                    MaterialStock.objects.create(
+                        material=material,
+                        warehouse=warehouse,
+                        quantity=counted,
+                        unit_value=material.unit_cost_price or 0,
+                        created_by=request.user if request.user.is_authenticated else None,
+                    )
+                    summary['created'] += 1
+                elif delta > 0:
+                    stocks[0].quantity = stocks[0].quantity + delta
+                    stocks[0].save(update_fields=['quantity', 'total_value', 'updated_at'])
+                    summary['updated'] += 1
+                else:
+                    remaining = -delta
+                    for s in stocks:
+                        if remaining <= 0:
+                            break
+                        take = s.quantity if s.quantity < remaining else remaining
+                        if take > 0:
+                            s.quantity = s.quantity - take
+                            remaining -= take
+                            s.save(update_fields=['quantity', 'total_value', 'updated_at'])
+                    summary['updated'] += 1
+
+                summary['adjustments'].append({
+                    'material': material_id,
+                    'material_code': material.code,
+                    'material_name': material.name,
+                    'book_quantity': float(total),
+                    'counted_quantity': float(counted),
+                })
+
+        summary['errors'] = errors
+        summary['warehouse'] = warehouse.id
+        summary['stocktake_id'] = stocktake.id
+        return Response(summary)
 
     # CSV mezők sorrendje (fejléc)
     CSV_FIELDS = [
@@ -2191,3 +2443,41 @@ class PublicShopIndexView(generics.GenericAPIView):
                 'product_count': count,
             })
         return Response({'categories': results})
+
+
+class StocktakeViewSet(viewsets.ModelViewSet):
+    """Leltár jegyzőkönyvek listája, részletei, törlése és megjegyzés szerkesztése."""
+    queryset = Stocktake.objects.select_related('warehouse', 'created_by').prefetch_related('items').all()
+    serializer_class = StocktakeSerializer
+
+    def get_queryset(self):
+        qs = Stocktake.objects.select_related('warehouse', 'created_by').prefetch_related('items').all()
+        warehouse_id = self.request.query_params.get('warehouse')
+        if warehouse_id:
+            qs = qs.filter(warehouse_id=warehouse_id)
+        return qs
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user if self.request.user.is_authenticated else None)
+
+    def list(self, request, *args, **kwargs):
+        from .serializers import StocktakeListSerializer
+        qs = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(qs)
+        serializer = StocktakeListSerializer(page if page is not None else qs, many=True)
+        if page is not None:
+            return self.get_paginated_response(serializer.data)
+        return Response(serializer.data)
+
+    def update(self, request, *args, **kwargs):
+        """Csak a megjegyzés szerkeszthető — a mennyiségek történelmi adatok."""
+        partial = kwargs.pop('partial', True)
+        instance = self.get_object()
+        allowed = {'note'}
+        data = {k: v for k, v in request.data.items() if k in allowed}
+        if not data:
+            return Response({'error': 'Csak a megjegyzés mező szerkeszthető.'}, status=status.HTTP_400_BAD_REQUEST)
+        serializer = self.get_serializer(instance, data=data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)

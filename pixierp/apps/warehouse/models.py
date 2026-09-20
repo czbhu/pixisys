@@ -1913,3 +1913,59 @@ class MaterialRemnant(models.Model):
 
     def __str__(self):
         return f"{self.material.name} - {self.quantity} {self.unit}"
+
+
+class Stocktake(models.Model):
+    """Leltár jegyzőkönyv: egy leltározási esemény összesített adatai."""
+    warehouse = models.ForeignKey(
+        Warehouse, on_delete=models.CASCADE, related_name='stocktakes', verbose_name="Raktár"
+    )
+    date = models.DateTimeField(auto_now_add=True, verbose_name="Dátum")
+    created_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='stocktakes', verbose_name="Készítette"
+    )
+    note = models.TextField(blank=True, default='', verbose_name="Megjegyzés")
+    updated_at = models.DateTimeField(auto_now=True, verbose_name="Módosítva")
+
+    class Meta:
+        verbose_name = "Leltár"
+        verbose_name_plural = "Leltárak"
+        ordering = ['-date']
+
+    def __str__(self):
+        return f"Leltár - {self.warehouse.name} - {self.date.strftime('%Y-%m-%d %H:%M')}"
+
+
+class StocktakeItem(models.Model):
+    """Leltár tétel: egy termék nyilvántartott és megszámolt mennyisége ársznapshotszal."""
+    stocktake = models.ForeignKey(
+        Stocktake, on_delete=models.CASCADE, related_name='items', verbose_name="Leltár"
+    )
+    material = models.ForeignKey(
+        Material, on_delete=models.CASCADE, related_name='stocktake_items', verbose_name="Termék"
+    )
+    material_code = models.CharField(max_length=50, verbose_name="Cikkszám (snapshot)")
+    material_name = models.CharField(max_length=200, verbose_name="Név (snapshot)")
+    material_unit = models.CharField(max_length=20, blank=True, default='', verbose_name="Egység (snapshot)")
+    book_quantity = models.DecimalField(
+        max_digits=12, decimal_places=3, default=0, verbose_name="Nyilvántartott mennyiség"
+    )
+    counted_quantity = models.DecimalField(
+        max_digits=12, decimal_places=3, default=0, verbose_name="Megszámolt mennyiség"
+    )
+    unit_cost_price = models.DecimalField(
+        max_digits=12, decimal_places=2, default=0, verbose_name="Beszerzési egységár (snapshot)"
+    )
+    book_unit_value = models.DecimalField(
+        max_digits=12, decimal_places=2, default=0, verbose_name="Nyilvántartott egységérték (snapshot)"
+    )
+
+    class Meta:
+        verbose_name = "Leltár tétel"
+        verbose_name_plural = "Leltár tételek"
+        ordering = ['material_name']
+        unique_together = ['stocktake', 'material']
+
+    def __str__(self):
+        return f"{self.material_code} - nyilv: {self.book_quantity} / számolt: {self.counted_quantity}"

@@ -11,6 +11,7 @@ from .views import (
     VATTypeProxyViewSet, MaterialRemnantViewSet,
     MaterialGroupApiSyncViewSet, PublicProductCatalogView, PublicProductVariantsView,
     MaterialVariantViewSet, PublicShopIndexView, MaterialBarcodeViewSet,
+    StocktakeViewSet,
 )
 
 router = DefaultRouter()
@@ -36,6 +37,7 @@ router.register(r'material-remnants', MaterialRemnantViewSet, basename='material
 router.register(r'material-group-api-syncs', MaterialGroupApiSyncViewSet, basename='material-group-api-sync')
 router.register(r'material-variants', MaterialVariantViewSet, basename='material-variant')
 router.register(r'material-barcodes', MaterialBarcodeViewSet, basename='material-barcode')
+router.register(r'stocktakes', StocktakeViewSet, basename='stocktake')
 
 urlpatterns = [
     path('', include(router.urls)),
