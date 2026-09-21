@@ -1254,6 +1254,11 @@ class POSTransaction(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     completed_at = models.DateTimeField(null=True, blank=True, verbose_name="Befejezve")
     
+    # Sztornó
+    storno_reason = models.TextField(blank=True, default='', verbose_name="Sztornó indoka")
+    stornoed_at = models.DateTimeField(null=True, blank=True, verbose_name="Sztornózva")
+    stornoed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='stornoed_pos_transactions', verbose_name="Sztornózta")
+    
     # Nyomtatás
     printed_at = models.DateTimeField(null=True, blank=True, verbose_name="Kinyomtatva")
     

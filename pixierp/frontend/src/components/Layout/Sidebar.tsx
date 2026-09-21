@@ -110,7 +110,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
       '/pos/sales', '/pos/registration', '/pos/terminals', '/pos/customers', '/pos/reports',
       '/orders/shipments', '/orders/suppliers',
       '/warehouse/inventory', '/warehouse/receipts', '/warehouse/scraps', '/warehouse/warehouses', '/warehouse/reports', '/warehouse/suppliers',
-      '/settings/access-control', '/settings/attendance-kiosk', '/settings/companies', '/settings/currencies', '/settings/roles', '/settings/email-server', '/settings/email-templates', '/settings/signatures', '/settings/integrations', '/settings/pixinvoice', '/settings/hestia', '/settings/backup', '/settings/zones'
+      '/settings/modules', '/settings/access-control', '/settings/attendance-kiosk', '/settings/companies', '/settings/currencies', '/settings/roles', '/settings/email-server', '/settings/email-templates', '/settings/signatures', '/settings/integrations', '/settings/pixinvoice', '/settings/hestia', '/settings/backup', '/settings/zones'
       , '/settings/public-site'
       , '/settings/iot'
       , '/settings/nfc'
@@ -629,6 +629,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
       icon: <ToolOutlined />,
       label: 'Beállítások',
       children: [
+        { key: '/settings/modules', label: 'Modulok' },
         { key: '/settings/access-control', label: 'Beléptető rendszer' },
         { key: '/settings/attendance-kiosk', label: 'Jelenlét Kioszk' },
         { key: '/settings/companies', label: 'Alap adatok' },
@@ -736,6 +737,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
     '/pos/inventory': 'pos',
 
     // Settings
+    '/settings/modules': 'settings.modules',
     '/settings/access-control': 'settings.access_control',
     '/settings/attendance-kiosk': 'settings.attendance_kiosk',
     '/settings/companies': 'settings.company',

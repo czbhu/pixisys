@@ -4,6 +4,7 @@ import { UserOutlined, LogoutOutlined, FieldTimeOutlined, RestOutlined, Fullscre
 import { useLocation, useNavigate } from 'react-router-dom';
 import POS from './POS';
 import POSAdmin from './POSAdmin';
+import type { FuelContext } from './components/FuelScreen';
 import dayjs from 'dayjs';
 import duration from 'dayjs/plugin/duration';
 import { useAuth } from '../../contexts/AuthContext';
@@ -37,6 +38,9 @@ const Sales = () => {
     const [allowedWarehouseIds, setAllowedWarehouseIds] = useState<number[]>([]);
     const [posCashRegisterId, setPosCashRegisterId] = useState<number | null>(null);
     const [viewMode, setViewMode] = useState<'pos' | 'admin'>('pos');
+    const [fuelContext, setFuelContext] = useState<FuelContext | null>(null);
+    const [activePosId, setActivePosId] = useState<number | null>(null);
+    const [lastTransaction, setLastTransaction] = useState<{ exists: boolean; total: number; change: number } | null>(null);
     const { user, logout } = useAuth();
     const navigate = useNavigate();
     const location = useLocation();
@@ -104,6 +108,8 @@ const Sales = () => {
                     setAllowedMaterialGroupIds(Array.isArray(data?.material_group_ids) ? data.material_group_ids : []);
                     setAllowedWarehouseIds(Array.isArray(data?.warehouse_ids) ? data.warehouse_ids : []);
                     setPosCashRegisterId(data?.cash_register ?? null);
+                    setFuelContext(data?.fuel ?? null);
+                    setActivePosId(Number(posId));
 
                     if (data?.cash_register_name) {
                         setPosCashInfo({
@@ -128,6 +134,8 @@ const Sales = () => {
                     setAllowedWarehouseIds([]);
                     setPosCashRegisterId(null);
                     setPosCashInfo(null);
+                    setFuelContext(null);
+                    setActivePosId(null);
                     return;
                 }
 
@@ -136,6 +144,7 @@ const Sales = () => {
                 setAllowedMaterialGroupIds(Array.isArray(first.material_group_ids) ? first.material_group_ids : []);
                 setAllowedWarehouseIds(Array.isArray(first.warehouse_ids) ? first.warehouse_ids : []);
                 setPosCashRegisterId(first.cash_register ?? null);
+                setActivePosId(first.id ?? null);
 
                 if (first.cash_register_name) {
                     setPosCashInfo({
@@ -147,6 +156,17 @@ const Sales = () => {
                 } else {
                     setPosCashInfo(null);
                 }
+
+                // Benzinkút modul kontextus (csak ha a POS-hoz be van kapcsolva)
+                setFuelContext(null);
+                if (first.fuel_module_enabled && first.id) {
+                    try {
+                        const { data: launch } = await api.get(`/pos/terminals/${first.id}/launch_context/`);
+                        setFuelContext(launch?.fuel ?? null);
+                    } catch {
+                        setFuelContext(null);
+                    }
+                }
             } catch (error: any) {
                 if (error?.response?.status === 403) {
                     setPosTerminalName('POS');
@@ -155,6 +175,8 @@ const Sales = () => {
                     setAllowedWarehouseIds([]);
                     setPosCashRegisterId(null);
                     setPosCashInfo(null);
+                    setFuelContext(null);
+                    setActivePosId(null);
                 }
             }
         };
@@ -163,6 +185,19 @@ const Sales = () => {
         const interval = setInterval(loadPosContext, 30000);
         return () => clearInterval(interval);
     }, [location.search]);
+
+    const fetchLastTransaction = async () => {
+        try {
+            const { data } = await api.get('/sales/pos/transactions/last_transaction/');
+            setLastTransaction(data?.exists ? data : null);
+        } catch {
+            // csendben – nem kritikus adat
+        }
+    };
+
+    useEffect(() => {
+        fetchLastTransaction();
+    }, []);
 
     const handleLogout = async () => {
         await logout();
@@ -257,7 +292,10 @@ const Sales = () => {
         if (e.key === 'logout') {
             handleLogout();
         } else if (e.key === 'toggle-view') {
-            setViewMode((v) => (v === 'admin' ? 'pos' : 'admin'));
+            setViewMode((v) => {
+                if (v === 'admin') fetchLastTransaction();
+                return v === 'admin' ? 'pos' : 'admin';
+            });
         }
     };
 
@@ -299,6 +337,18 @@ const Sales = () => {
                             <Text style={{ color: 'white', opacity: 0.85 }}>{posCashInfo.name}</Text>
                         )}
                     </Space>
+                    {lastTransaction && (
+                        <Space size={16} style={{ marginLeft: 24 }} className="pos-h-last-tx">
+                            <Text style={{ color: 'white', opacity: 0.85 }}>Utolsó vásárlás:</Text>
+                            <Text style={{ color: '#52c41a', fontSize: '20px', fontWeight: 700 }}>
+                                {new Intl.NumberFormat('hu-HU', { maximumFractionDigits: 0 }).format(Number(lastTransaction.total || 0))} Ft
+                            </Text>
+                            <Text style={{ color: 'white', opacity: 0.85 }}>Visszajáró:</Text>
+                            <Text style={{ color: '#69b7ff', fontSize: '20px', fontWeight: 700 }}>
+                                {new Intl.NumberFormat('hu-HU', { maximumFractionDigits: 0 }).format(Number(lastTransaction.change || 0))} Ft
+                            </Text>
+                        </Space>
+                    )}
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
                     <Text className="pos-h-clock" style={{ color: 'white', fontSize: '16px' }}>
@@ -335,10 +385,18 @@ const Sales = () => {
                     <POSAdmin
                         cashRegisterId={posCashRegisterId}
                         allowedWarehouseIds={allowedWarehouseIds}
+                        fuelModuleEnabled={!!fuelContext}
                         onBackToPos={() => setViewMode('pos')}
                     />
                 ) : (
-                    <POS showAllCategories={showAllCategories} allowedMaterialGroupIds={allowedMaterialGroupIds} allowedWarehouseIds={allowedWarehouseIds} />
+                    <POS
+                        showAllCategories={showAllCategories}
+                        allowedMaterialGroupIds={allowedMaterialGroupIds}
+                        allowedWarehouseIds={allowedWarehouseIds}
+                        fuel={fuelContext}
+                        posId={activePosId}
+                        onTransactionCompleted={fetchLastTransaction}
+                    />
                 )}
             </div>
         </Layout>

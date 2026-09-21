@@ -50,6 +50,13 @@ interface WarehouseOption {
   name: string;
 }
 
+interface FuelPumpOption {
+  id: number;
+  pump_id: number;
+  name: string;
+  nozzle_count?: number;
+}
+
 interface POSTerminal {
   id: number;
   name: string;
@@ -64,6 +71,9 @@ interface POSTerminal {
   warehouse_names: string[];
   authorized_employee_ids: number[];
   authorized_employee_names: string[];
+  fuel_module_enabled?: boolean;
+  fuel_pump_ids?: number[];
+  fuel_pump_names?: string[];
   is_active: boolean;
 }
 
@@ -77,6 +87,8 @@ const Registration: React.FC = () => {
   const [warehouses, setWarehouses] = useState<WarehouseOption[]>([]);
   const [employees, setEmployees] = useState<EmployeeOption[]>([]);
   const [searchText, setSearchText] = useState('');
+  const [fuelModuleEnabled, setFuelModuleEnabled] = useState(false);
+  const [fuelPumps, setFuelPumps] = useState<FuelPumpOption[]>([]);
   const [form] = Form.useForm();
 
   useEffect(() => {
@@ -86,13 +98,15 @@ const Registration: React.FC = () => {
   const fetchAll = async () => {
     setLoading(true);
     try {
-      const [terminalsRes, cashRes, groupRes, warehouseRes, employeeRes] = await Promise.all([
+      const requests = [
         api.get('/pos/terminals/'),
         api.get('/finance/cash-registers/', { params: { is_active: true } }),
         api.get('/warehouse/material-groups/', { params: { is_active: true, page_size: 5000 } }),
         api.get('/warehouse/warehouses/', { params: { is_active: true, page_size: 5000 } }),
         api.get('/hr/employees/', { params: { page_size: 5000 } }),
-      ]);
+        api.get('/fuel/config/').catch(() => null),
+      ] as const;
+      const [terminalsRes, cashRes, groupRes, warehouseRes, employeeRes, fuelConfigRes] = await Promise.all(requests);
 
       const terminalData = terminalsRes.data?.results || terminalsRes.data || [];
       const cashData = cashRes.data?.results || cashRes.data || [];
@@ -105,6 +119,18 @@ const Registration: React.FC = () => {
       setMaterialGroups(Array.isArray(groupData) ? groupData : []);
       setWarehouses(Array.isArray(warehouseData) ? warehouseData : []);
       setEmployees(Array.isArray(employeeData) ? employeeData : []);
+
+      const fuelEnabled = !!(fuelConfigRes as any)?.data?.enabled;
+      setFuelModuleEnabled(fuelEnabled);
+      if (fuelEnabled) {
+        try {
+          const pumpRes = await api.get('/fuel/pumps/');
+          const pumpData = pumpRes.data?.results || pumpRes.data || [];
+          setFuelPumps(Array.isArray(pumpData) ? pumpData : []);
+        } catch {
+          setFuelPumps([]);
+        }
+      }
     } catch {
       message.error('Nem sikerült betölteni a POS regisztráció adatait');
     } finally {
@@ -121,6 +147,8 @@ const Registration: React.FC = () => {
       material_group_ids: [],
       warehouse_ids: [],
       authorized_employee_ids: [],
+      fuel_module_enabled: false,
+      fuel_pump_ids: [],
     });
     setModalOpen(true);
   };
@@ -136,6 +164,8 @@ const Registration: React.FC = () => {
       material_group_ids: row.material_group_ids || [],
       warehouse_ids: row.warehouse_ids || [],
       authorized_employee_ids: row.authorized_employee_ids || [],
+      fuel_module_enabled: !!row.fuel_module_enabled,
+      fuel_pump_ids: row.fuel_pump_ids || [],
       is_active: row.is_active,
     });
     setModalOpen(true);
@@ -216,6 +246,16 @@ const Registration: React.FC = () => {
       },
     },
     {
+      title: 'Benzinkút',
+      key: 'fuel_module',
+      render: (_: any, row) => {
+        const pumpNames = row.fuel_pump_names || [];
+        return row.fuel_module_enabled
+          ? <Tag color="orange">⛽ {pumpNames.length ? pumpNames.join(', ') : 'minden kút'}</Tag>
+          : <Tag>—</Tag>;
+      },
+    },
+    {
       title: 'Művelet',
       key: 'actions',
       render: (_: any, row) => (
@@ -227,6 +267,7 @@ const Registration: React.FC = () => {
   ];
 
   const showAllCategories = Form.useWatch('show_all_categories', form);
+  const fuelModuleOn = Form.useWatch('fuel_module_enabled', form);
   const filteredTerminals = terminals.filter(t => deepSearchMatch(searchText, t));
 
   return (
@@ -328,6 +369,35 @@ const Registration: React.FC = () => {
           <Form.Item name="is_active" label="Aktív" valuePropName="checked">
             <Switch />
           </Form.Item>
+
+          {fuelModuleEnabled && (
+            <>
+              <Form.Item
+                name="fuel_module_enabled"
+                label="⛽ Benzinkút modul"
+                valuePropName="checked"
+                help="A kasszaképernyőn megjelenik az üzemanyag adagolás (kútállapot, preset, termék+mennyiség átvétel, fizetés)."
+                style={{ marginBottom: 8 }}
+              >
+                <Switch checkedChildren="Bekapcsolva" unCheckedChildren="Kikapcsolva" />
+              </Form.Item>
+              {fuelModuleOn && (
+                <Form.Item
+                  name="fuel_pump_ids"
+                  label="Kútfejek"
+                  help="Ha üres, az összes aktív kútfej elérhető ezen a POS-on."
+                >
+                  <Select mode="multiple" allowClear placeholder="Minden kút">
+                    {fuelPumps.map((pump) => (
+                      <Select.Option key={pump.id} value={pump.id}>
+                        {pump.name || `${pump.pump_id}. kút`}
+                      </Select.Option>
+                    ))}
+                  </Select>
+                </Form.Item>
+              )}
+            </>
+          )}
         </Form>
       </Modal>
     </Card>

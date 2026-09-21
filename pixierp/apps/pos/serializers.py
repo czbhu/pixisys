@@ -1,6 +1,7 @@
 from rest_framework import serializers
 
 from apps.finance.models import CashRegister
+from apps.fuel.models import FuelPump
 from apps.hr.models import Employee
 from apps.warehouse.models import MaterialGroup, Warehouse
 
@@ -39,6 +40,14 @@ class POSTerminalSerializer(serializers.ModelSerializer):
     )
     authorized_employee_names = serializers.SerializerMethodField()
 
+    fuel_pump_ids = serializers.PrimaryKeyRelatedField(
+        many=True,
+        source='fuel_pumps',
+        queryset=FuelPump.objects.all(),
+        required=False
+    )
+    fuel_pump_names = serializers.SerializerMethodField()
+
     class Meta:
         model = POSTerminal
         fields = [
@@ -47,6 +56,7 @@ class POSTerminalSerializer(serializers.ModelSerializer):
             'show_all_categories', 'material_group_ids', 'material_group_names',
             'warehouse_ids', 'warehouse_names',
             'authorized_employee_ids', 'authorized_employee_names',
+            'fuel_module_enabled', 'fuel_pump_ids', 'fuel_pump_names',
             'is_active', 'created_by', 'created_at', 'updated_at'
         ]
         read_only_fields = ['created_by', 'created_at', 'updated_at']
@@ -64,10 +74,14 @@ class POSTerminalSerializer(serializers.ModelSerializer):
             names.append(full_name)
         return names
 
+    def get_fuel_pump_names(self, obj):
+        return [p.name or f'{p.pump_id}. kút' for p in obj.fuel_pumps.all()]
+
     def create(self, validated_data):
         material_groups = validated_data.pop('material_groups', [])
         warehouses = validated_data.pop('warehouses', [])
         authorized_employees = validated_data.pop('authorized_employees', [])
+        fuel_pumps = validated_data.pop('fuel_pumps', [])
 
         request = self.context.get('request')
         if request and request.user and request.user.is_authenticated:
@@ -80,12 +94,16 @@ class POSTerminalSerializer(serializers.ModelSerializer):
             terminal.warehouses.set(warehouses)
         if authorized_employees:
             terminal.authorized_employees.set(authorized_employees)
+        if fuel_pumps:
+            terminal.fuel_pumps.set(fuel_pumps)
+        self._ensure_fuel_warehouse(terminal)
         return terminal
 
     def update(self, instance, validated_data):
         material_groups = validated_data.pop('material_groups', None)
         warehouses = validated_data.pop('warehouses', None)
         authorized_employees = validated_data.pop('authorized_employees', None)
+        fuel_pumps = validated_data.pop('fuel_pumps', None)
 
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
@@ -97,5 +115,23 @@ class POSTerminalSerializer(serializers.ModelSerializer):
             instance.warehouses.set(warehouses)
         if authorized_employees is not None:
             instance.authorized_employees.set(authorized_employees)
+        if fuel_pumps is not None:
+            instance.fuel_pumps.set(fuel_pumps)
+        self._ensure_fuel_warehouse(instance)
 
         return instance
+
+    def _ensure_fuel_warehouse(self, terminal):
+        """Ha be van kapcsolva a benzinkút modul és a POS-hoz konkrét raktárak
+        vannak rendelve, az üzemanyag raktár is bekerül közéjük, hogy a kút
+        termékei és a bevételezés is elérhetők legyenek."""
+        if not terminal.fuel_module_enabled:
+            return
+        try:
+            from apps.fuel.models import FuelStationConfig
+            fuel_warehouse = FuelStationConfig.get_solo().fuel_warehouse
+        except Exception:
+            return
+        if fuel_warehouse and terminal.warehouses.exists() \
+                and not terminal.warehouses.filter(pk=fuel_warehouse.pk).exists():
+            terminal.warehouses.add(fuel_warehouse)

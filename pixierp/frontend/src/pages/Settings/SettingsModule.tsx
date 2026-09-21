@@ -16,6 +16,7 @@ import {
     WifiOutlined,
     ScanOutlined,
     SwapOutlined,
+    AppstoreOutlined,
 } from '@ant-design/icons';
 import AccessControlSettingsPage from './pages/AccessControlSettingsPage';
 import EmailServerPage from './pages/EmailServerPage';
@@ -37,10 +38,12 @@ import PrintProductsPage from './pages/PrintProductsPage';
 import PickupLocationsPage from './pages/PickupLocationsPage';
 import ImportPage from './pages/ImportPage';
 import LanguagesPage from './pages/LanguagesPage';
+import ModulesPage from './pages/ModulesPage';
 import ModuleDashboard from '../../components/ModuleDashboard';
 
 const SettingsModule: React.FC = () => {
   const dashboardItems = [
+      { key: '/settings/modules', label: 'Modulok', icon: <AppstoreOutlined /> },
       { key: '/settings/languages', label: 'Nyelvek', icon: <GlobalOutlined /> },
       { key: '/settings/access-control', label: 'Beléptető rendszer', icon: <LockOutlined /> },
       { key: '/settings/attendance-kiosk', label: 'Jelenlét Kioszk', icon: <TabletOutlined /> },
@@ -65,6 +68,7 @@ const SettingsModule: React.FC = () => {
   return (
     <Routes>
       <Route path="/" element={<ModuleDashboard title="Beállítások" items={dashboardItems} />} />
+      <Route path="/modules" element={<ModulesPage />} />
       <Route path="/languages" element={<LanguagesPage />} />
       <Route path="/access-control" element={<AccessControlSettingsPage />} />
       <Route path="/companies" element={<CompanySettings />} />

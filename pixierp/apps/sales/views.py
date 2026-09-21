@@ -29,7 +29,8 @@ from .serializers import (
     DeliveryNoteSerializer, DeliveryNoteItemSerializer, ApprovalRequestSerializer,
     ExtraWorkSerializer,
     POSCustomerIdentificationSerializer, POSCouponSerializer, POSTransactionSerializer,
-    POSTransactionItemSerializer, POSPaymentSerializer, POSTransactionCreateSerializer, PickupLocationSerializer
+    POSTransactionItemSerializer, POSPaymentSerializer, POSTransactionCreateSerializer,
+    POSTransactionListSerializer, PickupLocationSerializer
 )
 from apps.manufacturing.models import ManufacturingProduct, ManufacturingCostItem, Project, Service
 from apps.manufacturing.serializers import ManufacturingProductSerializer
@@ -9049,34 +9050,48 @@ class POSTransactionViewSet(viewsets.ModelViewSet):
     """ViewSet for POS transactions"""
     queryset = POSTransaction.objects.all()
     permission_classes = [AllowAny]
-    
+
     def get_serializer_class(self):
         if self.action == 'create':
             return POSTransactionCreateSerializer
+        if self.action == 'list':
+            return POSTransactionListSerializer
         return POSTransactionSerializer
-    
+
     def get_queryset(self):
         queryset = super().get_queryset()
-        
+
         # Filter by date range
         date_from = self.request.query_params.get('date_from')
         date_to = self.request.query_params.get('date_to')
-        
+
         if date_from:
             queryset = queryset.filter(created_at__gte=date_from)
         if date_to:
             queryset = queryset.filter(created_at__lte=date_to)
-        
+
         # Filter by cashier
         cashier_id = self.request.query_params.get('cashier_id')
         if cashier_id:
             queryset = queryset.filter(cashier_id=cashier_id)
-        
+
         # Filter by status
         status = self.request.query_params.get('status')
         if status:
             queryset = queryset.filter(status=status)
-        
+
+        # Search by number / customer name
+        search = self.request.query_params.get('search')
+        if search:
+            from django.db.models import Q
+            queryset = queryset.filter(
+                Q(transaction_number__icontains=search) |
+                Q(customer_name__icontains=search) |
+                Q(shopper_name__icontains=search)
+            )
+
+        if self.action == 'list':
+            return queryset.select_related('customer', 'cashier')
         return queryset.select_related('customer', 'coupon', 'cashier').prefetch_related('items', 'payments')
     
     @action(detail=False, methods=['get'])
@@ -9258,19 +9273,174 @@ class POSTransactionViewSet(viewsets.ModelViewSet):
     def cancel_transaction(self, request, pk=None):
         """Cancel a transaction"""
         transaction = self.get_object()
-        
+
         if transaction.status == 'completed':
             return Response({'error': 'Cannot cancel completed transaction'}, status=400)
-        
+
         transaction.status = 'cancelled'
         transaction.save()
-        
+
         # Cancel all pending payments
         transaction.payments.filter(status='pending').update(status='cancelled')
-        
+
         return Response({
             'success': True,
             'message': 'Tranzakció törölve'
+        })
+
+    @action(detail=True, methods=['post'])
+    def storno(self, request, pk=None):
+        """Befejezett POS bizonylat sztornózása.
+
+        Készpénzes fizetésnél (ha a kérés tartalmazza a cash_register azonosítót)
+        a bizonylat összege vissza kerül a kasszából (kivét rögzítése).
+        """
+        transaction = self.get_object()
+
+        if transaction.status != 'completed':
+            return Response({'error': 'Csak befejezett bizonylat sztornózható'}, status=400)
+
+        reason = (request.data.get('reason') or '').strip()
+
+        transaction.status = 'cancelled'
+        transaction.storno_reason = reason
+        transaction.stornoed_at = timezone.now()
+        if request.user.is_authenticated:
+            transaction.stornoed_by = request.user
+        transaction.save()
+
+        # Kupon felhasználás visszavonása
+        if transaction.coupon and transaction.coupon.usage_count > 0:
+            transaction.coupon.usage_count -= 1
+            transaction.coupon.save(update_fields=['usage_count'])
+
+        # Üzemanyag tétel: kötelező újrakibizonylatolás (a kút tranzakció
+        # fizetetlen, újrakibizonylatolandó állapotba kerül, a kassza
+        # piros mezőben jelzi a kosár felett)
+        fuel_rebill = None
+        try:
+            from apps.fuel.models import FuelSaleTransaction
+            fuel_tx = FuelSaleTransaction.objects.filter(pos_transaction=transaction).first()
+            if fuel_tx and fuel_tx.state == 'paid':
+                fuel_tx.state = 'rebill'
+                fuel_tx.pos_transaction = None
+                fuel_tx.save(update_fields=['state', 'pos_transaction'])
+                fuel_rebill = {
+                    'fuel_transaction': fuel_tx.pk,
+                    'name': fuel_tx.fuel_grade.name if fuel_tx.fuel_grade else 'Üzemanyag',
+                    'volume': float(fuel_tx.volume or 0),
+                    'amount': float(fuel_tx.amount or 0),
+                }
+        except Exception:
+            pass
+
+        # Készpénz visszatérítése a kasszából
+        cash_reversed = False
+        cash_register_id = request.data.get('cash_register')
+        if transaction.payment_method == 'cash' and cash_register_id:
+            try:
+                from apps.finance.models import CashRegister, CashRegisterTransaction
+                cash_register = CashRegister.objects.get(id=cash_register_id)
+                amount = -abs(transaction.total_gross)
+                try:
+                    employee = request.user.employee_profile if request.user.is_authenticated else None
+                except Exception:
+                    employee = None
+                CashRegisterTransaction.objects.create(
+                    cash_register=cash_register,
+                    employee=employee,
+                    amount=amount,
+                    note=f"POS sztornó: {transaction.transaction_number}" + (f" – {reason}" if reason else ''),
+                    balance_before=cash_register.current_balance,
+                    balance_after=cash_register.current_balance + amount,
+                )
+                cash_register.current_balance += amount
+                cash_register.save(update_fields=['current_balance', 'updated_at'])
+                cash_reversed = True
+            except CashRegister.DoesNotExist:
+                return Response({'error': 'A megadott kassza nem található'}, status=400)
+
+        return Response({
+            'success': True,
+            'message': 'Bizonylat sztornózva' + (', a készpénz visszatérítve a kasszából' if cash_reversed else '')
+            + ('. Üzemanyag tétel újrakibizonylatolandó!' if fuel_rebill else ''),
+            'cash_reversed': cash_reversed,
+            'fuel_rebill': fuel_rebill,
+            'transaction': POSTransactionSerializer(transaction).data
+        })
+
+    @action(detail=True, methods=['post'])
+    def correct(self, request, pk=None):
+        """Befejezett POS bizonylat helyesbítése.
+
+        Módosítható: vevő adatok és a meglévő tételek mennyisége / bruttó egységára.
+        A nettó egységár a bruttó árból az ÁFA kulcs alapján újraszámolódik,
+        a bizonylat végösszegei pedig a tételek alapján újraszámolódnak.
+        """
+        transaction = self.get_object()
+
+        if transaction.status == 'cancelled':
+            return Response({'error': 'Sztornózott bizonylat nem helyesbíthető'}, status=400)
+
+        from decimal import Decimal, InvalidOperation
+        errors = []
+
+        # Vevő adatok módosítása
+        for field in ['customer_name', 'customer_address', 'customer_tax_number', 'customer_email']:
+            if field in request.data:
+                setattr(transaction, field, request.data.get(field) or '')
+
+        # Tételek módosítása
+        items_data = request.data.get('items')
+        if items_data is not None:
+            if not isinstance(items_data, list):
+                return Response({'error': 'Érvénytelen tételek formátum'}, status=400)
+
+            for item_data in items_data:
+                try:
+                    item = transaction.items.get(id=item_data.get('id'))
+                except POSTransactionItem.DoesNotExist:
+                    errors.append(f"A #{item_data.get('id')} tétel nem tartozik ehhez a bizonylathoz")
+                    continue
+
+                if 'quantity' in item_data:
+                    try:
+                        qty = Decimal(str(item_data['quantity']))
+                        if qty <= 0:
+                            raise InvalidOperation()
+                        item.quantity = qty
+                    except (InvalidOperation, TypeError, ValueError):
+                        errors.append(f"Érvénytelen mennyiség: {item.product_name}")
+                        continue
+
+                if 'gross_unit_price' in item_data:
+                    try:
+                        gross = Decimal(str(item_data['gross_unit_price']))
+                        if gross < 0:
+                            raise InvalidOperation()
+                        item.gross_unit_price = gross
+                        vat = item.vat_rate or Decimal('0')
+                        item.net_unit_price = (gross / (Decimal('1') + vat / Decimal('100'))).quantize(Decimal('0.01'))
+                    except (InvalidOperation, TypeError, ValueError):
+                        errors.append(f"Érvénytelen egységár: {item.product_name}")
+                        continue
+
+                item.save()
+
+        if errors:
+            return Response({'error': '; '.join(errors)}, status=400)
+
+        transaction.save()
+        # A viewset prefetch_related('items')-szel töltötte be az objektumot:
+        # a módosítás előtti tételadatok vannak a cache-ben, törljük újraszámolás előtt.
+        if hasattr(transaction, '_prefetched_objects_cache'):
+            transaction._prefetched_objects_cache.pop('items', None)
+        transaction.calculate_totals()
+
+        return Response({
+            'success': True,
+            'message': 'Bizonylat helyesbítve',
+            'transaction': POSTransactionSerializer(transaction).data
         })
     
     def _simulate_terminal_payment(self, amount):

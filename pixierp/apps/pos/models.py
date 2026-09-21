@@ -41,6 +41,18 @@ class POSTerminal(models.Model):
         related_name='pos_terminals',
         verbose_name='Jogosult alkalmazottak'
     )
+    fuel_module_enabled = models.BooleanField(
+        default=False,
+        verbose_name='Benzinkút modul',
+        help_text='A POS kasszaképernyőn elérhetővé válik az üzemanyag adagolás (kútállapot, preset, kifizetés).'
+    )
+    fuel_pumps = models.ManyToManyField(
+        'fuel.FuelPump',
+        blank=True,
+        related_name='pos_terminals',
+        verbose_name='Kútfejek',
+        help_text='Ha üres, az összes aktív kútfej elérhető ezen a POS-on.'
+    )
     is_active = models.BooleanField(default=True, verbose_name='Aktív')
     created_by = models.ForeignKey(
         User,

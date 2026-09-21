@@ -4,6 +4,8 @@ import NumInput from '../../components/NumInput';
 import { ShoppingCartOutlined, UserOutlined, PlusOutlined, MinusOutlined, DeleteOutlined, EditOutlined, AppstoreOutlined, CloseCircleFilled, ShoppingOutlined } from '@ant-design/icons';
 import CustomerSelection from './components/CustomerSelection';
 import CheckoutSummary from './components/CheckoutSummary';
+import FuelScreen from './components/FuelScreen';
+import FuelPumpStrip from './components/FuelPumpStrip';
 import api from '../../services/api';
 import './POS.css';
 
@@ -21,6 +23,7 @@ interface CartItem {
   vat_rate: number;
   is_discounted: boolean;
   original_gross_price?: number;
+  fuel_transaction_id?: number;
 }
 
 interface Customer {
@@ -60,13 +63,17 @@ interface POSProps {
   showAllCategories?: boolean;
   allowedMaterialGroupIds?: number[];
   allowedWarehouseIds?: number[];
+  fuel?: import('./components/FuelScreen').FuelContext | null;
+  posId?: number | null;
+  onTransactionCompleted?: () => void;
 }
 
-const POS: React.FC<POSProps> = ({ showAllCategories = true, allowedMaterialGroupIds = [], allowedWarehouseIds = [] }) => {
+const POS: React.FC<POSProps> = ({ showAllCategories = true, allowedMaterialGroupIds = [], allowedWarehouseIds = [], fuel = null, posId = null, onTransactionCompleted }) => {
   const [showCheckout, setShowCheckout] = useState(false);
+  const [showFuel, setShowFuel] = useState(false);
+  const [pendingRebills, setPendingRebills] = useState<any[]>([]);
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
-  const [lastTransaction, setLastTransaction] = useState<any>(null);
   const [showDiscountPrices, setShowDiscountPrices] = useState(false);
   const [customerModalOpen, setCustomerModalOpen] = useState(false);
 
@@ -176,8 +183,8 @@ const POS: React.FC<POSProps> = ({ showAllCategories = true, allowedMaterialGrou
   }, []);
 
   useEffect(() => {
-    fetchLastTransaction();
     fetchCategories();
+    fetchPendingRebills();
   }, []);
 
   // Refetch products whenever the POS's allowed warehouse restriction changes
@@ -357,17 +364,6 @@ const POS: React.FC<POSProps> = ({ showAllCategories = true, allowedMaterialGrou
     setFilteredMaterials(filtered);
   };
 
-  const fetchLastTransaction = async () => {
-    try {
-      const response = await api.get('/sales/pos/transactions/last_transaction/');
-      if (response.data.exists) {
-        setLastTransaction(response.data);
-      }
-    } catch (error) {
-      console.error('Error fetching last transaction:', error);
-    }
-  };
-
   const openMaterialDetail = async (materialId: number) => {
     setDetailModalOpen(true);
     setDetailEditing(false);
@@ -465,6 +461,92 @@ const POS: React.FC<POSProps> = ({ showAllCategories = true, allowedMaterialGrou
     }
   };
 
+  const fetchPendingRebills = async () => {
+    try {
+      const { data } = await api.get('/fuel/transactions/pending_rebills/');
+      setPendingRebills(Array.isArray(data) ? data : (data?.results || []));
+    } catch {
+      // csak ha üzemanyag modul van – csendben
+    }
+  };
+
+  const addRebillToCart = (rebill: any) => {
+    const gradeId = rebill.fuel_grade;
+    const grade = fuel?.grades.find((g) => g.id === gradeId);
+    if (!grade || !grade.material) {
+      message.error('Az üzemanyag fajtához nincs termék rendelve (Beállítások → Modulok)');
+      return;
+    }
+    if (cartItems.some((item) => item.fuel_transaction_id === rebill.id)) {
+      message.warning('Ez a tétel már a kosárban van');
+      return;
+    }
+    const price = Number(rebill.unit_price) || grade.price || 0;
+    const quantity = Number(rebill.volume) || 0;
+    if (quantity <= 0) {
+      message.warning('A tétel mennyisége 0');
+      return;
+    }
+    const cartItem: CartItem = {
+      material_id: grade.material,
+      product_code: `FUEL-${grade.fuel_grade_id}`,
+      product_name: `${grade.name} – ${rebill.pump_name}${rebill.nozzle_number ? ` ${rebill.nozzle_number}. pisztoly` : ''} (újrakibizonylatolás)`,
+      product_description: `Sztornózott bizonylat kút tranzakciója #${rebill.pts_transaction_number ?? '—'}`,
+      quantity,
+      unit: grade.unit || 'liter',
+      gross_unit_price: price,
+      net_unit_price: Math.round((price / 1.27) * 100) / 100,
+      vat_rate: 27,
+      is_discounted: false,
+      fuel_transaction_id: rebill.id,
+    };
+    setCartItems([...cartItems, cartItem]);
+    message.success({
+      content: `${grade.name} ${quantity.toFixed(2)} l a kosárban`,
+      duration: 1.5,
+    });
+  };
+
+  const handleTakeFuelToCart = (pumpStatus: any) => {
+    if (!fuel) return;
+    const ftx = pumpStatus.fuel_transaction;
+    if (!ftx) return;
+    const gradeId = ftx.fuel_grade ?? pumpStatus.fuel_grade;
+    const grade = fuel.grades.find((g) => g.id === gradeId);
+    if (!grade || !grade.material) {
+      message.error('Az üzemanyag fajtához nincs termék rendelve (Beállítások → Modulok)');
+      return;
+    }
+    if (cartItems.some((item) => item.fuel_transaction_id === ftx.id)) {
+      message.warning('Ez a tankolás már a kosárban van');
+      return;
+    }
+    const price = Number(ftx.unit_price) || grade.price || 0;
+    const quantity = Number(ftx.volume) || 0;
+    if (quantity <= 0) {
+      message.warning('A tankolás mennyisége 0');
+      return;
+    }
+    const cartItem: CartItem = {
+      material_id: grade.material,
+      product_code: `FUEL-${grade.fuel_grade_id}`,
+      product_name: `${grade.name} – ${pumpStatus.pump_name}${pumpStatus.nozzle ? ` ${pumpStatus.nozzle}. pisztoly` : ''}`,
+      product_description: `Kút tranzakció #${ftx.pts_transaction_number ?? '—'}`,
+      quantity,
+      unit: grade.unit || 'liter',
+      gross_unit_price: price,
+      net_unit_price: Math.round((price / 1.27) * 100) / 100,
+      vat_rate: 27,
+      is_discounted: false,
+      fuel_transaction_id: ftx.id,
+    };
+    setCartItems([...cartItems, cartItem]);
+    message.success({
+      content: `${grade.name} ${quantity.toFixed(2)} l a kosárban`,
+      duration: 1.5,
+    });
+  };
+
   const handleUpdateCartItem = (index: number, quantity: number) => {
     if (quantity <= 0) {
       handleRemoveCartItem(index);
@@ -505,12 +587,28 @@ const POS: React.FC<POSProps> = ({ showAllCategories = true, allowedMaterialGrou
     setCustomerModalOpen(false);
   };
 
-  const handleCheckoutComplete = async () => {
+  const handleCheckoutComplete = async (completedTransactionId?: number) => {
+    const fuelTxIds = Array.from(new Set(
+      cartItems.filter((i) => i.fuel_transaction_id).map((i) => i.fuel_transaction_id as number)
+    ));
     setCartItems([]);
     setSelectedCustomer(null);
     setShowDiscountPrices(false);
     setShowCheckout(false);
-    await fetchLastTransaction();
+    if (completedTransactionId && fuelTxIds.length) {
+      for (const fuelTxId of fuelTxIds) {
+        try {
+          const { data } = await api.post(`/fuel/transactions/${fuelTxId}/complete/`, {
+            pos_transaction: completedTransactionId,
+          });
+          (data?.warnings || []).forEach((w: string) => message.warning(w));
+        } catch (error: any) {
+          message.warning(error?.response?.data?.error || 'A kút tranzakció lezárása nem sikerült');
+        }
+      }
+    }
+    onTransactionCompleted?.();
+    fetchPendingRebills();
   };
 
   const getCartTotal = () => {
@@ -652,6 +750,16 @@ const POS: React.FC<POSProps> = ({ showAllCategories = true, allowedMaterialGrou
     },
   ];
 
+  if (showFuel && fuel) {
+    return (
+      <FuelScreen
+        fuel={fuel}
+        posId={posId}
+        onClose={() => setShowFuel(false)}
+      />
+    );
+  }
+
   if (showCheckout) {
     return (
       <CheckoutSummary
@@ -673,92 +781,26 @@ const POS: React.FC<POSProps> = ({ showAllCategories = true, allowedMaterialGrou
         ? { padding: '8px', minHeight: 'calc(100dvh - 64px)' }
         : { padding: '12px 16px', height: 'calc(100vh - 64px)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
     >
-      {/* Last transaction - one row */}
-      {lastTransaction && (
-        <Card size="small" style={{ marginBottom: '16px', flex: '0 0 auto' }}>
-          <Row gutter={16}>
-            <Col span={12}>
-              <Text strong>Utolsó vásárlás fizetett összeg: </Text>
-              <Text style={{ fontSize: '18px', color: '#52c41a' }}>
-                {lastTransaction.total?.toLocaleString('hu-HU')} Ft
-              </Text>
-            </Col>
-            <Col span={12}>
-              <Text strong>Visszajáró: </Text>
-              <Text style={{ fontSize: '18px', color: '#1890ff' }}>
-                {lastTransaction.change?.toLocaleString('hu-HU')} Ft
-              </Text>
-            </Col>
-          </Row>
-        </Card>
-      )}
-
-      <Row gutter={[12, 8]} style={{ marginBottom: '10px', flex: '0 0 auto' }}>
-        {/* Customer button */}
-        <Col flex="auto">
-          <Button
-            type={selectedCustomer ? 'default' : 'primary'}
-            icon={!selectedCustomer ? <UserOutlined /> : undefined}
-            onClick={() => setCustomerModalOpen(true)}
-            size="large"
-            block
-            style={{
-              height: isMobile ? '48px' : '60px',
-              fontSize: '16px',
-              padding: selectedCustomer ? '4px 12px' : undefined,
-              whiteSpace: 'normal',
-              textAlign: 'left'
-            }}
-          >
-            {selectedCustomer ? (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', height: '100%' }}>
-                <UserOutlined style={{ fontSize: '20px', flexShrink: 0 }} />
-                <div style={{ flex: 1, lineHeight: '1.3', overflow: 'visible' }}>
-                  <div style={{ fontSize: '13px', fontWeight: 600, marginBottom: '1px' }}>
-                    {selectedCustomer.name}
-                  </div>
-                  <div style={{ fontSize: '11px', color: '#666', marginBottom: '1px' }}>
-                    {selectedCustomer.address}
-                  </div>
-                  <div style={{ fontSize: '11px', fontWeight: 500, color: '#444', wordBreak: 'break-all' }}>
-                    {getDisplayTaxNumber(selectedCustomer)}
-                  </div>
-                </div>
-              </div>
-            ) : (
-              'Nyugtás'
-            )}
-          </Button>
-        </Col>
-        
-        {/* Discount toggle button */}
-        <Col style={isMobile ? { flex: '1 1 100%' } : undefined}>
-          <Button
-            size="large"
-            disabled={!selectedCustomer}
-            onClick={() => setShowDiscountPrices((prev) => !prev)}
-            style={{
-              height: isMobile ? '48px' : '60px',
-              width: '100%',
-              minWidth: isMobile ? 0 : '220px',
-              backgroundColor: showDiscountPrices ? '#52c41a' : '#8c8c8c',
-              borderColor: showDiscountPrices ? '#52c41a' : '#8c8c8c',
-              color: 'white',
-              fontWeight: 600,
-              opacity: selectedCustomer ? 1 : 0.65
-            }}
-          >
-            {showDiscountPrices ? 'Kedvezmény: ✓' : 'Kedvezmény: Nincs'}
-          </Button>
-        </Col>
-      </Row>
 
       <Row
         gutter={16}
         style={isMobile ? { marginBottom: 8 } : { flex: '1 1 auto', minHeight: 0 }}
       >
         {/* Products section - left side */}
-        <Col xs={24} lg={14} style={isMobile ? { height: '58vh' } : { height: '100%', minHeight: 0 }}>
+        <Col
+          xs={24}
+          lg={14}
+          style={isMobile ? undefined : { height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column' }}
+        >
+          {fuel && (
+            <FuelPumpStrip
+              fuel={fuel}
+              posId={posId}
+              onTakeToCart={handleTakeFuelToCart}
+              onOpenDetails={() => setShowFuel(true)}
+            />
+          )}
+          <div style={{ flex: '1 1 auto', minHeight: 0, height: isMobile ? '58vh' : undefined }}>
           <Card
             className="pos-fill-card"
             title={
@@ -835,10 +877,115 @@ const POS: React.FC<POSProps> = ({ showAllCategories = true, allowedMaterialGrou
               )}
             </div>
           </Card>
+          </div>
         </Col>
 
         {/* Cart section - right side */}
-        <Col xs={24} lg={10} style={isMobile ? undefined : { height: '100%', minHeight: 0 }}>
+        <Col
+          xs={24}
+          lg={10}
+          style={isMobile ? undefined : { height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column' }}
+        >
+          {/* Bent maradt (újrakibizonylatolandó) üzemanyag tételek */}
+          {pendingRebills.length > 0 && (
+            <div
+              style={{
+                flex: '0 0 auto',
+                marginBottom: 10,
+                padding: '8px 12px',
+                borderRadius: 6,
+                border: '2px solid #cf1322',
+                background: '#fff1f0',
+              }}
+            >
+              <Text strong style={{ color: '#cf1322' }}>Bent maradt tételek (sztnó után újrakibizonylatolandó):</Text>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 4 }}>
+                {pendingRebills.map((rebill) => (
+                  <div
+                    key={rebill.id}
+                    onClick={() => addRebillToCart(rebill)}
+                    style={{
+                      cursor: 'pointer',
+                      padding: '4px 8px',
+                      borderRadius: 4,
+                      background: '#ffffff',
+                      border: '1px solid #ffa39e',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 8,
+                    }}
+                  >
+                    <Text strong style={{ color: '#cf1322' }}>
+                      {rebill.fuel_grade_name || 'Üzemanyag'} | {Number(rebill.volume).toLocaleString('hu-HU', { maximumFractionDigits: 2 })} liter | {Number(rebill.amount).toLocaleString('hu-HU')} Ft
+                    </Text>
+                    <Text type="secondary" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
+                      Kosárba 🛒
+                    </Text>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {/* Nyugtás / ügyfél + kedvezmény – a kosár szélességében */}
+          <div style={{ display: 'flex', gap: 8, marginBottom: 10, flex: '0 0 auto' }}>
+            <div style={{ flex: '1 1 auto', minWidth: 0 }}>
+              <Button
+                type={selectedCustomer ? 'default' : 'primary'}
+                icon={!selectedCustomer ? <UserOutlined /> : undefined}
+                onClick={() => setCustomerModalOpen(true)}
+                size="large"
+                block
+                style={{
+                  height: isMobile ? '48px' : '60px',
+                  fontSize: '16px',
+                  padding: selectedCustomer ? '4px 10px' : undefined,
+                  whiteSpace: 'normal',
+                  textAlign: 'left'
+                }}
+              >
+                {selectedCustomer ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', height: '100%' }}>
+                    <UserOutlined style={{ fontSize: '20px', flexShrink: 0 }} />
+                    <div style={{ flex: 1, lineHeight: '1.3', minWidth: 0, overflow: 'hidden' }}>
+                      <div style={{ fontSize: '13px', fontWeight: 600, marginBottom: '1px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {selectedCustomer.name}
+                      </div>
+                      <div style={{ fontSize: '11px', color: '#666', marginBottom: '1px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {selectedCustomer.address}
+                      </div>
+                      <div style={{ fontSize: '11px', fontWeight: 500, color: '#444', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {getDisplayTaxNumber(selectedCustomer)}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  'Nyugtás'
+                )}
+              </Button>
+            </div>
+            <div style={{ flex: '0 0 auto' }}>
+              <Button
+                size="large"
+                disabled={!selectedCustomer}
+                onClick={() => setShowDiscountPrices((prev) => !prev)}
+                style={{
+                  height: isMobile ? '48px' : '60px',
+                  minWidth: 96,
+                  padding: '4px 8px',
+                  fontSize: 12,
+                  backgroundColor: showDiscountPrices ? '#52c41a' : '#8c8c8c',
+                  borderColor: showDiscountPrices ? '#52c41a' : '#8c8c8c',
+                  color: 'white',
+                  fontWeight: 600,
+                  opacity: selectedCustomer ? 1 : 0.65
+                }}
+              >
+                {showDiscountPrices ? 'Kedvezmény ✓' : 'Nincs kedv.'}
+              </Button>
+            </div>
+          </div>
+          <div style={{ flex: '1 1 auto', minHeight: 0 }}>
           <Card
             className="pos-fill-card"
             title={
@@ -879,6 +1026,7 @@ const POS: React.FC<POSProps> = ({ showAllCategories = true, allowedMaterialGrou
               />
             </div>
           </Card>
+          </div>
         </Col>
       </Row>
 

@@ -1,27 +1,29 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   Card, Button, Row, Col, Typography, Input, Table, Modal, Form, InputNumber, Select,
-  DatePicker, message, Space, Statistic, Empty, Steps, Tag,
+  DatePicker, message, Space, Statistic, Empty, Steps, Tag, Segmented,
 } from 'antd';
 import {
   TagsOutlined, PercentageOutlined, InboxOutlined, FileSearchOutlined, DollarOutlined,
   ArrowLeftOutlined, PrinterOutlined, PlusOutlined, MinusOutlined, SearchOutlined,
-  ScanOutlined, CameraOutlined, EditOutlined, DeleteOutlined,
+  ScanOutlined, CameraOutlined, EditOutlined, DeleteOutlined, FileDoneOutlined, SwapOutlined,
 } from '@ant-design/icons';
 import { QRCodeSVG } from 'qrcode.react';
 import dayjs from 'dayjs';
 import api from '../../services/api';
 import QRScannerModal from '../../components/QRScannerModal';
+import ShiftHandoverScreen from './components/ShiftHandoverScreen';
 
 const { Title, Text } = Typography;
 
 interface POSAdminProps {
   cashRegisterId: number | null;
   allowedWarehouseIds: number[];
+  fuelModuleEnabled?: boolean;
   onBackToPos: () => void;
 }
 
-type AdminScreen = 'menu' | 'labels' | 'promo' | 'receipt' | 'stocktake' | 'cash';
+type AdminScreen = 'menu' | 'labels' | 'promo' | 'receipt' | 'stocktake' | 'cash' | 'documents' | 'shift';
 
 interface MaterialLite {
   id: number;
@@ -1523,10 +1525,411 @@ const StocktakeScreen: React.FC<{ onBack: () => void; allowedWarehouseIds: numbe
   );
 };
 
-// ── E. Kassza be/ki ──────────────────────────────────────────────────────────
+// ── E. Bizonylatok (POS nyugták / számlák) ──────────────────────────────────
+const PAYMENT_METHOD_LABELS: Record<string, string> = {
+  cash: 'Készpénz',
+  card: 'Kártya',
+  customer_card: 'Ügyfélkártya',
+};
+
+const TRANSACTION_TYPE_LABELS: Record<string, string> = {
+  receipt: 'Nyugta',
+  invoice: 'Számla',
+};
+
+const PosDocumentLines: React.FC<{ transactionId: number }> = ({ transactionId }) => {
+  const [detail, setDetail] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    api.get(`/sales/pos/transactions/${transactionId}/`)
+      .then(r => setDetail(r.data))
+      .catch(() => message.error('Nem sikerült betölteni a bizonylat tételeit'))
+      .finally(() => setLoading(false));
+  }, [transactionId]);
+
+  if (!detail) return loading ? <div style={{ padding: 8 }}>Betöltés…</div> : null;
+
+  return (
+    <div>
+      <Space wrap style={{ marginBottom: 8 }}>
+        <Tag>{TRANSACTION_TYPE_LABELS[detail.transaction_type] || detail.transaction_type}</Tag>
+        <Tag color="blue">{PAYMENT_METHOD_LABELS[detail.payment_method] || detail.payment_method}</Tag>
+        <Tag>Nettó: {Number(detail.total_net).toLocaleString('hu-HU')} Ft</Tag>
+        <Tag>ÁFA: {Number(detail.total_vat).toLocaleString('hu-HU')} Ft</Tag>
+        <Tag color="green">Bruttó: {Number(detail.total_gross).toLocaleString('hu-HU')} Ft</Tag>
+        {detail.cashier_name && <Tag>Pénztáros: {detail.cashier_name}</Tag>}
+        {detail.status === 'cancelled' && <Tag color="red">Sztornózva</Tag>}
+        {detail.storno_reason ? <Tag color="red">Indok: {detail.storno_reason}</Tag> : null}
+      </Space>
+      <Table
+        size="small"
+        rowKey="id"
+        loading={loading}
+        dataSource={detail.items || []}
+        pagination={false}
+        columns={[
+          { title: 'Cikkszám', dataIndex: 'product_code', key: 'product_code', width: 130 },
+          { title: 'Termék', dataIndex: 'product_name', key: 'product_name' },
+          { title: 'Mennyiség', key: 'quantity', width: 130,
+            render: (_: any, l: any) => `${Number(l.quantity).toLocaleString('hu-HU')} ${l.unit || ''}` },
+          { title: 'Bruttó egységár', dataIndex: 'gross_unit_price', key: 'gross_unit_price', width: 150, align: 'right' as const,
+            render: (v: number) => `${Number(v).toLocaleString('hu-HU')} Ft` },
+          { title: 'Bruttó összesen', dataIndex: 'gross_total', key: 'gross_total', width: 150, align: 'right' as const,
+            render: (v: number) => `${Number(v).toLocaleString('hu-HU')} Ft` },
+        ]}
+      />
+    </div>
+  );
+};
+
+const DocumentsScreen: React.FC<{ onBack: () => void; cashRegisterId: number | null }> = ({ onBack, cashRegisterId }) => {
+  const [docs, setDocs] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [search, setSearch] = useState('');
+  const [filter, setFilter] = useState<'all' | 'valid' | 'stornoed'>('all');
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Sztornó
+  const [stornoTarget, setStornoTarget] = useState<any | null>(null);
+  const [stornoReason, setStornoReason] = useState('');
+  const [stornoBusy, setStornoBusy] = useState(false);
+
+  // Helyesbítés
+  const [correctDetail, setCorrectDetail] = useState<any | null>(null);
+  const [correctItems, setCorrectItems] = useState<any[]>([]);
+  const [correctCustomer, setCorrectCustomer] = useState({ name: '', address: '', tax_number: '', email: '' });
+  const [correctBusy, setCorrectBusy] = useState(false);
+
+  const load = useCallback((q: string, f: string) => {
+    setLoading(true);
+    const params: any = { page_size: 200 };
+    if (q) params.search = q;
+    if (f === 'valid') params.status = 'completed';
+    if (f === 'stornoed') params.status = 'cancelled';
+    api.get('/sales/pos/transactions/', { params })
+      .then(r => setDocs(r.data.results || r.data || []))
+      .catch(() => message.error('Nem sikerült betölteni a bizonylatokat'))
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => { load('', filter); }, [load, filter]);
+
+  const handleSearch = (val: string) => {
+    setSearch(val);
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(() => load(val, filter), 350);
+  };
+
+  const doStorno = async () => {
+    if (!stornoTarget) return;
+    setStornoBusy(true);
+    try {
+      const res = await api.post(`/sales/pos/transactions/${stornoTarget.id}/storno/`, {
+        reason: stornoReason || '',
+        cash_register: cashRegisterId,
+      });
+      message.success(res.data?.message || 'Bizonylat sztornózva');
+      if (res.data?.fuel_rebill) {
+        const fr = res.data.fuel_rebill;
+        message.warning(
+          `Üzemanyag tétel újrakibizonylatolandó: ${fr.name} | ${Number(fr.volume).toLocaleString('hu-HU')} liter | ${Number(fr.amount).toLocaleString('hu-HU')} Ft – a kasszaképernyőn piros mezőben kattintva teheted a kosárba.`,
+          8
+        );
+      }
+      setStornoTarget(null);
+      setStornoReason('');
+      load(search, filter);
+    } catch (err: any) {
+      message.error(err?.response?.data?.error || 'Hiba a sztornózás során');
+    } finally {
+      setStornoBusy(false);
+    }
+  };
+
+  const openCorrect = async (row: any) => {
+    try {
+      const r = await api.get(`/sales/pos/transactions/${row.id}/`);
+      const detail = r.data;
+      setCorrectDetail(detail);
+      setCorrectItems((detail.items || []).map((l: any) => ({
+        id: l.id,
+        product_name: l.product_name,
+        product_code: l.product_code,
+        unit: l.unit,
+        quantity: Number(l.quantity),
+        gross_unit_price: Number(l.gross_unit_price),
+      })));
+      setCorrectCustomer({
+        name: detail.customer_name || '',
+        address: detail.customer_address || '',
+        tax_number: detail.customer_tax_number || '',
+        email: detail.customer_email || '',
+      });
+    } catch {
+      message.error('Nem sikerült betölteni a bizonylat adatait');
+    }
+  };
+
+  const correctTotal = correctItems.reduce((s, l) => s + l.quantity * l.gross_unit_price, 0);
+
+  const doCorrect = async () => {
+    if (!correctDetail) return;
+    if (correctItems.some(l => !(l.quantity > 0) || l.gross_unit_price < 0)) {
+      message.warning('Van érvénytelen mennyiség vagy egységár');
+      return;
+    }
+    setCorrectBusy(true);
+    try {
+      const res = await api.post(`/sales/pos/transactions/${correctDetail.id}/correct/`, {
+        customer_name: correctCustomer.name,
+        customer_address: correctCustomer.address,
+        customer_tax_number: correctCustomer.tax_number,
+        customer_email: correctCustomer.email,
+        items: correctItems.map(l => ({
+          id: l.id,
+          quantity: l.quantity,
+          gross_unit_price: l.gross_unit_price,
+        })),
+      });
+      message.success(res.data?.message || 'Bizonylat helyesbítve');
+      setCorrectDetail(null);
+      load(search, filter);
+    } catch (err: any) {
+      message.error(err?.response?.data?.error || 'Hiba a helyesbítés során');
+    } finally {
+      setCorrectBusy(false);
+    }
+  };
+
+  const columns = [
+    {
+      title: 'Dátum', dataIndex: 'created_at', key: 'created_at', width: 150,
+      render: (v: string) => dayjs(v).format('YYYY-MM-DD HH:mm'),
+    },
+    {
+      title: 'Sorszám', dataIndex: 'transaction_number', key: 'transaction_number', width: 230,
+      render: (v: string, r: any) => (
+        <div>
+          <div style={{ fontWeight: 600 }}>{v}</div>
+          <Space size={4}>
+            <Tag style={{ marginRight: 0 }}>{TRANSACTION_TYPE_LABELS[r.transaction_type] || r.transaction_type}</Tag>
+            <Tag style={{ marginRight: 0 }} color={r.payment_method === 'cash' ? 'green' : 'blue'}>
+              {PAYMENT_METHOD_LABELS[r.payment_method] || r.payment_method}
+            </Tag>
+          </Space>
+        </div>
+      ),
+    },
+    {
+      title: 'Vevő neve', dataIndex: 'customer_name_display', key: 'customer_name_display',
+      render: (v: string) => v || '-',
+    },
+    {
+      title: 'Összeg', dataIndex: 'total_gross', key: 'total_gross', width: 150, align: 'right' as const,
+      render: (v: number, r: any) => {
+        const text = `${Number(v).toLocaleString('hu-HU')} Ft`;
+        if (r.is_stornoed) {
+          return <span style={{ color: '#cf1322', textDecoration: 'line-through' }}>{text}</span>;
+        }
+        return <span style={{ fontWeight: 600 }}>{text}</span>;
+      },
+    },
+    {
+      title: 'Műveletek', key: 'actions', width: 260,
+      render: (_: any, r: any) => r.is_stornoed ? (
+        <Tag color="red">Sztornózva{r.storno_reason ? `: ${r.storno_reason}` : ''}</Tag>
+      ) : r.status === 'completed' ? (
+        <Space>
+          <Button danger size="small" onClick={() => { setStornoTarget(r); setStornoReason(''); }}>
+            Sztornózás
+          </Button>
+          <Button size="small" onClick={() => openCorrect(r)}>
+            Helyesbítés
+          </Button>
+        </Space>
+      ) : (
+        <Tag>{r.status}</Tag>
+      ),
+    },
+  ];
+
+  return (
+    <div>
+      <ScreenHeader
+        title="Bizonylatok"
+        onBack={onBack}
+        extra={
+          <Segmented
+            value={filter}
+            onChange={(v) => setFilter(v as any)}
+            options={[
+              { label: 'Összes', value: 'all' },
+              { label: 'Érvényes', value: 'valid' },
+              { label: 'Sztornózott', value: 'stornoed' },
+            ]}
+          />
+        }
+      />
+      <Card>
+        <Input
+          size="large"
+          prefix={<SearchOutlined />}
+          placeholder="Keresés sorszám vagy vevő neve alapján..."
+          value={search}
+          onChange={e => handleSearch(e.target.value)}
+          allowClear
+          style={{ width: 400, marginBottom: 12 }}
+        />
+        <Table
+          rowKey="id"
+          loading={loading}
+          dataSource={docs}
+          pagination={{ pageSize: 20, showTotal: t => `Összesen ${t} bizonylat` }}
+          locale={{ emptyText: <Empty description="Nincs bizonylat" /> }}
+          expandable={{
+            expandedRowRender: (r: any) => <PosDocumentLines transactionId={r.id} />,
+          }}
+          columns={columns}
+          scroll={{ y: 'calc(100vh - 400px)' }}
+        />
+      </Card>
+
+      <Modal
+        title={`Bizonylat sztornózása – ${stornoTarget?.transaction_number || ''}`}
+        open={!!stornoTarget}
+        onCancel={() => { setStornoTarget(null); setStornoReason(''); }}
+        footer={null}
+        destroyOnHidden
+      >
+        {stornoTarget && (
+          <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+            <div>
+              Bizonylat: <b>{stornoTarget.transaction_number}</b><br />
+              Vevő: <b>{stornoTarget.customer_name_display || '-'}</b><br />
+              Összeg: <b>{Number(stornoTarget.total_gross).toLocaleString('hu-HU')} Ft</b>
+            </div>
+            {stornoTarget.payment_method === 'cash' && cashRegisterId && (
+              <Tag color="orange">
+                Készpénzes fizetés: a teljes összeg kivétként kerül a kasszából
+              </Tag>
+            )}
+            <div>
+              <Text strong>Indok (nem kötelező)</Text>
+              <Input.TextArea
+                rows={2}
+                value={stornoReason}
+                onChange={e => setStornoReason(e.target.value)}
+                placeholder="Pl. hibás rögzítés, vevő visszatérítette..."
+                style={{ marginTop: 4 }}
+              />
+            </div>
+            <Space>
+              <Button size="large" onClick={() => { setStornoTarget(null); setStornoReason(''); }}>Mégse</Button>
+              <Button type="primary" danger size="large" loading={stornoBusy} onClick={doStorno}>
+                Sztornózás
+              </Button>
+            </Space>
+          </Space>
+        )}
+      </Modal>
+
+      <Modal
+        title={`Bizonylat helyesbítése – ${correctDetail?.transaction_number || ''}`}
+        open={!!correctDetail}
+        onCancel={() => setCorrectDetail(null)}
+        width={920}
+        footer={null}
+        destroyOnHidden
+      >
+        {correctDetail && (
+          <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+            <Row gutter={12}>
+              <Col span={12}>
+                <Text strong>Vevő neve</Text>
+                <Input style={{ marginTop: 4 }} value={correctCustomer.name}
+                  onChange={e => setCorrectCustomer(c => ({ ...c, name: e.target.value }))} />
+              </Col>
+              <Col span={12}>
+                <Text strong>Adószám</Text>
+                <Input style={{ marginTop: 4 }} value={correctCustomer.tax_number}
+                  onChange={e => setCorrectCustomer(c => ({ ...c, tax_number: e.target.value }))} />
+              </Col>
+              <Col span={12} style={{ marginTop: 8 }}>
+                <Text strong>Cím</Text>
+                <Input style={{ marginTop: 4 }} value={correctCustomer.address}
+                  onChange={e => setCorrectCustomer(c => ({ ...c, address: e.target.value }))} />
+              </Col>
+              <Col span={12} style={{ marginTop: 8 }}>
+                <Text strong>E-mail</Text>
+                <Input style={{ marginTop: 4 }} value={correctCustomer.email}
+                  onChange={e => setCorrectCustomer(c => ({ ...c, email: e.target.value }))} />
+              </Col>
+            </Row>
+            <Table
+              size="small"
+              rowKey="id"
+              dataSource={correctItems}
+              pagination={false}
+              columns={[
+                { title: 'Cikkszám', dataIndex: 'product_code', width: 120 },
+                { title: 'Termék', dataIndex: 'product_name' },
+                {
+                  title: 'Mennyiség', width: 140,
+                  render: (_: any, l: any) => (
+                    <InputNumber
+                      size="small" style={{ width: 110 }} min={0}
+                      value={l.quantity}
+                      onChange={v => setCorrectItems(prev => prev.map(x => x.id === l.id ? { ...x, quantity: v ?? 0 } : x))}
+                    />
+                  ),
+                },
+                {
+                  title: 'Bruttó egységár', width: 160,
+                  render: (_: any, l: any) => (
+                    <InputNumber
+                      size="small" style={{ width: 130 }} min={0}
+                      value={l.gross_unit_price}
+                      onChange={v => setCorrectItems(prev => prev.map(x => x.id === l.id ? { ...x, gross_unit_price: v ?? 0 } : x))}
+                    />
+                  ),
+                },
+                {
+                  title: 'Sor összesen', width: 140, align: 'right' as const,
+                  render: (_: any, l: any) => `${(l.quantity * l.gross_unit_price).toLocaleString('hu-HU')} Ft`,
+                },
+              ]}
+            />
+            <div style={{ textAlign: 'right', fontSize: 18, fontWeight: 700 }}>
+              Új végösszeg: {correctTotal.toLocaleString('hu-HU')} Ft
+            </div>
+            <Space>
+              <Button size="large" onClick={() => setCorrectDetail(null)}>Mégse</Button>
+              <Button type="primary" size="large" loading={correctBusy} onClick={doCorrect}>
+                Helyesbítés mentése
+              </Button>
+            </Space>
+          </Space>
+        )}
+      </Modal>
+    </div>
+  );
+};
+
+// ── F. Kassza be/ki ──────────────────────────────────────────────────────────
+const formatCashAmount = (value: number | string | null | undefined): string => {
+  const amount = typeof value === 'number' ? value : parseFloat(String(value ?? '0').replace(/\s/g, '').replace(',', '.'));
+  const safe = Number.isFinite(amount) ? amount : 0;
+  const sign = safe < 0 ? '-' : '';
+  const [intPart, decPart] = Math.abs(safe).toFixed(2).split('.');
+  return `${sign}${intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ' ')}.${decPart}`;
+};
+
 const CashScreen: React.FC<{ onBack: () => void; cashRegisterId: number | null }> = ({ onBack, cashRegisterId }) => {
   const [balance, setBalance] = useState<{ current_balance: number; currency: string; name: string } | null>(null);
   const [reasons, setReasons] = useState<any[]>([]);
+  const [transactions, setTransactions] = useState<any[]>([]);
+  const [txLoading, setTxLoading] = useState(false);
   const [modal, setModal] = useState<'deposit' | 'withdraw' | null>(null);
   const [form] = Form.useForm();
   const [submitting, setSubmitting] = useState(false);
@@ -1538,7 +1941,17 @@ const CashScreen: React.FC<{ onBack: () => void; cashRegisterId: number | null }
       .catch(() => {});
   }, [cashRegisterId]);
 
+  const loadTransactions = useCallback(() => {
+    if (!cashRegisterId) return;
+    setTxLoading(true);
+    api.get('/finance/cash-transactions/', { params: { cash_register: cashRegisterId, page_size: 200 } })
+      .then(r => setTransactions(r.data.results || r.data || []))
+      .catch(() => {})
+      .finally(() => setTxLoading(false));
+  }, [cashRegisterId]);
+
   useEffect(() => { loadBalance(); }, [loadBalance]);
+  useEffect(() => { loadTransactions(); }, [loadTransactions]);
   useEffect(() => {
     api.get('/finance/cash-transaction-reasons/', { params: { is_active: true } })
       .then(r => setReasons(r.data.results || r.data || []))
@@ -1563,6 +1976,7 @@ const CashScreen: React.FC<{ onBack: () => void; cashRegisterId: number | null }
       message.success(modal === 'deposit' ? 'Betét rögzítve' : 'Kivét rögzítve');
       setModal(null);
       loadBalance();
+      loadTransactions();
     } catch (err: any) {
       message.error(err?.response?.data?.error || 'Hiba történt');
     } finally {
@@ -1572,6 +1986,36 @@ const CashScreen: React.FC<{ onBack: () => void; cashRegisterId: number | null }
 
   const filteredReasons = reasons.filter(r => modal === 'deposit' ? r.is_deposit : r.is_withdrawal);
 
+  const txColumns = [
+    {
+      title: 'Időpont', dataIndex: 'timestamp', key: 'timestamp', width: 150,
+      render: (v: string) => dayjs(v).format('YYYY-MM-DD HH:mm'),
+    },
+    {
+      title: 'Összeg', dataIndex: 'amount', key: 'amount', width: 130,
+      render: (v: number | string) => {
+        const n = Number(v);
+        return <Tag color={n >= 0 ? 'green' : 'red'}>{n >= 0 ? '+' : ''}{formatCashAmount(n)}</Tag>;
+      },
+    },
+    {
+      title: 'Miért?', dataIndex: 'reason_name', key: 'reason_name', width: 150,
+      render: (v: string | null) => v || '-',
+    },
+    {
+      title: 'Megjegyzés', dataIndex: 'note', key: 'note', ellipsis: true,
+      render: (v: string) => v || '-',
+    },
+    {
+      title: 'Kassza tartalma', dataIndex: 'balance_after', key: 'balance_after', width: 150,
+      render: (v: number | string) => formatCashAmount(v),
+    },
+    {
+      title: 'Alkalmazott', dataIndex: 'employee_name', key: 'employee_name', width: 150,
+      render: (v: string, r: any) => v || r.employee_username || '-',
+    },
+  ];
+
   return (
     <div>
       <ScreenHeader title="Kassza" onBack={onBack} />
@@ -1579,30 +2023,44 @@ const CashScreen: React.FC<{ onBack: () => void; cashRegisterId: number | null }
         <Empty description="Ehhez a POS-hoz nincs kassza rendelve." />
       ) : (
         <>
-          <Card style={{ marginBottom: 24, maxWidth: 420 }}>
-            <Statistic
-              title={balance?.name || 'Kassza egyenleg'}
-              value={balance?.current_balance ?? 0}
-              suffix={balance?.currency}
-              valueStyle={{ fontSize: 40 }}
+          <Card style={{ marginBottom: 16 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 24, flexWrap: 'wrap' }}>
+              <Statistic
+                title={balance?.name || 'Kassza egyenleg'}
+                value={balance?.current_balance ?? 0}
+                formatter={(v) => formatCashAmount(v as number)}
+                suffix={balance?.currency}
+                valueStyle={{ fontSize: 40 }}
+              />
+              <Space size="large">
+                <Button
+                  type="primary" size="large" icon={<PlusOutlined />}
+                  style={{ height: 84, width: 170, fontSize: 18, background: '#52c41a', borderColor: '#52c41a' }}
+                  onClick={() => openModal('deposit')}
+                >
+                  Betét
+                </Button>
+                <Button
+                  danger size="large" icon={<MinusOutlined />}
+                  style={{ height: 84, width: 170, fontSize: 18 }}
+                  onClick={() => openModal('withdraw')}
+                >
+                  Kivét
+                </Button>
+              </Space>
+            </div>
+          </Card>
+          <Card title="Pénzmozgások">
+            <Table
+              rowKey="id"
+              loading={txLoading}
+              dataSource={transactions}
+              pagination={{ pageSize: 20, showTotal: t => `Összesen ${t} mozgás` }}
+              locale={{ emptyText: <Empty description="Nincs rögzített pénzmozgás" /> }}
+              columns={txColumns}
+              scroll={{ y: 'calc(100vh - 480px)' }}
             />
           </Card>
-          <Space size="large">
-            <Button
-              type="primary" size="large" icon={<PlusOutlined />}
-              style={{ height: 100, width: 200, fontSize: 20, background: '#52c41a', borderColor: '#52c41a' }}
-              onClick={() => openModal('deposit')}
-            >
-              Betét
-            </Button>
-            <Button
-              danger size="large" icon={<MinusOutlined />}
-              style={{ height: 100, width: 200, fontSize: 20 }}
-              onClick={() => openModal('withdraw')}
-            >
-              Kivét
-            </Button>
-          </Space>
         </>
       )}
 
@@ -1631,7 +2089,7 @@ const CashScreen: React.FC<{ onBack: () => void; cashRegisterId: number | null }
 };
 
 // ── Main menu ────────────────────────────────────────────────────────────────
-const POSAdmin: React.FC<POSAdminProps> = ({ cashRegisterId, allowedWarehouseIds, onBackToPos }) => {
+const POSAdmin: React.FC<POSAdminProps> = ({ cashRegisterId, allowedWarehouseIds, fuelModuleEnabled, onBackToPos }) => {
   const [screen, setScreen] = useState<AdminScreen>('menu');
 
   if (screen === 'labels') return <div style={{ padding: 24 }}><LabelsScreen onBack={() => setScreen('menu')} /></div>;
@@ -1639,13 +2097,19 @@ const POSAdmin: React.FC<POSAdminProps> = ({ cashRegisterId, allowedWarehouseIds
   if (screen === 'receipt') return <div style={{ padding: 24 }}><ReceiptScreen onBack={() => setScreen('menu')} allowedWarehouseIds={allowedWarehouseIds} /></div>;
   if (screen === 'stocktake') return <div style={{ padding: 24 }}><StocktakeScreen onBack={() => setScreen('menu')} allowedWarehouseIds={allowedWarehouseIds} /></div>;
   if (screen === 'cash') return <div style={{ padding: 24 }}><CashScreen onBack={() => setScreen('menu')} cashRegisterId={cashRegisterId} /></div>;
+  if (screen === 'documents') return <div style={{ padding: 24 }}><DocumentsScreen onBack={() => setScreen('menu')} cashRegisterId={cashRegisterId} /></div>;
+  if (screen === 'shift') return <div style={{ padding: 24 }}><ShiftHandoverScreen onBack={() => setScreen('menu')} cashRegisterId={cashRegisterId} /></div>;
 
   const menuItems: { key: AdminScreen; label: string; icon: React.ReactNode; color: string }[] = [
+    { key: 'documents', label: 'Bizonylatok', icon: <FileDoneOutlined style={{ fontSize: 40 }} />, color: '#13c2c2' },
     { key: 'labels', label: 'Polc címkék nyomtatása', icon: <TagsOutlined style={{ fontSize: 40 }} />, color: '#1677ff' },
     { key: 'promo', label: 'Akciós árak beállítása', icon: <PercentageOutlined style={{ fontSize: 40 }} />, color: '#fa8c16' },
     { key: 'receipt', label: 'Bevételezés', icon: <InboxOutlined style={{ fontSize: 40 }} />, color: '#52c41a' },
     { key: 'stocktake', label: 'Leltár', icon: <FileSearchOutlined style={{ fontSize: 40 }} />, color: '#722ed1' },
     { key: 'cash', label: 'Kassza (be/ki)', icon: <DollarOutlined style={{ fontSize: 40 }} />, color: '#eb2f96' },
+    ...(fuelModuleEnabled
+      ? [{ key: 'shift' as AdminScreen, label: 'Műszak átadás', icon: <SwapOutlined style={{ fontSize: 40 }} />, color: '#fa541c' }]
+      : []),
   ];
 
   return (

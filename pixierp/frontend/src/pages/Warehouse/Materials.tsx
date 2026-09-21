@@ -668,6 +668,7 @@ const Materials: React.FC = () => {
       'length': ['mm', 'cm', 'm'],
       'perimeter': ['mm', 'cm', 'm'],
       'area': ['cm\u00b2', 'm\u00b2'],
+      'volume': ['liter', 'm3'],
       'weight': ['g', 'kg', 't'],
       'time': ['perc', 'negyed \u00f3ra', 'f\u00e9l\u00f3ra', '\u00f3ra', 'nap'],
     };
@@ -2913,6 +2914,9 @@ const fetchSuppliers = async () => {
                   <Option value="m2">négyzetméter</Option>
                   <Option value="m">folyóméter</Option>
                   <Option value="perimeter">kerület (méter)</Option>
+                  <Option value="liter">liter</Option>
+                  <Option value="m3">köbméter</Option>
+                  <Option value="kg">kilogramm</Option>
                 </Select>
               </Form.Item>
 
@@ -3861,6 +3865,7 @@ const fetchSuppliers = async () => {
               <Option value="length">Folyóméter</Option>
               <Option value="perimeter">Kerület</Option>
               <Option value="area">Terület</Option>
+              <Option value="volume">Térfogat</Option>
               <Option value="weight">Súly</Option>
               <Option value="time">Idő</Option>
             </Select>

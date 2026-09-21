@@ -497,6 +497,7 @@ class Permission(models.Model):
         ('settings.iot', 'Beállítások - IoT eszközök'),
         ('settings.nfc', 'Beállítások - NFC tagek'),
         ('settings.print_products', 'Beállítások - Termékszerkesztők'),
+        ('settings.modules', 'Beállítások - Modulok'),
 
         # Printshop
         ('printshop.preview', 'Nyomda - Preview'),

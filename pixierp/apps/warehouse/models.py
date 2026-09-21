@@ -799,6 +799,7 @@ class MaterialCostItem(models.Model):
         ('length', 'Folyóméter'),
         ('perimeter', 'Kerület'),
         ('area', 'Terület'),
+        ('volume', 'Térfogat'),
         ('weight', 'Súly'),
         ('time', 'Idő'),
     ]
@@ -1382,6 +1383,7 @@ class StockMovement(models.Model):
         ('transfer', 'Mozgatás'),
         ('scrap', 'Selejtezés'),
         ('mark_defective', 'Hibásnak jelölés'),
+        ('fuel_sale', 'Üzemanyag eladás'),
     ]
     
     stock = models.ForeignKey(

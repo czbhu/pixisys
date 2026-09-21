@@ -66,7 +66,7 @@ interface Props {
   customer: Customer | null;
   onUpdateItem: (index: number, quantity: number) => void;
   onRemoveItem: (index: number) => void;
-  onComplete: () => void;
+  onComplete: (transactionId?: number) => void;
   onCancel: () => void;
 }
 
@@ -391,7 +391,7 @@ const CheckoutSummary: React.FC<Props> = ({
 
   const handleCompletePayment = () => {
     setPaymentModalVisible(false);
-    onComplete();
+    onComplete(transactionId ?? undefined);
   };
 
   const handleRetryPayment = () => {

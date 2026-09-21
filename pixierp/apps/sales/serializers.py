@@ -2133,6 +2133,15 @@ class POSTransactionItemSerializer(serializers.ModelSerializer):
         read_only_fields = ['net_total', 'vat_amount', 'gross_total']
 
 
+class POSTransactionItemCreateSerializer(serializers.ModelSerializer):
+    """Beágyazott tétel serializer tranzakció létrehozásnál (transaction mező nélkül)"""
+    class Meta:
+        model = POSTransactionItem
+        fields = ['material', 'product_code', 'product_name', 'product_description',
+                  'quantity', 'unit', 'gross_unit_price', 'net_unit_price', 'vat_rate',
+                  'is_discounted', 'original_gross_price']
+
+
 class POSPaymentSerializer(serializers.ModelSerializer):
     class Meta:
         model = POSPayment
@@ -2161,15 +2170,42 @@ class POSTransactionSerializer(serializers.ModelSerializer):
         return obj.customer_name or "Nyugtás"
 
 
+class POSTransactionListSerializer(serializers.ModelSerializer):
+    """Könnyített serializer a POS bizonylatok listájához (tételek nélkül)"""
+    cashier_name = serializers.SerializerMethodField()
+    customer_name_display = serializers.SerializerMethodField()
+    is_stornoed = serializers.SerializerMethodField()
+
+    class Meta:
+        model = POSTransaction
+        fields = ['id', 'transaction_number', 'transaction_type', 'payment_method', 'status',
+                  'customer_name_display', 'cashier_name', 'total_net', 'total_vat', 'total_gross',
+                  'created_at', 'completed_at', 'storno_reason', 'stornoed_at', 'is_stornoed']
+
+    def get_cashier_name(self, obj):
+        if obj.cashier:
+            return f"{obj.cashier.last_name} {obj.cashier.first_name}"
+        return ""
+
+    def get_customer_name_display(self, obj):
+        if obj.customer:
+            return obj.customer.name
+        return obj.customer_name or "Nyugtás"
+
+    def get_is_stornoed(self, obj):
+        return obj.status == 'cancelled'
+
+
 class POSTransactionCreateSerializer(serializers.ModelSerializer):
     """Serializer for creating POS transactions with items"""
-    items = POSTransactionItemSerializer(many=True)
+    items = POSTransactionItemCreateSerializer(many=True)
     
     class Meta:
         model = POSTransaction
-        fields = ['transaction_type', 'payment_method', 'customer', 'customer_name', 
+        fields = ['id', 'transaction_number', 'transaction_type', 'payment_method', 'customer', 'customer_name',
                   'customer_address', 'customer_tax_number', 'customer_email',
                   'shopper_identification', 'shopper_name', 'coupon', 'amount_received', 'items']
+        read_only_fields = ['id', 'transaction_number']
     
     def create(self, validated_data):
         items_data = validated_data.pop('items', [])
@@ -2183,7 +2219,10 @@ class POSTransactionCreateSerializer(serializers.ModelSerializer):
         
         transaction = POSTransaction.objects.create(
             transaction_number=transaction_number,
-            cashier=self.context['request'].user if 'request' in self.context else None,
+            cashier=self.context['request'].user if (
+                'request' in self.context and getattr(self.context['request'], 'user', None)
+                and self.context['request'].user.is_authenticated
+            ) else None,
             status='draft',
             **validated_data
         )
