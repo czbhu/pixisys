@@ -18,6 +18,7 @@ User = get_user_model()
 class UserSerializer(serializers.ModelSerializer):
     roles = serializers.SerializerMethodField()
     permissions = serializers.SerializerMethodField()
+    can_view_prices = serializers.SerializerMethodField()
     employee_id = serializers.SerializerMethodField()
     department_names = serializers.SerializerMethodField()
     department_ids = serializers.SerializerMethodField()
@@ -27,9 +28,15 @@ class UserSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'username', 'email', 'first_name', 'last_name',
             'is_active', 'is_staff', 'is_superuser', 'date_joined', 'last_login',
-            'roles', 'permissions', 'employee_id', 'department_names', 'department_ids'
+            'roles', 'permissions', 'can_view_prices', 'employee_id', 'department_names', 'department_ids'
         ]
         read_only_fields = ['id', 'date_joined']
+
+    def get_can_view_prices(self, obj):
+        """Láthatja-e az RFQ/rendelés árakat (superuser vagy sales.rfqs view/manage).
+        A butított RFQ adatlap és a /sales/rfqs tiltás ezen múlik a frontendben."""
+        from apps.sales.permissions import user_can_view_prices
+        return user_can_view_prices(obj)
 
     def get_employee_id(self, obj):
         from apps.hr.models import Employee

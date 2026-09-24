@@ -914,6 +914,81 @@ def _resolve_invoice_bilingual(inv):
         pass
     return is_bilingual
 
+
+def _looks_like_nav_error_xml(text):
+    """True, ha a szöveg NAV hiba-válasz (GeneralErrorResponse / ERROR funcCode),
+    nem valódi számla XML — ilyet nem szabad cache-elni sem."""
+    if not text or not isinstance(text, str):
+        return False
+    return 'GeneralErrorResponse' in text or '<funcCode>ERROR</funcCode>' in text
+
+
+def _build_manual_digest_xml(digest):
+    """Kézi rögzítésű bejövő számla digestből olvasható XML-t készít a
+    megnyitás/nyomtatás nézethez (a frontend parser névtér-független)."""
+    from decimal import Decimal
+    import xml.etree.ElementTree as ET
+
+    def d(value):
+        try:
+            return Decimal(str(value if value is not None else 0))
+        except Exception:
+            return Decimal('0')
+
+    net = d(digest.invoice_net_amount)
+    vat = d(digest.invoice_vat_amount)
+    gross = net + vat
+    vat_pct = (vat / net * Decimal('100')) if net > 0 else Decimal('0')
+    vat_pct = vat_pct.quantize(Decimal('0.01'))
+    iso = lambda v: v.isoformat() if v else ''
+
+    root = ET.Element('InvoiceData', {'source': 'manual'})
+    ET.SubElement(root, 'invoiceNumber').text = digest.invoice_number or ''
+    ET.SubElement(root, 'invoiceIssueDate').text = iso(digest.invoice_issue_date)
+    ET.SubElement(root, 'invoiceDeliveryDate').text = iso(digest.invoice_delivery_date)
+    ET.SubElement(root, 'dueDate').text = iso(digest.due_date)
+    ET.SubElement(root, 'paymentMethod').text = (digest.payment_method or '').upper()
+    ET.SubElement(root, 'invoiceCurrencyCode').text = (digest.currency or 'HUF').upper()
+    if digest.exchange_rate:
+        ET.SubElement(root, 'exchangeRate').text = str(digest.exchange_rate)
+
+    supplier_el = ET.SubElement(root, 'supplierInfo')
+    ET.SubElement(supplier_el, 'supplierName').text = digest.supplier_name or ''
+    ET.SubElement(supplier_el, 'supplierTaxNumber').text = digest.supplier_tax_number or ''
+    customer_el = ET.SubElement(root, 'customerInfo')
+    ET.SubElement(customer_el, 'customerName').text = digest.customer_name or ''
+    ET.SubElement(customer_el, 'customerTaxNumber').text = digest.customer_tax_number or ''
+
+    lines_el = ET.SubElement(root, 'lines')
+    line_el = ET.SubElement(lines_el, 'line')
+    ET.SubElement(line_el, 'lineNumber').text = '1'
+    ET.SubElement(line_el, 'lineDescription').text = f"Számla {digest.invoice_number or ''}".strip()
+    ET.SubElement(line_el, 'quantity').text = '1'
+    ET.SubElement(line_el, 'unitOfMeasure').text = 'db'
+    ET.SubElement(line_el, 'unitPrice').text = str(net)
+    ET.SubElement(line_el, 'vatPercentage').text = str(vat_pct)
+    ET.SubElement(line_el, 'lineNetAmount').text = str(net)
+    ET.SubElement(line_el, 'lineVatAmount').text = str(vat)
+    ET.SubElement(line_el, 'lineGrossAmount').text = str(gross)
+
+    ET.SubElement(root, 'invoiceNetAmount').text = str(net)
+    ET.SubElement(root, 'invoiceVatAmount').text = str(vat)
+    ET.SubElement(root, 'invoiceGrossAmount').text = str(gross)
+    if digest.invoice_net_amount_huf is not None or digest.invoice_vat_amount_huf is not None:
+        net_huf = d(digest.invoice_net_amount_huf)
+        vat_huf = d(digest.invoice_vat_amount_huf)
+        ET.SubElement(root, 'invoiceNetAmountHUF').text = str(net_huf)
+        ET.SubElement(root, 'invoiceVatAmountHUF').text = str(vat_huf)
+        ET.SubElement(root, 'invoiceGrossAmountHUF').text = str(net_huf + vat_huf)
+
+    summary_el = ET.SubElement(root, 'summaryByVatRate')
+    ET.SubElement(summary_el, 'vatPercentage').text = str(vat_pct)
+    ET.SubElement(summary_el, 'vatRateNetAmount').text = str(net)
+    ET.SubElement(summary_el, 'vatRateVatAmount').text = str(vat)
+    ET.SubElement(summary_el, 'vatRateGrossAmount').text = str(gross)
+
+    return ET.tostring(root, encoding='unicode')
+
 def _send_bulk_email_thread(invoice_ids, subject, body, from_addr, to, cc, bcc, smtp_config, imap_config, sig_lines=None):
     from invoices.models import Invoice
     from django.db import connection
@@ -2293,38 +2368,56 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             )
         except Exception:
             pass
-        # ERP visszajelzés: státusz frissítés CustomerOrder és/vagy RFQ szinten
+        # ERP visszajelzés: státusz frissítés CustomerOrder és/vagy RFQ szinten.
+        # Háttérszálon, párhuzamosan fut: tömeges számlázásnál (80+ rendelés/QR)
+        # a szekvenciális hívások túllépték a kliens 30s-os időkorlátját, ami
+        # újrapróbálkozást és duplikált számlát eredményezett.
         try:
-            import requests as _requests
-            from django.conf import settings as _settings
-            erp_base = getattr(_settings, 'ERP_INTERNAL_URL', 'http://localhost:8003/api/v1')
-            erp_token = getattr(_settings, 'ERP_INTERNAL_TOKEN', '')
-            invoice_number = serializer.instance.invoice_number or ''
-            erp_user_id = request.data.get('erp_user_id')
-            headers = {'Content-Type': 'application/json'}
-            if erp_token:
-                headers['Authorization'] = f'Bearer {erp_token}'
-            payload = {'invoice_number': invoice_number}
-            if erp_user_id:
-                payload['erp_user_id'] = erp_user_id
-            # CustomerOrder státusz frissítés
-            for order_id in (serializer.instance.erp_order_ids or []):
+            import threading
+            from concurrent.futures import ThreadPoolExecutor
+
+            def _erp_status_callback(order_ids, rfq_ids, invoice_number, erp_user_id):
                 try:
-                    _requests.patch(
-                        f'{erp_base}/sales/customer-orders/{order_id}/update_invoice_number/',
-                        json=payload, headers=headers, timeout=5
-                    )
+                    import requests as _requests
+                    from django.conf import settings as _settings
+                    erp_base = getattr(_settings, 'ERP_INTERNAL_URL', 'http://localhost:8003/api/v1')
+                    erp_token = getattr(_settings, 'ERP_INTERNAL_TOKEN', '')
+                    headers = {'Content-Type': 'application/json'}
+                    if erp_token:
+                        headers['Authorization'] = f'Bearer {erp_token}'
+                    payload = {'invoice_number': invoice_number}
+                    if erp_user_id:
+                        payload['erp_user_id'] = erp_user_id
+
+                    def _patch(url):
+                        try:
+                            _requests.patch(url, json=payload, headers=headers, timeout=5)
+                        except Exception:
+                            pass
+
+                    targets = [
+                        f'{erp_base}/sales/customer-orders/{oid}/update_invoice_number/'
+                        for oid in order_ids
+                    ] + [
+                        f'{erp_base}/sales/quote-requests/{rid}/update_invoice_number/'
+                        for rid in rfq_ids
+                    ]
+                    if targets:
+                        with ThreadPoolExecutor(max_workers=8) as pool:
+                            list(pool.map(_patch, targets))
                 except Exception:
                     pass
-            # RFQ (QuoteRequest) közvetlen státusz frissítés (CO nélküli számlázáshoz)
-            for rfq_id in (serializer.instance.erp_rfq_ids or []):
-                try:
-                    _requests.patch(
-                        f'{erp_base}/sales/quote-requests/{rfq_id}/update_invoice_number/',
-                        json=payload, headers=headers, timeout=5
-                    )
-                except Exception:
-                    pass
+
+            threading.Thread(
+                target=_erp_status_callback,
+                args=(
+                    list(serializer.instance.erp_order_ids or []),
+                    list(serializer.instance.erp_rfq_ids or []),
+                    serializer.instance.invoice_number or '',
+                    request.data.get('erp_user_id'),
+                ),
+                daemon=True,
+            ).start()
         except Exception:
             pass
         headers = {}
@@ -8363,6 +8456,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         # Try to find digest to get batch index and missing supplier tax number if needed
         digest_index = None
         supplier_tax_number_fallback = None
+        manual_digest = None
         try:
             from invoices.models import IncomingInvoiceDigest
             dqs = IncomingInvoiceDigest.objects.filter(company=company, invoice_number=invoice_number)
@@ -8372,6 +8466,8 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 else:
                     dqs = dqs.filter(supplier_tax_number=supplier_tax_number)
             digest = dqs.order_by('-ins_date').first()
+            if digest and (digest.invoice_operation or '').upper() == 'MANUAL':
+                manual_digest = digest
             if digest and getattr(digest, 'index', None):
                 digest_index = int(digest.index)
             if not supplier_tax_number:
@@ -8382,7 +8478,32 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         except Exception:
             digest_index = None
 
+        # Kézi rögzítésű (nem NAV-ból származó) bejövő számla: nincs NAV-ban XML,
+        # a digest adataiból állítunk elő olvasható XML-t a megnyitás/nyomtatáshoz.
+        if manual_digest is not None:
+            xml_text = _build_manual_digest_xml(manual_digest)
+            try:
+                IncomingInvoiceData.objects.update_or_create(
+                    company=company,
+                    invoice_number=invoice_number,
+                    supplier_tax_number=supplier_tax_number,
+                    defaults={'xml_text': xml_text},
+                )
+            except Exception:
+                pass
+            resp = HttpResponse(xml_text, content_type='application/xml')
+            resp['Content-Disposition'] = f'inline; filename="incoming_{invoice_number}.xml"'
+            return resp
+
         xml_text = None
+        # Korábban elcache-elt NAV hiba-válasz ne blokkolja a megnyitást:
+        # töröljük, és az alábbi ág újrakérdezi a NAV-tól.
+        if cached and cached.xml_text and _looks_like_nav_error_xml(cached.xml_text):
+            try:
+                cached.delete()
+            except Exception:
+                pass
+            cached = None
         if cached and cached.xml_text:
             xml_text = cached.xml_text
             # If cache accidentally stored the outer NAV response, try to decode now and refresh cache
@@ -8544,9 +8665,10 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                         continue
             xml_text = decoded or xml_text
 
-            # Save to cache if we have something meaningful (decoded inner XML preferred)
+            # Save to cache if we have something meaningful (decoded inner XML preferred).
+            # NAV hiba-borítékot soha nem cache-elünk.
             try:
-                if xml_text:
+                if xml_text and not _looks_like_nav_error_xml(xml_text):
                     IncomingInvoiceData.objects.update_or_create(
                         company=company,
                         invoice_number=invoice_number,

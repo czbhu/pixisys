@@ -604,7 +604,9 @@ class ManufacturingCostItemViewSet(
                                                     .only('id', 'name', 'company_id'),
                                            to_attr='_first_contacts')
                               )
-                              .only('id'))
+                              # company_id / customer_id kell az is_private eléréshez — .only('id') nélkülük
+                              # tételenként külön deferred query-t indítana (N+1)
+                              .only('id', 'company_id', 'customer_id'))
             for qr_obj in qrs_prefetched:
                 contacts_list = getattr(qr_obj, '_first_contacts', [])
                 all_contact_names = [c.name for c in contacts_list if c.name]

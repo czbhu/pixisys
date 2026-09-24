@@ -52,6 +52,8 @@ LOCAL_APPS = [
     'apps.orders',
     'apps.pos',
     'apps.fuel',
+    'apps.loyalty',
+    'apps.matrixdisplay',
     'apps.warehouse',
     'apps.printshop',
 ]

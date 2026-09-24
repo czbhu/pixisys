@@ -27,6 +27,9 @@ import PublicSite from './pages/Public/PublicSite';
 import ClientPortal from './pages/Public/ClientPortal';
 import ClientPortalLogin, { ClientPortalMagicLoginPage, ClientPortalForgotPassword } from './pages/Public/ClientPortalLogin';
 import ClientPortalPrintShop from './pages/Public/ClientPortalPrintShop';
+import ClientPortalKassza from './pages/Public/ClientPortalKassza';
+import MatrixDisplays from './pages/MatrixDisplays';
+import { publicPortalService } from './services/publicPortalService';
 import KioskPage from './pages/Public/KioskPage';
 import PublicProductCatalog from './pages/Public/PublicProductCatalog';
 import PublicShopIndex from './pages/Public/PublicShopIndex';
@@ -137,6 +140,25 @@ function AppContent() {
   }, [user]);
 
   // Listen for frontend badge updates (erp-badge-update / erp-badge-seen from useNewRowTracker)
+  // Publikus site domain (pl. app.pixisys.eu) gyökér útvonalon: ha a hosthoz
+  // regisztrált site kassza-portál funkcióval rendelkezik, a portálra irányítunk.
+  useEffect(() => {
+    if (location.pathname !== '/') return;
+    const host = window.location.host;
+    if (/^(e|erp|inv|i)\.pixisys\.eu(:\d+)?$|^localhost(:\d+)?$|^127\.0\.0\.1(:\d+)?$/.test(host)) return;
+    let cancelled = false;
+    publicPortalService.resolveSite(host)
+      .then((resolved) => {
+        if (cancelled) return;
+        const features = (resolved?.site?.features || []).map((f: any) => f.code || f);
+        if (resolved?.site && features.includes('kassza_portal')) {
+          window.location.replace('/portal/kassza');
+        }
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [location.pathname]);
+
   useEffect(() => {
     const handler = (e: Event) => {
       const { pageKey, count } = (e as CustomEvent).detail as { pageKey: string; count: number };
@@ -292,6 +314,7 @@ function AppContent() {
         <Route path="/portal/forgot-password" element={<ClientPortalForgotPassword />} />
         <Route path="/portal/magic/:token" element={<ClientPortalMagicLoginPage />} />
         <Route path="/portal/printshop" element={<ClientPortalPrintShop />} />
+        <Route path="/portal/kassza" element={<ClientPortalKassza />} />
         <Route path="/kiosk" element={<KioskPage />} />
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
@@ -398,6 +421,7 @@ function AppContent() {
             <Route path="/portal/forgot-password" element={<ClientPortalForgotPassword />} />
             <Route path="/portal/magic/:token" element={<ClientPortalMagicLoginPage />} />
             <Route path="/portal/printshop" element={<ClientPortalPrintShop />} />
+        <Route path="/portal/kassza" element={<ClientPortalKassza />} />
             <Route path="/kiosk" element={<KioskPage />} />
             <Route path="/hr/*" element={<HRModule />} />
             <Route path="/sales/*" element={<SalesModule />} />
@@ -412,6 +436,7 @@ function AppContent() {
             <Route path="/tickets" element={<Navigate to="/tickets/list" replace />} />
             <Route path="/tickets/list" element={<Tickets mode="list" />} />
             <Route path="/tickets/settings" element={<Tickets mode="settings" />} />
+            <Route path="/matrix-displays" element={<MatrixDisplays />} />
             <Route path="/site-management" element={<SiteManagement />} />
             <Route path="/site-management/:slug" element={<SiteManagementPreview />} />
             <Route path="/print-editor/*" element={<PrintEditorPage />} />

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   Alert, Button, Card, Col, Form, Input, InputNumber, Modal, Popconfirm, Row,
-  Select, Space, Switch, Table, Tabs, Tag, Typography, message,
+  Select, Space, Statistic, Switch, Table, Tabs, Tag, Typography, message,
 } from 'antd';
 import {
   ApiOutlined, CloudDownloadOutlined,
@@ -10,7 +10,7 @@ import {
 import dayjs from 'dayjs';
 import api from '../../../services/api';
 
-const { Text } = Typography;
+const { Text, Title } = Typography;
 
 interface FuelConfig {
   id: number;
@@ -101,6 +101,249 @@ const nextFreeId = (ids: number[], min: number, max: number): number => {
     if (!used.has(candidate)) return candidate;
   }
   return min;
+};
+
+
+// ═══════════════════════════ Hűségprogram (kassza app) ═══════════════════════════
+
+const LoyaltySection: React.FC = () => {
+  const [cfg, setCfg] = useState<any>(null);
+  const [customers, setCustomers] = useState<any[]>([]);
+  const [customerQuery, setCustomerQuery] = useState('');
+  const [selectedCustomerId, setSelectedCustomerId] = useState<number | null>(null);
+  const [summary, setSummary] = useState<any>(null);
+  const [discounts, setDiscounts] = useState<any[]>([]);
+  const [materials, setMaterials] = useState<any[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [pointDelta, setPointDelta] = useState<number | null>(null);
+  const [pointNote, setPointNote] = useState('');
+  const [topupAmount, setTopupAmount] = useState<number | null>(null);
+  const [newDiscount, setNewDiscount] = useState<{ material?: number; percent?: number }>({});
+
+  const loadCfg = () => {
+    api.get('/loyalty/config/').then(r => setCfg(r.data)).catch(() => {});
+  };
+  useEffect(() => { loadCfg(); }, []);
+  useEffect(() => {
+    const t = setTimeout(() => {
+      if (!customerQuery) { setCustomers([]); return; }
+      api.get('/crm/companies/', { params: { search: customerQuery, page_size: 20, is_customer: true } })
+        .then(r => setCustomers(r.data?.results || r.data || []))
+        .catch(() => {});
+    }, 350);
+    return () => clearTimeout(t);
+  }, [customerQuery]);
+
+  const loadCustomerData = useCallback((cid: number) => {
+    api.get('/loyalty/points/', { params: { customer: cid, page_size: 50 } })
+      .then(r => {
+        const entries = r.data?.results || r.data || [];
+        const pts = entries.reduce((a: number, e: any) => a + (e.points || 0), 0);
+        setSummary((prev: any) => ({ ...(prev || {}), points: pts, entries }));
+      }).catch(() => setSummary((prev: any) => ({ ...(prev || {}), entries: [] })));
+    api.get('/loyalty/fuel-cards/', { params: { customer: cid } })
+      .then(r => {
+        const card = (r.data?.results || r.data || [])[0] || null;
+        setSummary((prev: any) => ({ ...(prev || {}), points: prev?.points ?? 0, entries: prev?.entries ?? [], card }));
+      }).catch(() => {});
+    api.get('/loyalty/discounts/', { params: { customer: cid, page_size: 200 } })
+      .then(r => setDiscounts(r.data?.results || r.data || []))
+      .catch(() => setDiscounts([]));
+    api.get('/warehouse/materials/', { params: { page_size: 500, is_active: true } })
+      .then(r => setMaterials(r.data?.results || r.data || []))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (selectedCustomerId) loadCustomerData(selectedCustomerId);
+    else { setSummary(null); setDiscounts([]); }
+  }, [selectedCustomerId, loadCustomerData]);
+
+  const saveCfg = async (values: any) => {
+    setSaving(true);
+    try {
+      const id = cfg?.id;
+      await (id ? api.patch(`/loyalty/config/${id}/`, values) : api.patch('/loyalty/config/', values));
+      message.success('Hűségprogram beállítások elmentve');
+      loadCfg();
+    } catch (e: any) {
+      message.error(fmtError(e?.response?.data) || 'A mentés nem sikerült');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const adjustPoints = async () => {
+    if (!selectedCustomerId || !pointDelta) return;
+    try {
+      await api.post('/loyalty/points/', {
+        customer: selectedCustomerId, points: pointDelta,
+        reason: pointDelta > 0 ? 'manual_add' : 'manual_sub', note: pointNote || 'Kézi módosítás',
+      });
+      message.success('Pontok rögzítve');
+      setPointDelta(null); setPointNote('');
+      loadCustomerData(selectedCustomerId);
+    } catch (e: any) {
+      message.error(fmtError(e?.response?.data) || 'A rögzítés nem sikerült');
+    }
+  };
+
+  const createOrTopupCard = async () => {
+    if (!selectedCustomerId || !topupAmount) return;
+    try {
+      const existing = summary?.card?.id;
+      if (existing) {
+        await api.post(`/loyalty/fuel-cards/${existing}/topup/`, { amount: topupAmount });
+        message.success('Kártya feltöltve');
+      } else {
+        const created = await api.post('/loyalty/fuel-cards/', { customer: selectedCustomerId });
+        await api.post(`/loyalty/fuel-cards/${created.data.id}/topup/`, { amount: topupAmount });
+        message.success('Üzemanyagkártya létrehozva és feltöltve');
+      }
+      setTopupAmount(null);
+      loadCustomerData(selectedCustomerId);
+    } catch (e: any) {
+      message.error(fmtError(e?.response?.data) || 'A művelet nem sikerült');
+    }
+  };
+
+  const addDiscount = async () => {
+    if (!selectedCustomerId || !newDiscount.material || !newDiscount.percent) {
+      message.warning('Válassz terméket és adj meg kedvezmény százalékot');
+      return;
+    }
+    try {
+      await api.post('/loyalty/discounts/', {
+        customer: selectedCustomerId, material: newDiscount.material,
+        discount_percent: newDiscount.percent,
+      });
+      message.success('Kedvezmény hozzáadva');
+      setNewDiscount({});
+      loadCustomerData(selectedCustomerId);
+    } catch (e: any) {
+      message.error(fmtError(e?.response?.data) || 'A mentés nem sikerült ( már létezik?)');
+    }
+  };
+
+  return (
+    <div style={{ marginTop: 24 }}>
+      <Title level={4}>Hűségprogram (kassza app)</Title>
+      <Text type="secondary">
+        A kassza app ({window.location.protocol}//app.pixisys.eu) ügyfelei pontot gyűjtenek vásárláskor,
+        megtekintik vásárlásaikat, letöltik bizonylataikat és ellenőrzik üzemanyagkártya-egyenlegüket.
+        Itt kezelheted a program beállításait és az ügyfél-specifikus adatokat.
+      </Text>
+
+      <Tabs
+        style={{ marginTop: 16 }}
+        items={[
+          {
+            key: 'cfg',
+            label: 'Beállítások',
+            children: cfg ? (
+              <Form layout="vertical" onFinish={saveCfg} initialValues={cfg} style={{ maxWidth: 480 }}>
+                <Form.Item name="points_per_100_ft" label="Pont / 100 Ft vásárlás után"
+                  extra="Pl. 1 → minden 100 Ft után 1 pont (10 000 Ft = 100 pont).">
+                  <InputNumber min={0} step={0.1} style={{ width: '100%' }} />
+                </Form.Item>
+                <Form.Item name="welcome_points" label="Üdvözlő pont regisztrációkor">
+                  <InputNumber min={0} precision={0} style={{ width: '100%' }} />
+                </Form.Item>
+                <Form.Item name="qr_token_ttl_seconds" label="QR token élettartama (másodperc)"
+                  extra="A kasszánál mutatott változó QR kód ennyi ideig érvényes.">
+                  <InputNumber min={30} max={600} precision={0} style={{ width: '100%' }} />
+                </Form.Item>
+                <Button type="primary" htmlType="submit" loading={saving}>Mentés</Button>
+              </Form>
+            ) : <Text>Betöltés…</Text>,
+          },
+          {
+            key: 'customers',
+            label: 'Ügyfelek',
+            children: (
+              <>
+                <Select
+                  showSearch allowClear placeholder="Ügyfél keresése (név, e-mail…)"
+                  filterOption={false} style={{ width: 420, marginBottom: 16 }}
+                  onSearch={setCustomerQuery}
+                  value={selectedCustomerId ?? undefined}
+                  onChange={(v) => setSelectedCustomerId(v ?? null)}
+                  notFoundContent={customerQuery ? 'Nincs találat' : 'Írj a kereséshez'}
+                >
+                  {customers.map((c: any) => (
+                    <Select.Option key={c.id} value={c.id}>{c.name}</Select.Option>
+                  ))}
+                </Select>
+
+                {selectedCustomerId && (
+                  <Row gutter={[16, 16]}>
+                    <Col xs={24} md={8}>
+                      <Card size="small" title="Hűségpontok">
+                        <Statistic value={summary?.points ?? 0} suffix="pont" />
+                        <Space style={{ marginTop: 12 }}>
+                          <InputNumber value={pointDelta ?? undefined} placeholder="± pont"
+                            onChange={(v) => setPointDelta(v)} style={{ width: 110 }} />
+                          <Input value={pointNote} placeholder="Megjegyzés"
+                            onChange={(e) => setPointNote(e.target.value)} style={{ width: 160 }} />
+                          <Button onClick={adjustPoints} disabled={!pointDelta}>Rögzít</Button>
+                        </Space>
+                      </Card>
+                    </Col>
+                    <Col xs={24} md={8}>
+                      <Card size="small" title="Üzemanyagkártya">
+                        {summary?.card ? (
+                          <>
+                            <Text strong>{summary.card.card_number}</Text>
+                            <Statistic value={summary.card.balance ?? 0} suffix="Ft" precision={0} />
+                          </>
+                        ) : (
+                          <Text type="secondary">Nincs kártya – az első feltöltéssel létrejön.</Text>
+                        )}
+                        <Space style={{ marginTop: 12 }}>
+                          <InputNumber value={topupAmount ?? undefined} min={1} placeholder="Feltöltés (Ft)"
+                            onChange={(v) => setTopupAmount(v)} style={{ width: 140 }} />
+                          <Button type="primary" onClick={createOrTopupCard} disabled={!topupAmount}>
+                            {summary?.card ? 'Feltöltés' : 'Létrehozás + feltöltés'}
+                          </Button>
+                        </Space>
+                      </Card>
+                    </Col>
+                    <Col xs={24} md={8}>
+                      <Card size="small" title="Termékkedvezmények">
+                        {discounts.map((d: any) => (
+                          <div key={d.id} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                            <span>{d.material_name} <Tag color="orange">-{Number(d.discount_percent)}%</Tag></span>
+                            <Button size="small" danger onClick={() => {
+                              api.delete(`/loyalty/discounts/${d.id}/`).then(() => loadCustomerData(selectedCustomerId));
+                            }}>Törlés</Button>
+                          </div>
+                        ))}
+                        <Space style={{ marginTop: 8 }}>
+                          <Select
+                            showSearch allowClear placeholder="Termék" style={{ width: 200 }}
+                            filterOption={(inp, opt) => String(opt?.children ?? '').toLowerCase().includes(inp.toLowerCase())}
+                            value={newDiscount.material}
+                            onChange={(v) => setNewDiscount((p) => ({ ...p, material: v }))}
+                          >
+                            {materials.map((m: any) => (
+                              <Select.Option key={m.id} value={m.id}>{m.name}</Select.Option>
+                            ))}
+                          </Select>
+                          <InputNumber min={1} max={100} placeholder="%" value={newDiscount.percent}
+                            onChange={(v) => setNewDiscount((p) => ({ ...p, percent: v ?? undefined }))} style={{ width: 80 }} />
+                          <Button onClick={addDiscount}>Hozzáadás</Button>
+                        </Space>
+                      </Card>
+                    </Col>
+                  </Row>
+                )}
+              </>
+            ),
+          },
+        ]}
+      />
+    </div>
+  );
 };
 
 const ModulesPage: React.FC = () => {
@@ -927,6 +1170,8 @@ const ModulesPage: React.FC = () => {
           </Form.Item>
         </Form>
       </Modal>
+
+      <LoyaltySection />
     </Card>
   );
 };

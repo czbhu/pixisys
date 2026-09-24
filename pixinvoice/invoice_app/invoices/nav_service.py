@@ -250,6 +250,11 @@ class NAVService:
     def query_invoice_data(self, direction: str, invoice_number: str, supplier_tax_number: Optional[str] = None, batch_index: Optional[int] = None) -> Dict[str, Any]:
         """Query full invoice data XML for given invoice number and direction.
         NAV v3 schema: invoiceDirection and optional batchIndex/supplierTaxNumber are children of invoiceNumberQuery.
+
+        Az adószám típusa szerinti mező használata kötelező (NAV séma):
+        - supplierTaxNumber: pontosan 8 számjegy (hazai adószám)
+        - communityVatNumber: EU-közösségi adószám (pl. SK2122505814)
+        - thirdStateTaxNumber: egyéb külföldi adószám
         """
         # Build inner XML with ElementTree to ensure correct nesting
         query_el = ET.Element('invoiceNumberQuery')
@@ -261,8 +266,23 @@ class NAVService:
             bi_el = ET.SubElement(query_el, 'batchIndex')
             bi_el.text = str(batch_index)
         if supplier_tax_number:
-            stn_el = ET.SubElement(query_el, 'supplierTaxNumber')
-            stn_el.text = supplier_tax_number
+            compact = re.sub(r'[^A-Za-z0-9]', '', str(supplier_tax_number))
+            if re.fullmatch(r'[0-9]{8}', compact):
+                stn_el = ET.SubElement(query_el, 'supplierTaxNumber')
+                stn_el.text = compact
+            elif re.fullmatch(r'[0-9]{9,}', compact):
+                # 12345678-1-23 formátum (11 jegy): az első 8 jegy a törzsszám
+                stn_el = ET.SubElement(query_el, 'supplierTaxNumber')
+                stn_el.text = compact[:8]
+            elif compact.upper().startswith('HU') and re.fullmatch(r'HU[0-9]{8}', compact.upper()):
+                stn_el = ET.SubElement(query_el, 'supplierTaxNumber')
+                stn_el.text = compact[2:10]
+            elif re.fullmatch(r'[A-Z]{2}[A-Z0-9]+', compact.upper()):
+                cvn_el = ET.SubElement(query_el, 'communityVatNumber')
+                cvn_el.text = compact.upper()
+            else:
+                tst_el = ET.SubElement(query_el, 'thirdStateTaxNumber')
+                tst_el.text = str(supplier_tax_number).strip()
 
         fragment = ET.tostring(query_el, encoding='unicode')
         request_data = f"\n    {fragment}\n        "

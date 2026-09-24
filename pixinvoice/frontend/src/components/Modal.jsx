@@ -31,6 +31,11 @@ const styles = {
     borderRadius: 10,
     boxShadow: '0 10px 30px rgba(0,0,0,0.25)',
     overflow: 'hidden',
+    // Ne fusson ki a viewportból: a magassága fel van korlátozva, a fejléc és
+    // a lábléc (gombok) fixek maradnak, csak a tartalom scrollozódik.
+    maxHeight: 'calc(100vh - 48px)',
+    display: 'flex',
+    flexDirection: 'column',
   },
   header: {
     padding: '12px 16px',
@@ -39,9 +44,13 @@ const styles = {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
+    flexShrink: 0,
   },
   content: {
     padding: 16,
+    overflowY: 'auto',
+    minHeight: 0,
+    overscrollBehavior: 'contain',
   },
   footer: {
     padding: 12,
@@ -50,6 +59,7 @@ const styles = {
     gap: 8,
     borderTop: '1px solid #eee',
     background: '#fafafa',
+    flexShrink: 0,
   },
   closeBtn: {
     border: 'none',

@@ -513,6 +513,29 @@ def _build_combined_public_quote_url(primary_qr, frontend_base_url, additional_r
     return f"{base_url}?{'&'.join(params)}" if params else base_url
 
 
+def _restricted_price_write_response(request, fields=None):
+    """Ár-láthatóság nélküli felhasználó tételírásának blokkolása.
+    Ha `fields` meg van adva (update esetén), csak azok a mezők engedélyesek."""
+    from apps.sales.permissions import user_can_view_prices
+    if user_can_view_prices(getattr(request, 'user', None)):
+        return None
+    if fields is not None:
+        try:
+            incoming = set(request.data.keys())
+        except Exception:
+            incoming = set()
+        if incoming and incoming.issubset(set(fields)):
+            return None
+        return Response(
+            {'error': 'Árak megtekintésére jogosulatlan felhasználóként csak a belső leírás módosítható.'},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    return Response(
+        {'error': 'Árak megtekintésére jogosulatlan felhasználóként ez a művelet nem engedélyezett.'},
+        status=status.HTTP_403_FORBIDDEN,
+    )
+
+
 class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
     queryset = QuoteRequest.objects.all()  # Base queryset
     serializer_class = QuoteRequestSerializer
@@ -617,6 +640,28 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             rp = getattr(self, 'request', None) and self.request.query_params
         except Exception:
             rp = None
+
+        # ?my_orders=true: csak a felhasználóra vonatkozó RFQ-k
+        # (created_by / owner / assignee / meghívott / saját osztály cost item-jei).
+        # A Stopper (TimerModal) használja; a "Mind" jelölőnégyzet enélkül nem csinált semmit.
+        if rp and rp.get('my_orders') == 'true':
+            _user = getattr(self.request, 'user', None) if getattr(self, 'request', None) else None
+            if _user and _user.is_authenticated:
+                my_q = (
+                    Q(created_by=_user) | Q(owner=_user) | Q(assignees=_user)
+                    | Q(invitations__invitee=_user)
+                )
+                try:
+                    _emp = getattr(_user, 'employee_profile', None)
+                    _dept_ids = list(_emp.departments.values_list('id', flat=True)) if _emp else []
+                except Exception:
+                    _dept_ids = []
+                if _dept_ids:
+                    _dept_q = Q(items__manufacturing_product__cost_items__department_id__in=_dept_ids)
+                    for _did in _dept_ids:
+                        _dept_q |= Q(items__cost_items_data__contains=[{'department_id': _did}])
+                    my_q |= _dept_q
+                queryset = queryset.filter(my_q).distinct()
 
         # ?q=: szöveges keresés — ?search_field= szűkíti a mezőt (all/company/item_name/description/project/quote_number)
         q_param = (rp.get('q', '') or '').strip() if rp else ''
@@ -1369,6 +1414,9 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def add_product_item(self, request, pk=None):
+        restricted = _restricted_price_write_response(request)
+        if restricted is not None:
+            return restricted
         qr = self.get_object()
         product_id = request.data.get('product_id')
         material_id = request.data.get('material_id')
@@ -1430,6 +1478,9 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def add_manufacturing_item(self, request, pk=None):
+        restricted = _restricted_price_write_response(request)
+        if restricted is not None:
+            return restricted
         qr = self.get_object()
         mp_id = request.data.get('manufacturing_product_id')
         quantity = request.data.get('quantity', 1)
@@ -1603,6 +1654,9 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def add_service_item(self, request, pk=None):
+        restricted = _restricted_price_write_response(request)
+        if restricted is not None:
+            return restricted
         qr = self.get_object()
         service_id = request.data.get('service_id')
         quantity = request.data.get('quantity', 1)
@@ -1645,6 +1699,9 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def delete_item(self, request, pk=None):
+        restricted = _restricted_price_write_response(request)
+        if restricted is not None:
+            return restricted
         qr = self.get_object()
         item_id = request.data.get('item_id')
         if not item_id:
@@ -1666,6 +1723,9 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         """QuoteRequestItem közvetlen módosítása (új metódus — MP nélküli tételeknél).
         Régi MP-s tételeknél is működik, de az MP-t NEM módosítja.
         """
+        restricted = _restricted_price_write_response(request, fields=['internal_description'])
+        if restricted is not None:
+            return restricted
         qr = self.get_object()
         try:
             item = qr.items.get(id=item_id)
@@ -1861,8 +1921,16 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
 
     @action(detail=True, methods=['patch', 'post'], permission_classes=[permissions.AllowAny])
     def update_invoice_number(self, request, pk=None):
-        """QR számlaszámának frissítése (PixInvoice callback, CO nélküli QR-ekhez)"""
-        qr = self.get_object()
+        """QR számlaszámának frissítése (PixInvoice callback, CO nélküli QR-ekhez)
+
+        A szűretlen querysetből oldjuk fel: az OwnDataFilterMixin névtelen
+        callback-hívásnál (pixinvoice szerver oldali visszajelzés) üres
+        querysetet adna, és 404-et kapnánk – akárcsak a CustomerOrder végpont,
+        ez is publikus callback."""
+
+        qr = self._resolve_rfq_identifier(self.queryset, pk)
+        if qr is None:
+            return Response({'detail': 'Nem található.'}, status=status.HTTP_404_NOT_FOUND)
         if 'invoice_number' not in request.data:
             return Response({'error': 'invoice_number mező kötelező'}, status=status.HTTP_400_BAD_REQUEST)
         invoice_number = request.data.get('invoice_number')
@@ -4002,6 +4070,31 @@ class QuoteRequestItemViewSet(viewsets.ModelViewSet):
     )
     serializer_class = QuoteRequestItemSerializer
     permission_classes = [AllowAny]
+
+    # ── Ár-láthatóság: gyártói user tételt nem rögzít/töröl, csak belső leírást módosít ──
+    def create(self, request, *args, **kwargs):
+        restricted = _restricted_price_write_response(request)
+        if restricted is not None:
+            return restricted
+        return super().create(request, *args, **kwargs)
+
+    def update(self, request, *args, **kwargs):
+        restricted = _restricted_price_write_response(request, fields=['internal_description'])
+        if restricted is not None:
+            return restricted
+        return super().update(request, *args, **kwargs)
+
+    def partial_update(self, request, *args, **kwargs):
+        restricted = _restricted_price_write_response(request, fields=['internal_description'])
+        if restricted is not None:
+            return restricted
+        return super().partial_update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        restricted = _restricted_price_write_response(request)
+        if restricted is not None:
+            return restricted
+        return super().destroy(request, *args, **kwargs)
 
     @action(detail=True, methods=['get'])
     def attachments(self, request, pk=None):
@@ -8985,28 +9078,77 @@ class POSCustomerIdentificationViewSet(viewsets.ModelViewSet):
     
     @action(detail=False, methods=['post'])
     def verify_qr(self, request):
-        """Verify QR code and return customer info"""
-        qr_code = request.data.get('qr_code')
+        """Verify QR code and return customer info.
+
+        Kétféle kód elfogadása:
+        - statikus POSCustomerIdentification QR (régi),
+        - dinamikus, időkorlátozott portál token (P1.<ügyfél>.<lejárat>.<aláírás>),
+          amit a kliens appban generált QR hordoz.
+        A válasz tartalmazza a hűségpont egyenleget, az üzemanyagkártya
+        egyenleget és az ügyfél termékkedvezményeit is."""
+        qr_code = (request.data.get('qr_code') or '').strip()
         if not qr_code:
             return Response({'error': 'QR code required'}, status=400)
-        
+
+        identification = None
         try:
-            identification = POSCustomerIdentification.objects.select_related('customer').get(
-                qr_code=qr_code, 
-                is_active=True
-            )
+            if qr_code.startswith('P1.'):
+                from apps.loyalty.models import verify_qr_token
+                from apps.crm.models import Company as CrmCompanyAlias
+                customer_id = verify_qr_token(qr_code)
+                if customer_id is None:
+                    return Response({'valid': False, 'message': 'A QR kód lejárt vagy érvénytelen'}, status=404)
+                customer_obj = CrmCompanyAlias.objects.filter(id=customer_id).first()
+                if not customer_obj:
+                    return Response({'valid': False, 'message': 'Ismeretlen ügyfél'}, status=404)
+                identification, _ = POSCustomerIdentification.objects.get_or_create(
+                    qr_code=f'PORTAL-{customer_id}',
+                    defaults={'customer': customer_obj, 'is_active': True},
+                )
+            else:
+                identification = POSCustomerIdentification.objects.select_related('customer').get(
+                    qr_code=qr_code,
+                    is_active=True
+                )
             identification.last_used_at = timezone.now()
             identification.save()
-            
+
+            customer_obj = identification.customer
+            payload_customer = {
+                'id': customer_obj.id,
+                'name': customer_obj.name,
+                'email': customer_obj.email,
+                'tax_number': customer_obj.tax_number,
+                'address': customer_obj.address,
+            }
+            # Hűségprogram adatok (ha az app telepítve van)
+            loyalty = {}
+            try:
+                from apps.loyalty.models import customer_points_balance
+                loyalty['points'] = customer_points_balance(customer_obj)
+                card = getattr(customer_obj, 'fuel_card', None)
+                if card:
+                    loyalty['fuel_card'] = {
+                        'card_number': card.card_number,
+                        'balance': float(card.balance),
+                        'is_active': card.is_active,
+                    }
+                from apps.loyalty.models import CustomerProductDiscount
+                loyalty['discounts'] = list(
+                    CustomerProductDiscount.objects.filter(
+                        customer=customer_obj, is_active=True
+                    ).select_related('material').values(
+                        'material_id', 'material__name', 'material__code', 'discount_percent',
+                    )
+                )
+            except Exception:
+                loyalty = {}
+
             return Response({
                 'valid': True,
-                'customer': {
-                    'id': identification.customer.id,
-                    'name': identification.customer.name,
-                    'email': identification.customer.email,
-                    'tax_number': identification.customer.tax_number,
-                    'address': identification.customer.address,
-                }
+                'identification_id': identification.id,
+                'customer': payload_customer,
+                'loyalty': loyalty,
             })
         except POSCustomerIdentification.DoesNotExist:
             return Response({'valid': False}, status=404)
@@ -9057,6 +9199,58 @@ class POSTransactionViewSet(viewsets.ModelViewSet):
         if self.action == 'list':
             return POSTransactionListSerializer
         return POSTransactionSerializer
+
+    def perform_create(self, serializer):
+        from django.db import transaction as db_transaction
+        from rest_framework.exceptions import ValidationError
+        with db_transaction.atomic():
+            instance = serializer.save()
+            try:
+                self._apply_loyalty(instance)
+            except ValidationError:
+                raise  # pl. elégtelen kártyaegyenleg → a vásárlás elutasítása
+            except Exception:
+                pass
+
+    def _apply_loyalty(self, instance):
+        """Hűségprogram: pont jóírása vásárlás után és üzemanyagkártya terhelése
+        (customer_card fizetési módnál). Hiba esetén a tranzakció érvényes marad."""
+        from apps.loyalty.models import (
+            FuelCard, FuelCardTransaction, LoyaltyConfig, LoyaltyPointEntry,
+        )
+        customer = instance.customer
+        if not customer and instance.shopper_identification_id:
+            ident = POSCustomerIdentification.objects.filter(id=instance.shopper_identification_id).select_related('customer').first()
+            customer = ident.customer if ident else None
+            if customer and not instance.customer_id:
+                instance.customer = customer
+                instance.save(update_fields=['customer'])
+        if not customer:
+            return
+        cfg = LoyaltyConfig.get_solo()
+        points = int((Decimal(str(instance.total_gross or 0)) / Decimal('100')) * cfg.points_per_100_ft)
+        if points > 0:
+            LoyaltyPointEntry.objects.create(
+                customer=customer, points=points, reason='purchase',
+                pos_transaction=instance,
+            )
+        if instance.payment_method == 'customer_card':
+            card = FuelCard.objects.filter(customer=customer, is_active=True).first()
+            if not card:
+                from rest_framework.exceptions import ValidationError
+                raise ValidationError({'payment_method': 'Az ügyfélhez nincs aktív üzemanyagkártya.'})
+            total = Decimal(str(instance.total_gross or 0))
+            if card.balance < total:
+                from rest_framework.exceptions import ValidationError
+                raise ValidationError({
+                    'payment_method': f'Az üzemanyagkártya egyenlege elégtelen ({card.balance} Ft).',
+                })
+            card.balance -= total
+            card.save(update_fields=['balance', 'updated_at'])
+            FuelCardTransaction.objects.create(
+                card=card, amount=-total, note=f'Vásárlás: {instance.transaction_number}',
+                pos_transaction=instance,
+            )
 
     def get_queryset(self):
         queryset = super().get_queryset()

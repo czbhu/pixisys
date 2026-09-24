@@ -3608,6 +3608,17 @@ class ClientPortalRegisterView(APIView):
         try:
             from apps.crm.models import Company as CrmCompany, Contact as CrmContact
             # Find or create CRM company
+            # Magánszemélyeknél is létrehozunk CRM ügyfél rekordot (a személy
+            # nevével): a POS azonosítás, hűségpontok és üzemanyagkártya ehhez kötődik.
+            if not is_company:
+                crm_company = CrmCompany.objects.filter(
+                    name__iexact=full_name, is_customer=True
+                ).first()
+                if not crm_company:
+                    crm_company = CrmCompany.objects.create(
+                        name=full_name,
+                        is_customer=True,
+                    )
             if is_company and company_name:
                 tax_digits = ''.join(filter(str.isdigit, tax_number))
                 if tax_digits:
@@ -3640,34 +3651,23 @@ class ClientPortalRegisterView(APIView):
         portal_user.set_password(password)
         portal_user.save()
 
+        # Üdvözlő hűségpontok (ha be van állítva és van ügyfél rekord)
+        try:
+            from apps.loyalty.models import LoyaltyConfig, LoyaltyPointEntry
+            cfg = LoyaltyConfig.get_solo()
+            if cfg.welcome_points and crm_company:
+                LoyaltyPointEntry.objects.create(
+                    customer=crm_company, points=cfg.welcome_points,
+                    reason='register', note='Regisztrációs üdvözlő pont',
+                )
+        except Exception:
+            pass
+
         # Auto-login: create session
         import secrets as _secrets
         expires_at = timezone.now() + timedelta(days=7)
         session = ClientPortalSession.objects.create(user=portal_user, token=_secrets.token_urlsafe(32), expires_at=expires_at)
         return Response({'token': session.token, 'user': ClientPortalUserSerializer(portal_user).data}, status=status.HTTP_201_CREATED)
-    permission_classes = [AllowAny]
-
-    def post(self, request):
-        email = (request.data.get('email') or '').strip().lower()
-        password = request.data.get('password') or ''
-        if not email or not password:
-            return Response({'error': 'E-mail és jelszó kötelező'}, status=status.HTTP_400_BAD_REQUEST)
-
-        user = ClientPortalUser.objects.filter(email__iexact=email, is_active=True).first()
-        if not user or not user.check_password(password):
-            return Response({'error': 'Hibás e-mail vagy jelszó'}, status=status.HTTP_401_UNAUTHORIZED)
-
-        expires_at = timezone.now() + timedelta(days=7)
-        import secrets as _sec
-        session = ClientPortalSession.objects.create(user=user, expires_at=expires_at, token=_sec.token_urlsafe(32))
-        user.last_login = timezone.now()
-        user.save(update_fields=['last_login'])
-
-        return Response({
-            'token': str(session.token),
-            'expires_at': session.expires_at,
-            'user': ClientPortalUserSerializer(user).data,
-        })
 
 
 class ClientPortalMeView(APIView, ClientPortalSessionMixin):

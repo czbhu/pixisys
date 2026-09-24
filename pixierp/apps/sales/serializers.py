@@ -14,6 +14,69 @@ from apps.manufacturing.serializers import ProjectSerializer, ManufacturingProdu
 from apps.crm.serializers import CompanySerializer, ContactSerializer
 from apps.core.serializers import EmailServerConfigSerializer, EmailTemplateSerializer, SignatureTemplateSerializer
 
+
+# ── Ár-láthatóság: ármezők kihagyása a válaszokból ─────────────────────────────
+# Akinek nincs sales.rfqs view jogosultsága (gyártói felhasználók), az butított
+# RFQ adatlapot kap — a serializer ezekkel a segédekkel csupaszítja az árakat.
+_ITEM_PRICE_KEYS = (
+    'net_unit_price', 'net_total', 'gross_total', 'discounted_net_total', 'discounted_gross_total',
+    'discount_percent', 'discount_amount', 'is_rate_locked', 'locked_exchange_rate',
+    'material_unit_cost_price', 'service_unit_cost_price',
+    'manufacturing_product_net_unit_price', 'manufacturing_total_cost',
+)
+_COST_ITEM_PRICE_KEYS = (
+    'cost_price', 'unit_price', 'selling_price', 'selling_unit_price',
+    'markup_percent', 'formulas', 'currency_id', 'currency_code',
+)
+_RFQ_PRICE_KEYS = ('total_amount', 'total_net_amount', 'total_gross_amount')
+
+
+def strip_item_price_data(item):
+    """Tétel dict ármezőinek eltávolítása (cost_items_data JSON-ből is)."""
+    if not isinstance(item, dict):
+        return item
+    for key in _ITEM_PRICE_KEYS:
+        item.pop(key, None)
+    cost_items = item.get('cost_items_data')
+    if isinstance(cost_items, list):
+        for ci in cost_items:
+            if isinstance(ci, dict):
+                for key in _COST_ITEM_PRICE_KEYS:
+                    ci.pop(key, None)
+    return item
+
+
+def strip_rfq_price_data(rfq):
+    """RFQ dict ármezőinek eltávolítása (tételenként rekurzívan)."""
+    if not isinstance(rfq, dict):
+        return rfq
+    for key in _RFQ_PRICE_KEYS:
+        rfq.pop(key, None)
+    items = rfq.get('items')
+    if isinstance(items, list):
+        for it in items:
+            strip_item_price_data(it)
+    return rfq
+
+
+def request_hides_prices(context):
+    """True, ha a kérés userje nem láthat árakat (serializer context alapján).
+    A felhasználó jogosultsága a kérésre van cache-elve — tételenként nem
+    nézzük újra (N+1 elkerülése)."""
+    from .permissions import user_can_view_prices
+    request = (context or {}).get('request')
+    if request is None:
+        return not user_can_view_prices(None)
+    cached = getattr(request, '_hides_prices', None)
+    if cached is None:
+        cached = not user_can_view_prices(getattr(request, 'user', None))
+        try:
+            request._hides_prices = cached
+        except Exception:
+            pass
+    return cached
+
+
 class ExtraWorkSerializer(serializers.ModelSerializer):
     created_by_name = serializers.SerializerMethodField()
     customer_order_item_name = serializers.SerializerMethodField()
@@ -346,7 +409,10 @@ class QuoteRequestItemSerializer(serializers.ModelSerializer):
                     delivery_note__is_confirmed=True,
                 ).values_list('quantity', flat=True))
 
-            # CustomerOrderItem-en át (régi folyamat) — prefetched_active_cois ha van
+            # CustomerOrderItem-en át (régi folyamat) — prefetched_active_cois ha van.
+            # Egy szállítólevél tétel mindkét útvonalon elérhető lehet (van quote_item FK-ja
+            # ÉS customer_order_item-je is) — a közvetlen hivatkozásúakat itt ki kell hagyni,
+            # különben duplán számolnánk őket.
             prefetched_cois = getattr(obj, 'prefetched_active_cois', None)
             if prefetched_cois is not None:
                 via_coi_qty = 0.0
@@ -355,19 +421,19 @@ class QuoteRequestItemSerializer(serializers.ModelSerializer):
                     if di_list is not None:
                         via_coi_qty += sum(
                             float(di.quantity) for di in di_list
-                            if di.delivery_note.is_confirmed
+                            if di.delivery_note.is_confirmed and di.quote_item_id is None
                         )
                     else:
                         via_coi_qty += sum(float(q) for q in DeliveryNoteItem.objects.filter(
                             customer_order_item=coi,
                             delivery_note__is_confirmed=True,
-                        ).values_list('quantity', flat=True))
+                        ).exclude(quote_item__isnull=False).values_list('quantity', flat=True))
             else:
                 coi_ids = list(CustomerOrderItem.objects.filter(quote_item=obj).values_list('id', flat=True))
                 via_coi_qty = sum(float(q) for q in DeliveryNoteItem.objects.filter(
                     customer_order_item_id__in=coi_ids,
                     delivery_note__is_confirmed=True,
-                ).values_list('quantity', flat=True)) if coi_ids else 0.0
+                ).exclude(quote_item__isnull=False).values_list('quantity', flat=True)) if coi_ids else 0.0
 
             total = direct_qty + via_coi_qty
             return round(total, 4) if total > 0 else 0.0
@@ -391,6 +457,12 @@ class QuoteRequestItemSerializer(serializers.ModelSerializer):
     class Meta:
         model = QuoteRequestItem
         fields = '__all__'
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        if request_hides_prices(self.context):
+            strip_item_price_data(data)
+        return data
 
 
 class QuoteRequestSerializer(serializers.ModelSerializer):
@@ -745,6 +817,12 @@ class QuoteRequestSerializer(serializers.ModelSerializer):
     def get_is_partial_order(self, obj):
         _, is_partial = self._aggregate_order_status(obj)
         return bool(is_partial)
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        if request_hides_prices(self.context):
+            strip_rfq_price_data(data)
+        return data
 
 
 class QuoteRequestInvitationSerializer(serializers.ModelSerializer):

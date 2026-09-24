@@ -219,11 +219,22 @@ const OrderedProducts: React.FC = () => {
             if (totalCount > PAGE_SIZE) {
                 setBackgroundLoading(true);
                 const totalPages = Math.ceil(totalCount / PAGE_SIZE);
-                for (let page = 2; page <= totalPages; page++) {
-                    try {
-                        const pd = await salesService.getQuoteRequestsPage(page, PAGE_SIZE);
-                        setRfqs(prev => [...prev, ...(pd.results ?? [])]);
-                    } catch (e) { console.error(`Page ${page}:`, e); }
+                // Háttérben töltjük a többi oldalt — párhuzamosan, 5-ös csomagokban
+                // (szekvenciális betöltésnél a lapok száma szerint lineárisan nőtt a betöltési idő)
+                const pages = Array.from({ length: totalPages - 1 }, (_, i) => i + 2);
+                const CHUNK = 5;
+                for (let i = 0; i < pages.length; i += CHUNK) {
+                    const batch = pages.slice(i, i + CHUNK);
+                    const settled = await Promise.allSettled(
+                        batch.map(page => salesService.getQuoteRequestsPage(page, PAGE_SIZE).then(pd => (pd.results ?? []) as any[])),
+                    );
+                    const newRows = settled
+                        .filter((s): s is PromiseFulfilledResult<any[]> => s.status === 'fulfilled')
+                        .flatMap(s => s.value);
+                    if (newRows.length > 0) setRfqs(prev => [...prev, ...newRows]);
+                    else if (i === 0 && settled.some(s => s.status === 'rejected')) {
+                        console.error('Háttér lapok betöltése sikertelen');
+                    }
                 }
                 setBackgroundLoading(false);
             }

@@ -124,12 +124,14 @@ api.interceptors.response.use(
   async (error) => {
     const config = error.config;
 
-    // Ha nincs válasz (hálózati hiba, timeout), próbáljuk újra max 2x
-    // FormData kéréseket nem próbáljuk újra, mert a fájl adatok nem biztos hogy újraküldhetők
+    // Csak idempotens (GET/HEAD) kéréseket próbálunk újra: egy POST újrapróbálása
+    // duplikált létrehozást okozhat (pl. lassú számla-létrehozásnál duplikált számla).
+    const method = String(config?.method || 'get').toLowerCase();
+    const isRetrySafe = method === 'get' || method === 'head';
     const isFormData = typeof FormData !== 'undefined' && config?.data instanceof FormData;
-    if (!error.response && !config._retry && !isFormData) {
+    if (!error.response && !config._retry && isRetrySafe && !isFormData) {
       config._retry = (config._retry || 0) + 1;
-      
+
       if (config._retry <= 2) {
         console.log(`Újrapróbálás (${config._retry}/2)...`);
         // Várunk egy kicsit mielőtt újrapróbálnánk (exponenciális backoff)
@@ -157,7 +159,9 @@ export const invoiceAPI = {
   getTimeline: (id) => api.get(`/api/invoices/${id}/timeline/`),
   
   // Create invoice
-  createInvoice: (data) => api.post('/api/invoices/', data),
+  // Hosszabb időkorlát: a create a NAV-beküldést is szinkronban végzi, nagy tételszámúnál
+  // (80+ tétel) ez a 30s alapértelmezett limit fölé mehet.
+  createInvoice: (data) => api.post('/api/invoices/', data, { timeout: 120000 }),
   // Create manual incoming invoice digest (for non-NAV/foreign invoices)
   createIncomingManual: (data) => api.post('/api/invoices/incoming/manual_create/', data),
   getIncomingManual: (companyId, digestId) => api.post('/api/invoices/incoming/manual_get/', { company_id: companyId, digest_id: digestId }),
@@ -188,7 +192,7 @@ export const invoiceAPI = {
   updateRejectedInvoiceItems: (id, items) => api.post(`/api/invoices/${id}/update_rejected_items/`, { items }),
 
   // Submit to NAV
-  submitToNAV: (id) => api.post(`/api/invoices/${id}/submit_to_nav/`),
+  submitToNAV: (id) => api.post(`/api/invoices/${id}/submit_to_nav/`, undefined, { timeout: 120000 }),
   
   // Get NAV status
   getNAVStatus: (id) => api.get(`/api/invoices/${id}/nav_status/`),

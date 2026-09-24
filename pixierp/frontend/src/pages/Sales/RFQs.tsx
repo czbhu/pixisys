@@ -850,7 +850,7 @@ const RFQs: React.FC = () => {
     if (cached) {
       // Azonnali megjelenítés a cache-ből — nincs spinner, nincs várakozás
       setTotalCount(cached.count);
-      startTransition(() => setRfqs(cached.results));
+      setRfqs(cached.results);
       setLoading(false);
       // Háttérben frissítés (stale-while-revalidate)
       salesService.getQuoteRequestsPage(page, pageSize, buildParams(page, pageSize))
@@ -861,7 +861,7 @@ const RFQs: React.FC = () => {
             count: res.count ?? 0,
           });
           setTotalCount(res.count ?? 0);
-          startTransition(() => setRfqs((res.results ?? []).map(attachSearchText)));
+          setRfqs((res.results ?? []).map(attachSearchText));
         })
         .catch(() => {});
     } else {
@@ -873,7 +873,7 @@ const RFQs: React.FC = () => {
         const mapped = (res.results ?? []).map(attachSearchText);
         prefetchCacheRef.current.set(key, { results: mapped, count: res.count ?? 0 });
         setTotalCount(res.count ?? 0);
-        startTransition(() => setRfqs(mapped));
+        setRfqs(mapped);
         setLoading(false);
         setBackgroundLoading(false);
       } catch (err: any) {
@@ -923,7 +923,7 @@ const RFQs: React.FC = () => {
   // Lap/szűrő változás → fetchel (cache-ből ha van)
   useEffect(() => {
     fetchPage(tablePage, tablePageSize);
-  }, [tablePage, tablePageSize, debouncedQuery, creatorFilter, projectFilter, statusFilter, sortOrdering]); // eslint-disable-line
+  }, [tablePage, tablePageSize, debouncedQuery, creatorFilter, projectFilter, statusFilter, sortOrdering, searchField]); // eslint-disable-line
 
   // Lapváltáskor visszaugrik az 1. lapra ha szűrő változott
   const prevFiltersRef = React.useRef({ debouncedQuery, creatorFilter, projectFilter, statusFilter, sortOrdering });
@@ -1076,7 +1076,9 @@ const RFQs: React.FC = () => {
 
   useEffect(() => {
     // Szerver már szűrte az adatot — csak átadjuk (flattenedItems kezeli a STATUS_COMBOS logikát)
-    startTransition(() => setFiltered(rfqs || []));
+    // Megj.: nem startTransition-ben — a halasztott frissítés a szűrésnél elmaradhatott,
+    // és a táblázat a régi sorokat mutatta, amíg a lapozó már az új összesenyt írta.
+    setFiltered(rfqs || []);
   }, [rfqs]);
 
   const RFQ_STATUS_META: Record<string, { color: string; text: string }> = {

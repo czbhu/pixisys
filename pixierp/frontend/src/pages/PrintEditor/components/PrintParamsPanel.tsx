@@ -1101,6 +1101,15 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
       try { localStorage.removeItem('pixierp_custom_cost_items'); } catch {}
     }
     if (allIds.length === 0) { setAllServices([]); setSelectedServices1([]); setSelectedServices2([]); setSelectedFinishingServices([]); return; }
+    // Szolgáltatás részletek (név, költségek) lekérése a termékcsoportok ID-i alapján —
+    // enélkül az utómunka választó csak "#ID"-t tudna mutatni (svcById üres maradt).
+    let cancelled = false;
+    api.get(`/manufacturing/services/?ids=${allIds.join(',')}&page_size=500`)
+      .then(r => {
+        if (!cancelled) setAllServices(Array.isArray(r.data) ? r.data : (r.data?.results ?? []));
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
   }, [selectedProductId, products]); // eslint-disable-line
 
   const update = (partial: Partial<PrintParams>) => {

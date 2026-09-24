@@ -178,4 +178,28 @@ export const publicPortalService = {
       return null;
     }
   },
+
+  // ── Kassza / hűségprogram portál ──────────────────────────────────────────
+  async loyaltySummary() {
+    const response = await publicApi.get('/loyalty/portal/summary/', { headers: authHeaders() });
+    return response.data;
+  },
+  async loyaltyQr() {
+    const response = await publicApi.get('/loyalty/portal/qrcode/', { headers: authHeaders() });
+    return response.data;
+  },
+  async loyaltyPurchases() {
+    const response = await publicApi.get('/loyalty/portal/purchases/', { headers: authHeaders() });
+    return response.data;
+  },
+  async loyaltyReceiptUrl(transactionId: number) {
+    return `${API_BASE_URL}/loyalty/portal/purchases/${transactionId}/receipt/`;
+  },
+  async loyaltyReceiptBlob(transactionId: number) {
+    const response = await publicApi.get(`/loyalty/portal/purchases/${transactionId}/receipt/`, {
+      headers: authHeaders(),
+      responseType: 'blob',
+    });
+    return response.data;
+  },
 };

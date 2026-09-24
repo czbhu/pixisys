@@ -1,6 +1,8 @@
 import React from 'react';
-import { Card, Row, Col, Typography } from 'antd';
+import { Card, Row, Col, Typography, Empty } from 'antd';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
+import { hasMenuAccess } from '../utils/menuAccess';
 
 const { Title, Text } = Typography;
 
@@ -20,12 +22,20 @@ interface ModuleDashboardProps {
 
 const ModuleDashboard: React.FC<ModuleDashboardProps> = ({ title, items }) => {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  // Ugyanaz a jogosultsagi szures, mint a Sidebarban — jogosulatlan csempe ne legyen lathato/klikkelheto
+  const visibleItems = items.filter((item) => hasMenuAccess(user, item.key));
 
   return (
     <div style={{ padding: '24px' }}>
       <Title level={2} style={{ marginBottom: '32px' }}>{title}</Title>
       <Row gutter={[24, 24]}>
-        {items.map((item) => (
+        {visibleItems.length === 0 && (
+          <Col span={24}>
+            <Empty description="Nincs jogosultságod a modul oldalaihoz." style={{ padding: 48 }} />
+          </Col>
+        )}
+        {visibleItems.map((item) => (
           <Col xs={24} sm={12} md={8} lg={6} key={item.key}>
             <Card
               hoverable

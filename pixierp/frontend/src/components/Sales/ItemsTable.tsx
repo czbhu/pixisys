@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect, createContext, useContext } from 'react';
+import React, { useMemo, useState, useEffect, useRef, createContext, useContext } from 'react';
 import { Card, Table, Space, Button, Popconfirm, message, Modal, Tooltip, Image, Tag, Input, Upload } from 'antd';
 import { FileOutlined, MenuOutlined, RightOutlined, LeftOutlined, LinkOutlined, AppstoreOutlined, PaperClipOutlined, UploadOutlined, DeleteOutlined, ClockCircleOutlined } from '@ant-design/icons';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragOverlay, DragEndEvent } from '@dnd-kit/core';
@@ -10,8 +10,19 @@ import { manufacturingService } from '../../services/manufacturingService';
 import { buildTreeMetaBy, CostTreeGuide } from '../Manufacturing/CostDnd';
 import ProductSubItemsTable from '../Manufacturing/ProductSubItemsTable';
 import api from '../../services/api';
+import { useAuth } from '../../contexts/AuthContext';
 import { isPdf, openPdfPreview } from '../../utils/pdfPreview';
 import ImpositionHelperModal from './ImpositionHelperModal';
+// @ts-ignore
+import ReactQuill from 'react-quill';
+import 'react-quill/dist/quill.snow.css';
+
+/** Sima szöveg (\n) → HTML a Quillnek; meglévő HTML-t érintetlenül hagyja. */
+const toQuillHtml = (text: string | null | undefined): string => {
+  if (!text) return '';
+  if (/<[a-z][\s\S]*>/i.test(text)) return text;
+  return '<p>' + text.split('\n').map((l: string) => l || '<br>').join('</p><p>') + '</p>';
+};
 
 const ITEM_STATUS_MAP: Record<string, { label: string; color: string }> = {
   new: { label: 'Új', color: 'default' },
@@ -62,6 +73,9 @@ interface ItemsTableProps {
   onCopyItem?: (item: any) => void;
   currency?: string;
   hidePrices?: boolean;
+  /** Ha true, butított (gyártói) mód: nincsenek árak, átsorolás, másolás/törlés,
+   * altétel-árak; a Szerk. gomb csak a belső leírás szerkesztését nyitja (az RFQDetail kezeli). */
+  reduced?: boolean;
   currencySelector?: React.ReactNode;
   discountSelector?: React.ReactNode;
   showSubItemsTooltip?: boolean;
@@ -146,15 +160,38 @@ const DraggableRow = ({ children, ...props }: any) => {
   );
 };
 
-export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEditItem, quoteRequestId, onDeleteItem, onCopyItem, currency = 'HUF', hidePrices, currencySelector, discountSelector, showSubItemsTooltip = false, hideDetailLink = false, hideCopyButton = false, showInlineSubItems = false, inlineEditItemId, inlineEditContent, onWorkHours }) => {
+export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEditItem, quoteRequestId, onDeleteItem, onCopyItem, currency = 'HUF', hidePrices, reduced = false, currencySelector, discountSelector, showSubItemsTooltip = false, hideDetailLink = false, hideCopyButton = false, showInlineSubItems = false, inlineEditItemId, inlineEditContent, onWorkHours }) => {
+  const pricesHidden = hidePrices || reduced;
+  // Butított mód: belső leírás inline szerkesztése a táblázatban
+  const [editingInternalId, setEditingInternalId] = useState<number | null>(null);
+  const [internalValue, setInternalValue] = useState('');
+  const [internalSaving, setInternalSaving] = useState(false);
   const [attachmentsModalOpen, setAttachmentsModalOpen] = useState(false);
   const [selectedAttachments, setSelectedAttachments] = useState<any[]>([]);
   const [impositionItem, setImpositionItem] = useState<any | null>(null);
   const [dataSource, setDataSource] = useState<Item[]>([]);
   const [subItemsCache, setSubItemsCache] = useState<Record<number, any[]>>({});
   const [subItemsLoading, setSubItemsLoading] = useState<Record<number, boolean>>({});
-  const [colWidths, setColWidths] = useState<Record<string, number>>({});
-  const mkResize = (key: string) => (w: number) => setColWidths(c => ({ ...c, [key]: w }));
+  // Oszlopszélességek user szinten, localStorage-ban — minden ajánlat tételtáblájára
+  // ugyanaz a beállítás érvényesül (az átméretezés bármelyik oldalon történjen is).
+  const { user } = useAuth();
+  const colWidthsStorageKey = `pixi_items_col_widths_${user?.id ?? 'anon'}`;
+  const colWidthsSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const persistColWidths = (widths: Record<string, number>) => {
+    if (colWidthsSaveTimer.current) clearTimeout(colWidthsSaveTimer.current);
+    colWidthsSaveTimer.current = setTimeout(() => {
+      try { localStorage.setItem(colWidthsStorageKey, JSON.stringify(widths)); } catch {}
+    }, 400);
+  };
+  const [colWidths, setColWidths] = useState<Record<string, number>>(() => {
+    try { return JSON.parse(localStorage.getItem(`pixi_items_col_widths_${user?.id ?? 'anon'}`) || '{}') || {}; } catch { return {}; }
+  });
+  useEffect(() => () => { if (colWidthsSaveTimer.current) clearTimeout(colWidthsSaveTimer.current); }, []);
+  const mkResize = (key: string) => (w: number) => setColWidths(c => {
+    const next = { ...c, [key]: w };
+    persistColWidths(next);
+    return next;
+  });
   const resizableHeader = (key: string) => (col: any) => ({
     width: colWidths[key] ?? col.width,
     onResize: mkResize(key),
@@ -220,6 +257,7 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
   };
 
   const onDragEnd = (event: DragEndEvent) => {
+    if (reduced) return; // butított módban az átsorolás letiltva
     const { active, over } = event;
     if (active.id !== over?.id) {
       setDataSource((prev) => {
@@ -417,7 +455,7 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
     {
       key: 'sort',
       width: 30,
-      render: () => <DragHandle />,
+      render: () => (reduced ? null : <DragHandle />),
     },
     { 
       title: 'Tétel', 
@@ -517,16 +555,111 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
         return <Tag color={cfg.color}>{cfg.label}</Tag>;
       }
     },
-    { 
-      title: 'Menny.', 
+    {
+      title: 'Menny.',
       key: 'quantity',
       width: colWidths['quantity'] ?? 80,
-      onHeaderCell: resizableHeader('quantity'), 
+      onHeaderCell: resizableHeader('quantity'),
       render: (r: any) => <span style={{ whiteSpace: 'nowrap' }}>{Number(r.quantity)} {r.unit || 'db'}</span>
     },
   ];
 
-  if (!hidePrices) {
+  // Butított (gyártói) mód: a belső leírás külön oszlopban, egyből látszik és inline szerkeszthető
+  if (reduced) {
+    const saveInternalDescription = async (record: any) => {
+      setInternalSaving(true);
+      try {
+        await salesService.updateQuoteRequestItem(record.id, { internal_description: internalValue });
+        message.success('Belső leírás mentve');
+        setEditingInternalId(null);
+        setDataSource((prev: any[]) => prev.map((it: any) => (it.id === record.id ? { ...it, internal_description: internalValue } : it)));
+        onRefresh?.();
+      } catch {
+        message.error('Mentés sikertelen');
+      } finally {
+        setInternalSaving(false);
+      }
+    };
+    const internalColumn: any = {
+      title: 'Belső leírás',
+      key: 'internal_description',
+      width: colWidths['internal_description'] ?? 320,
+      onHeaderCell: resizableHeader('internal_description'),
+      render: (_: any, record: any) => {
+        if (editingInternalId === record.id) {
+          return (
+            <div
+              onKeyDown={(e) => {
+                // ESC: kilépés a szerkesztésből — a lap bezárását (globális ESC) ne váltsa ki
+                if (e.key === 'Escape') {
+                  e.stopPropagation();
+                  setEditingInternalId(null);
+                }
+              }}
+            >
+              <ReactQuill
+                theme="snow"
+                className="pixi-quill-resizable"
+                value={internalValue}
+                onChange={(v: string) => setInternalValue(v)}
+                placeholder="Belső leírás"
+              />
+              <Space style={{ marginTop: 6 }}>
+                <Button size="small" type="primary" loading={internalSaving} onClick={() => saveInternalDescription(record)}>Mentés</Button>
+                <Button size="small" disabled={internalSaving} onClick={() => setEditingInternalId(null)}>Mégse</Button>
+              </Space>
+            </div>
+          );
+        }
+        const txt = String(record.internal_description || '');
+        if (!txt) {
+          return (
+            <div
+              style={{ color: '#bbb', cursor: 'pointer', minHeight: 22 }}
+              onClick={() => { setEditingInternalId(record.id); setInternalValue(''); }}
+              title="Kattints a szerkesztéshez"
+            >
+              + belső leírás
+            </div>
+          );
+        }
+        // HTML tartalom (pl. ReactQuill) renderelve jelenjen meg, nyers taggek nélkül
+        const looksLikeHtml = /<\/?[a-z][\s\S]*>/i.test(txt);
+        const cellStyle: React.CSSProperties = {
+          display: '-webkit-box',
+          WebkitLineClamp: 4,
+          WebkitBoxOrient: 'vertical' as any,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          maxHeight: '6em',
+          whiteSpace: looksLikeHtml ? 'normal' : 'pre-wrap',
+          wordBreak: 'break-word',
+          overflowWrap: 'anywhere',
+          color: '#333',
+        };
+        const content = looksLikeHtml ? (
+          <div className="pixi-rich-cell" style={cellStyle} dangerouslySetInnerHTML={{ __html: txt }} />
+        ) : (
+          <div style={cellStyle}>{txt}</div>
+        );
+        return (
+          <div style={{ cursor: 'pointer' }} onClick={() => { setEditingInternalId(record.id); setInternalValue(toQuillHtml(txt)); }} title="Kattints a szerkesztéshez">
+            {looksLikeHtml ? (
+              <Tooltip title={<div className="pixi-rich-cell" style={{ maxWidth: 500 }} dangerouslySetInnerHTML={{ __html: txt }} />} overlayStyle={{ maxWidth: 520 }}>
+                {content}
+              </Tooltip>
+            ) : content}
+          </div>
+        );
+      },
+    };
+    // A belső leírás oszlop a Leírás mellé kerüljön, ne a táblázat végére
+    const descIdx = columns.findIndex((c: any) => c.key === 'description');
+    if (descIdx >= 0) columns.splice(descIdx + 1, 0, internalColumn);
+    else columns.push(internalColumn);
+  }
+
+  if (!pricesHidden) {
     columns.push({ 
       title: 'Nettó ár', 
       key: 'net_price', 
@@ -604,28 +737,30 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
     });
   }
 
-  // Actions column with Indent/Outdent
-  if (onEditItem || quoteRequestId || onDeleteItem || onCopyItem) {
+  // Actions column with Indent/Outdent — butított (reduced) módban nem kell
+  if (!reduced && (onEditItem || quoteRequestId || onDeleteItem || onCopyItem)) {
     columns.push({
       title: 'Műveletek',
       key: 'actions',
       render: (_: any, record: any) => (
         <Space wrap>
+            {!reduced && (<>
             <Tooltip title="Szint csökkenés (kifelé)">
                 <Button size="small" icon={<LeftOutlined />} onClick={() => onOutdent(record)} disabled={!record.parent} />
             </Tooltip>
             <Tooltip title="Szint növelés (alárendel)">
                 <Button size="small" icon={<RightOutlined />} onClick={() => onIndent(record)} />
             </Tooltip>
+            </>)}
           {!hideDetailLink && (() => { const url = getDetailUrl(record); return url ? (
             <Tooltip title="Adatlap megnyitása">
               <Button size="small" icon={<LinkOutlined />} onClick={() => navigate(url)} />
             </Tooltip>
           ) : null; })()}
-          {onEditItem ? (
+          {onEditItem && !reduced ? (
             <Button size="small" onClick={() => onEditItem && onEditItem(record)}>Szerk.</Button>
           ) : null}
-          {record.item_type === 'manufacturing' && (
+          {!reduced && record.item_type === 'manufacturing' && (
             record.manufacturing_product_printshop_params ||
             record.imposition_data?._ps_mfg_id ||
             (record as any)._ps_mfg_id ||
@@ -653,6 +788,7 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
               >PS</Button>
             </Tooltip>
           ) : null}
+          {!reduced && (
           <Tooltip title={record.imposition_data && Object.keys(record.imposition_data).length > 0 ? 'Impozíció szerkesztése (mentett)' : 'Impozíció hozzáadása'}>
             <Button
               size="small"
@@ -662,8 +798,9 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
               onClick={() => setImpositionItem(record)}
             />
           </Tooltip>
-          {!hideCopyButton && <Button size="small" onClick={() => copyItem(record)}>Másolás</Button>}
-          {onWorkHours && (
+          )}
+          {!hideCopyButton && !reduced && <Button size="small" onClick={() => copyItem(record)}>Másolás</Button>}
+          {onWorkHours && !reduced && (
             <Tooltip title="Munkaórák">
               <Button size="small" icon={<ClockCircleOutlined />} onClick={() => onWorkHours(record)} />
             </Tooltip>
@@ -682,7 +819,7 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
               </Button>
             </Tooltip>
           )}
-          {(quoteRequestId || onDeleteItem) ? (
+          {!reduced && (quoteRequestId || onDeleteItem) ? (
             <Popconfirm title="Biztos törlöd?" onConfirm={() => deleteItem(record)}>
               <Button danger size="small">X</Button>
             </Popconfirm>
@@ -759,18 +896,40 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
             {inlineEditContent}
           </div>
         )}
-        {/* Altételek fa */}
-        {manuProductId > 0 && (
+        {/* Altételek fa — butított módban ármentes, csak olvasható lista a tétel cost_items_data-jából */}
+        {reduced ? (
+          (() => {
+            const cis = Array.isArray(record.cost_items_data) ? (record.cost_items_data as any[]) : [];
+            if (cis.length === 0) return null;
+            return (
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontWeight: 600, marginBottom: 8, color: '#555' }}>Altételek</div>
+                <ul style={{ margin: 0, paddingLeft: 18 }}>
+                  {cis.map((ci: any, idx: number) => (
+                    <li key={ci.id ?? idx} style={{ fontSize: 13 }}>
+                      {ci.name || ci.item_name || `Altétel #${idx + 1}`}
+                      {ci.quantity != null && <span style={{ color: '#888' }}> — {Number(ci.quantity).toLocaleString('hu-HU', { maximumFractionDigits: 4 })} {ci.unit || ''}</span>}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            );
+          })()
+        ) : manuProductId > 0 && (
           <div style={{ marginBottom: 16 }}>
             <div style={{ fontWeight: 600, marginBottom: 8, color: '#555' }}>Altételek</div>
             <ProductSubItemsTable productId={manuProductId} showNotesAndAttachments />
           </div>
         )}
 
-        {/* Megjegyzés */}
+        {/* Megjegyzés — butított módban csak olvasható */}
         <div style={{ marginBottom: 12 }}>
           <div style={{ fontWeight: 600, marginBottom: 4, color: '#555' }}>Tétel megjegyzése</div>
-          {editingItemRemark === coiId ? (
+          {reduced ? (
+            <span style={{ color: currentRemark ? '#595959' : '#bbb', fontSize: 13 }}>
+              {currentRemark || '—'}
+            </span>
+          ) : editingItemRemark === coiId ? (
             <Space>
               <Input.TextArea
                 autoFocus
@@ -905,7 +1064,7 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
             </SortableContext>
         </DndContext>
       </div>
-      {!hidePrices && (
+      {!pricesHidden && (
       <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>{currencySelector}{discountSelector}</div>
         <div style={{ textAlign: 'right' }}>

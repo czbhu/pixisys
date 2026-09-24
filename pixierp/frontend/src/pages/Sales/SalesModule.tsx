@@ -20,21 +20,27 @@ import QuoteDetail from './QuoteDetail';
 import Invoicing from './Invoicing';
 import DeliveryNotes from './DeliveryNotes';
 import ModuleDashboard from '../../components/ModuleDashboard';
+import { useAuth } from '../../contexts/AuthContext';
+import { canViewPrices } from '../../utils/permissions';
 
-const SalesModule = () => {
-    const dashboardItems = [
+const SalesModule = () =>  {
+  const { user } = useAuth();
+  // Ár-láthatóság nélküli felhasználók a gyártási listát használják,
+  // az RFQ adatlap butított módban nyílik meg nekik (ld. RFQDetail).
+  const pricesAllowed = canViewPrices(user);
+  const dashboardItems = [
         { key: '/sales/rfqs', label: 'Árajánlatok', icon: <FileTextOutlined /> },
         { key: '/sales/delivery-notes', label: 'Szállítás', icon: <CarOutlined /> },
         { key: '/sales/invoicing', label: 'Számlázás', icon: <FileDoneOutlined /> },
         { key: '/sales/invitations', label: 'Meghívásaim', icon: <MailOutlined /> },
         { key: '/sales/projects', label: 'Projektek', icon: <ProjectOutlined /> },
         { key: '/sales/forecasts', label: 'Előrejelzések', icon: <LineChartOutlined /> },
-    ];
+    ].filter(item => item.key !== '/sales/rfqs' || pricesAllowed);
 
   return (
     <Routes>
       <Route path="/" element={<ModuleDashboard title="Értékesítés" items={dashboardItems} />} />
-      <Route path="/rfqs" element={<RFQs />} />
+      <Route path="/rfqs" element={pricesAllowed ? <RFQs /> : <Navigate to="/manufacturing/ordered-products" replace />} />
       <Route path="/rfqs/:id" element={<RFQDetail />} />
       <Route path="/quotes/:id" element={<QuoteDetail />} />
       <Route path="/orders" element={<Orders />} />

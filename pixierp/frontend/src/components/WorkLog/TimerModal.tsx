@@ -67,6 +67,9 @@ export const TimerModal: React.FC = () => {
 
     const [pickerOpen, setPickerOpen] = useState(false);
     const [pickerSearch, setPickerSearch] = useState('');
+    // Szerver oldali keresés eredményei (null = nincs aktív keresés, a helyi lista jelenik meg)
+    const [searchOrders, setSearchOrders] = useState<any[] | null>(null);
+    const [searchLoading, setSearchLoading] = useState(false);
 
     const [helpingOther, setHelpingOther] = useState(false);
     const [employees, setEmployees] = useState<any[]>([]);
@@ -107,6 +110,49 @@ export const TimerModal: React.FC = () => {
         } catch { setEmployees([]); }
     };
 
+    // RFQ lista lapítása tételsoronként (mint a RFQs lista) — a loadOrders és a szerver oldali keresés is használja
+    const flattenRfqs = (rfqs: any[]): any[] => {
+        const rows: any[] = [];
+        rfqs.forEach((rfq: any) => {
+            if (['cancelled','archived','rejected'].includes(rfq.status)) return;
+            // Magánszemélynél (nincs cég) a kapcsolattartó neve jelenjen meg az ügyfél helyett
+            const companyName = rfq.company_name || rfq.company?.name || rfq.contact_names || '';
+            const allItems: any[] = rfq.items || [];
+            const visibleItems = allItems.filter((it: any) => !it?.parent);
+            const displayItems = visibleItems.length > 0 ? visibleItems : allItems.length > 0 ? [allItems[0]] : [{
+                id: null,
+                item_name: rfq.primary_item_name || rfq.title || rfq.request_number,
+                description: rfq.primary_item_description || '',
+                quantity: rfq.primary_quantity ?? 1,
+                unit: rfq.primary_unit || 'db',
+                cost_items_data: [],
+            }];
+            displayItems.forEach((item: any) => {
+                rows.push({
+                    // RFQ azonosítók
+                    id: rfq.id,
+                    rfq_pk: rfq.id,
+                    rfq_number: rfq.request_number || rfq.number,
+                    rfq_status: rfq.status,
+                    effective_status: rfq.effective_status,
+                    company_name: companyName,
+                    // Tétel adatok
+                    item_id: item.id,
+                    item_name: item.item_name || item.name || rfq.primary_item_name || rfq.title || rfq.request_number,
+                    quantity: item.quantity ?? rfq.primary_quantity ?? 1,
+                    unit: item.unit || rfq.primary_unit || 'db',
+                    description: item.description || rfq.primary_item_description || '',
+                    // Gyártási termék (cost items betöltéséhez)
+                    manufacturing_product: item.manufacturing_product,
+                    cost_items_data: item.cost_items_data || [],
+                    // Egyedi sor kulcs
+                    _rowKey: `${rfq.id}-${item.id ?? 0}`,
+                });
+            });
+        });
+        return rows;
+    };
+
     const loadOrders = async (all = false) => {
         try {
             // Tételsoronként lapítjuk ki az RFQ-kat (mint a RFQs lista)
@@ -114,47 +160,36 @@ export const TimerModal: React.FC = () => {
             if (!all) params.my_orders = 'true';
             const res = await salesService.getQuoteRequestsPage(1, params.page_size, params);
             const rfqs: any[] = res.results ?? (res as any) ?? [];
-            // Flatten: egy sor per tétel, RFQ mezőkkel kiegészítve
-            const rows: any[] = [];
-            rfqs.forEach((rfq: any) => {
-                if (['cancelled','archived','rejected'].includes(rfq.status)) return;
-                const companyName = rfq.company_name || rfq.company?.name || '';
-                const allItems: any[] = rfq.items || [];
-                const visibleItems = allItems.filter((it: any) => !it?.parent);
-                const displayItems = visibleItems.length > 0 ? visibleItems : allItems.length > 0 ? [allItems[0]] : [{
-                    id: null,
-                    item_name: rfq.primary_item_name || rfq.title || rfq.request_number,
-                    description: rfq.primary_item_description || '',
-                    quantity: rfq.primary_quantity ?? 1,
-                    unit: rfq.primary_unit || 'db',
-                    cost_items_data: [],
-                }];
-                displayItems.forEach((item: any) => {
-                    rows.push({
-                        // RFQ azonosítók
-                        id: rfq.id,
-                        rfq_pk: rfq.id,
-                        rfq_number: rfq.request_number || rfq.number,
-                        rfq_status: rfq.status,
-                        effective_status: rfq.effective_status,
-                        company_name: companyName,
-                        // Tétel adatok
-                        item_id: item.id,
-                        item_name: item.item_name || item.name || rfq.primary_item_name || rfq.title || rfq.request_number,
-                        quantity: item.quantity ?? rfq.primary_quantity ?? 1,
-                        unit: item.unit || rfq.primary_unit || 'db',
-                        description: item.description || rfq.primary_item_description || '',
-                        // Gyártási termék (cost items betöltéséhez)
-                        manufacturing_product: item.manufacturing_product,
-                        cost_items_data: item.cost_items_data || [],
-                        // Egyedi sor kulcs
-                        _rowKey: `${rfq.id}-${item.id ?? 0}`,
-                    });
-                });
-            });
-            setOrders(rows);
+            setOrders(flattenRfqs(rfqs));
         } catch {}
     };
+
+    // Szerver oldali keresés: a betöltött 200 sor helyett a backend ?q= szűrését használjuk,
+    // így a régi (200-nál lejjebb csúszó) megrendelések is megtalálhatók.
+    useEffect(() => {
+        const q = pickerSearch.trim();
+        if (!pickerOpen || !q) {
+            setSearchOrders(null);
+            setSearchLoading(false);
+            return;
+        }
+        const t = setTimeout(async () => {
+            setSearchLoading(true);
+            try {
+                const params: any = { q, page_size: 100 };
+                if (!showAllOrders) params.my_orders = 'true';
+                const res = await salesService.getQuoteRequestsPage(1, params.page_size, params);
+                const rfqs: any[] = (res as any).results ?? (res as any) ?? [];
+                setSearchOrders(flattenRfqs(rfqs));
+            } catch {
+                setSearchOrders([]);
+            } finally {
+                setSearchLoading(false);
+            }
+        }, 350);
+        return () => clearTimeout(t);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [pickerSearch, pickerOpen, showAllOrders]);
 
     // Kiválasztott tétel cost item-jeit töltjük be a munkafolyamat dropdownhoz
     const loadCostItemsForRow = async (row: any): Promise<any[]> => {
@@ -366,7 +401,10 @@ export const TimerModal: React.FC = () => {
     };
 
     const filteredOrders = useMemo(() => {
+        // Szerver oldali keresés aktív: a backend már szűrte az eredményt, azt mutatjuk közvetlenül
+        if (searchOrders) return searchOrders;
         if (!pickerSearch.trim()) return orders;
+        // Fallback, míg a szerver válasza megérkezik: helyi szűrés a betöltött sorokon
         const q = norm(pickerSearch);
         return orders.filter(o =>
             norm(o.rfq_number || '').includes(q) ||
@@ -374,7 +412,7 @@ export const TimerModal: React.FC = () => {
             norm(o.item_name || '').includes(q) ||
             norm(stripHtml(o.description || '')).includes(q)
         );
-    }, [orders, pickerSearch]);
+    }, [orders, searchOrders, pickerSearch]);
 
     const wfOptions = useMemo(() => {
         const ciOptions = subItems.map((si: any) => ({
@@ -614,6 +652,7 @@ export const TimerModal: React.FC = () => {
                 <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
                 {isMobile ? (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                        {searchLoading && <div style={{ color: '#888', textAlign: 'center', padding: 12 }}>Keresés…</div>}
                         {filteredOrders.map((r: any) => {
                             const desc = stripHtml(r.description || r.first_item_description || '');
                             return (
@@ -638,12 +677,13 @@ export const TimerModal: React.FC = () => {
                                 </div>
                             );
                         })}
-                        {filteredOrders.length === 0 && <div style={{ color: '#888', textAlign: 'center', padding: 24 }}>Nincs találat</div>}
+                        {!searchLoading && filteredOrders.length === 0 && <div style={{ color: '#888', textAlign: 'center', padding: 24 }}>Nincs találat</div>}
                     </div>
                 ) : (
                     <Table
                         size="small"
-                        rowKey="id"
+                        rowKey="_rowKey"
+                        loading={searchLoading}
                         dataSource={filteredOrders}
                         columns={pickerColumns}
                         pagination={{ pageSize: 10, showSizeChanger: false }}

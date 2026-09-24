@@ -2037,6 +2037,10 @@ const InvoiceForm = () => {
   React.useEffect(() => {
     if (!isIncomingManualEdit || !manualIncomingData || incomingManualLoadedRef.current) return;
 
+    // Megvárjuk a szállítólista betöltését: ha a manual adat korábban érkezik,
+    // üres listával nem találnánk egyezést, és a ref zárolása után nem próbálnánk újra.
+    if (!(customerRows || []).length && customersLoading) return;
+
     const parseNum = (v) => {
       const n = parseFloat(String(v ?? '').replace(',', '.'));
       return Number.isFinite(n) ? n : 0;
@@ -2080,7 +2084,7 @@ const InvoiceForm = () => {
     }]);
 
     incomingManualLoadedRef.current = true;
-  }, [customerRows, isIncomingManualEdit, manualIncomingData, setValue]);
+  }, [customerRows, customersLoading, isIncomingManualEdit, manualIncomingData, setValue]);
 
   const applyParsedIncomingData = React.useCallback((parsed, warningList = [], { notify = true } = {}) => {
     const parseNum = (value) => {
@@ -2853,6 +2857,11 @@ const InvoiceForm = () => {
       // Include ERP order IDs if available
       if (erpOrderIdsRef.current && erpOrderIdsRef.current.length > 0) {
         invoiceData.erp_order_ids = erpOrderIdsRef.current;
+      }
+      // ERP RFQ IDs (CO nélküli QR-ek) – a backend háttér-callbackja ebből
+      // frissíti a QR státuszát, ha a böngészős callback nem futna le
+      if (erpRfqIdsRef.current && erpRfqIdsRef.current.length > 0) {
+        invoiceData.erp_rfq_ids = erpRfqIdsRef.current;
       }
       if (isEdit) updateInvoiceMutation.mutate(invoiceData); else createInvoiceMutation.mutate(invoiceData);
     }

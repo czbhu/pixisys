@@ -18,11 +18,13 @@ import {
   Tag
 } from 'antd';
 import NumInput from '../../../components/NumInput';
+import QRScannerModal from '../../../components/QRScannerModal';
 import {
   ArrowLeftOutlined,
   DollarOutlined,
   CreditCardOutlined,
   IdcardOutlined,
+  QrcodeOutlined,
   MoneyCollectOutlined,
   PrinterOutlined,
   CloseOutlined,
@@ -85,6 +87,8 @@ const CheckoutSummary: React.FC<Props> = ({
   const [appliedCoupon, setAppliedCoupon] = useState<any>(null);
   const [shopperIdentification, setShopperIdentification] = useState<any>(null);
   const [shopperName, setShopperName] = useState('');
+  const [shopperLoyalty, setShopperLoyalty] = useState<any>(null);
+  const [qrScanOpen, setQrScanOpen] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [paymentModalVisible, setPaymentModalVisible] = useState(false);
   const [paymentStatus, setPaymentStatus] = useState<'pending' | 'success' | 'failed'>('pending');
@@ -186,9 +190,16 @@ const CheckoutSummary: React.FC<Props> = ({
     let vatTotal = 0;
     const vatBreakdown: Record<number, { net: number; vat: number; gross: number }> = {};
 
+    const loyaltyDiscounts: Record<number, number> = {};
+    (shopperLoyalty?.discounts || []).forEach((d: any) => {
+      if (d.material_id != null) loyaltyDiscounts[d.material_id] = Number(d.discount_percent) || 0;
+    });
+
     items.forEach(item => {
-      const itemGross = item.gross_unit_price * item.quantity;
-      const itemNet = item.net_unit_price * item.quantity;
+      const gross0 = item.gross_unit_price * item.quantity;
+      const pct = item.material_id != null ? (loyaltyDiscounts[item.material_id] || 0) : 0;
+      const itemGross = pct > 0 ? gross0 * (1 - pct / 100) : gross0;
+      const itemNet = pct > 0 ? itemGross / (1 + item.vat_rate / 100) : item.net_unit_price * item.quantity;
       const itemVat = itemNet * (item.vat_rate / 100);
 
       subtotal += itemGross;
@@ -204,6 +215,13 @@ const CheckoutSummary: React.FC<Props> = ({
     });
 
     let discountAmount = 0;
+    let loyaltyDiscountAmount = 0;
+    items.forEach(item => {
+      const pct = item.material_id != null
+        ? ((shopperLoyalty?.discounts || []).find((d: any) => d.material_id === item.material_id)?.discount_percent ?? 0)
+        : 0;
+      if (pct > 0) loyaltyDiscountAmount += item.gross_unit_price * item.quantity * (Number(pct) / 100);
+    });
     if (appliedCoupon) {
       if (appliedCoupon.discount_type === 'fixed') {
         discountAmount = Math.min(appliedCoupon.discount_value, subtotal);
@@ -212,7 +230,7 @@ const CheckoutSummary: React.FC<Props> = ({
       }
     }
 
-    let totalGross = subtotal - discountAmount;
+    let totalGross = subtotal - discountAmount - loyaltyDiscountAmount;
 
     // Round to 5 HUF for cash payments
     if (paymentMethod === 'cash') {
@@ -231,6 +249,7 @@ const CheckoutSummary: React.FC<Props> = ({
       netTotal,
       vatTotal,
       discountAmount,
+      loyaltyDiscountAmount,
       totalGross,
       change,
       vatBreakdown
@@ -267,13 +286,26 @@ const CheckoutSummary: React.FC<Props> = ({
       });
 
       if (response.data.valid) {
-        setShopperIdentification(response.data.customer);
-        setShopperName(response.data.customer.name);
-        message.success(`Vásárló azonosítva: ${response.data.customer.name}`);
+        const cust = response.data.customer;
+        setShopperIdentification(response.data.identification_id ? { id: response.data.identification_id } : null);
+        setShopperName(cust.name);
+        setShopperLoyalty(response.data.loyalty || null);
+        setSelectedCustomer((prev: any) => prev ?? { id: cust.id, name: cust.name, email: cust.email });
+        const pts = response.data.loyalty?.points;
+        message.success(`Vásárló azonosítva: ${cust.name}${pts != null ? ` (${pts} pont)` : ''}`);
       }
-    } catch (error) {
-      message.error('Érvénytelen QR kód');
+    } catch (error: any) {
+      setShopperIdentification(null);
+      setShopperName('');
+      setShopperLoyalty(null);
+      message.error(error?.response?.data?.message || 'Érvénytelen vagy lejárt QR kód');
     }
+  };
+
+  const clearShopper = () => {
+    setShopperIdentification(null);
+    setShopperName('');
+    setShopperLoyalty(null);
   };
 
   const handlePayment = async () => {
@@ -316,19 +348,26 @@ const CheckoutSummary: React.FC<Props> = ({
         shopper_name: shopperName,
         coupon: appliedCoupon?.id,
         amount_received: paymentMethod === 'cash' ? amountReceived : null,
-        items: items.map(item => ({
-          material: item.material_id,
-          product_code: item.product_code,
-          product_name: item.product_name,
-          product_description: item.product_description,
-          quantity: item.quantity,
-          unit: item.unit,
-          gross_unit_price: item.gross_unit_price,
-          net_unit_price: item.net_unit_price,
-          vat_rate: item.vat_rate,
-          is_discounted: item.is_discounted,
-          original_gross_price: item.original_gross_price
-        }))
+        items: items.map(item => {
+          const pct = item.material_id != null
+            ? ((shopperLoyalty?.discounts || []).find((d: any) => d.material_id === item.material_id)?.discount_percent ?? 0)
+            : 0;
+          const discounted = Number(pct) > 0;
+          const gross = discounted ? item.gross_unit_price * (1 - Number(pct) / 100) : item.gross_unit_price;
+          return {
+            material: item.material_id,
+            product_code: item.product_code,
+            product_name: item.product_name,
+            product_description: item.product_description,
+            quantity: item.quantity,
+            unit: item.unit,
+            gross_unit_price: gross,
+            net_unit_price: discounted ? gross / (1 + item.vat_rate / 100) : item.net_unit_price,
+            vat_rate: item.vat_rate,
+            is_discounted: discounted || item.is_discounted,
+            original_gross_price: discounted ? item.gross_unit_price : item.original_gross_price,
+          };
+        })
       };
 
       const createResponse = await api.post('/sales/pos/transactions/', transactionData);
@@ -553,7 +592,7 @@ const CheckoutSummary: React.FC<Props> = ({
                       <CreditCardOutlined /> Hitelkártya
                     </Radio.Button>
                     <Radio.Button value="customer_card" style={{ width: '33.33%', textAlign: 'center' }}>
-                      <IdcardOutlined /> Ügyfélkártya
+                      <IdcardOutlined /> Üzemanyagkártya
                     </Radio.Button>
                   </Radio.Group>
                 </Col>
@@ -647,14 +686,28 @@ const CheckoutSummary: React.FC<Props> = ({
                 </Col>
 
                 <Col span={12}>
-                  {shopperName && (
-                    <Space direction="vertical" style={{ width: '100%' }}>
-                      <Text strong>Vásárló neve:</Text>
-                      <Tag color="green" style={{ fontSize: '16px', padding: '8px 16px' }}>
-                        {shopperName}
-                      </Tag>
-                    </Space>
-                  )}
+                  <Space direction="vertical" style={{ width: '100%' }}>
+                    <Button
+                      size="large" icon={<QrcodeOutlined />} style={{ width: '100%' }}
+                      onClick={() => setQrScanOpen(true)}
+                    >
+                      {shopperName ? 'Ügyfél QR újra olvasása' : 'Ügyfél azonosítása (QR)'}
+                    </Button>
+                    {shopperName && (
+                      <>
+                        <Tag color="green" style={{ fontSize: '16px', padding: '8px 16px' }}>
+                          {shopperName}
+                          {shopperLoyalty?.points != null ? ` · ${shopperLoyalty.points} pont` : ''}
+                        </Tag>
+                        {totals.loyaltyDiscountAmount > 0 && (
+                          <Tag color="orange" style={{ fontSize: '14px', padding: '6px 12px' }}>
+                            Kedvezmény: -{Math.round(totals.loyaltyDiscountAmount).toLocaleString('hu-HU')} Ft
+                          </Tag>
+                        )}
+                        <Button size="small" type="link" onClick={clearShopper}>Azonosítás törlése</Button>
+                      </>
+                    )}
+                  </Space>
                 </Col>
               </Row>
 
@@ -713,6 +766,15 @@ const CheckoutSummary: React.FC<Props> = ({
           isModal
         />
       </Modal>
+
+      <QRScannerModal
+        open={qrScanOpen}
+        onClose={() => setQrScanOpen(false)}
+        onScan={(code: string) => {
+          setQrScanOpen(false);
+          handleVerifyQR(code);
+        }}
+      />
 
       {/* Payment processing modal */}
       <Modal

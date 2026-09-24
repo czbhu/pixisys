@@ -21,6 +21,7 @@ import { ChatDrawer } from '../../components/Chat/ChatDrawer';
 import ActivityLogModal from '../../components/ActivityLogModal';
 import { isPdf, openPdfPreview } from '../../utils/pdfPreview';
 import AttachmentPreviewModal from '../../components/AttachmentPreviewModal';
+import { canViewPrices } from '../../utils/permissions';
 
 const normAccents = (s: string) =>
   (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
@@ -46,6 +47,9 @@ const RFQDetail: React.FC = () => {
   const autoFirstItemRef = useRef(false);
   const rfqNumericIdRef = useRef<number | null>(null); // resolved after first load
   const { user } = useAuth();
+  // Butított (gyártói) mód: aki nem láthat árakat, annak nincs Management sáv,
+  // a tételek csak a belső leírásig szerkeszthetők, és nem jelennek meg árak.
+  const reduced = !canViewPrices(user);
   const [loading, setLoading] = useState(true);
   const [rfq, setRfq] = useState<any>();
   // removed unused local product/service lists
@@ -437,6 +441,8 @@ const RFQDetail: React.FC = () => {
   // Auto-open item editor when navigated with ?editItemId= OR when RFQ has exactly 1 item
   useEffect(() => {
     if (!rfq || editItemIdHandledRef.current) return;
+    // Butított módban nem nyitjuk a teljes tételszerkesztőt
+    if (reduced) { editItemIdHandledRef.current = true; return; }
     const editItemId = searchParams.get('editItemId');
     const items = rfq.items || [];
     // Prefer explicit editItemId, fall back to auto-open if single item
@@ -882,7 +888,7 @@ const RFQDetail: React.FC = () => {
         bodyStyle={{ padding: '12px 16px' }}
         title={
           <Space size={8}>
-            <Button size="small" icon={<LeftOutlined />} onClick={() => { try { sessionStorage.setItem('rfqs_needs_refresh', '1'); } catch {} navigate('/sales/rfqs'); }}>Vissza</Button>
+            <Button size="small" icon={<LeftOutlined />} onClick={() => { try { sessionStorage.setItem('rfqs_needs_refresh', '1'); } catch {} navigate(reduced ? '/manufacturing/ordered-products' : '/sales/rfqs'); }}>Vissza</Button>
             <span style={{ fontWeight: 600 }}>Gyártható: {rfq?.is_manufacturable ? 'IGEN' : 'NEM'}</span>
             <Switch
               size="small"
@@ -1064,6 +1070,7 @@ const RFQDetail: React.FC = () => {
                     <Col xs={12} md={2} style={{ paddingBottom: 4 }}>
                       <Button size="small" style={{ width: '100%' }} onClick={() => formBasic.setFieldsValue({ valid_until: dayjs().add(30, 'day'), validity_days: 30 })} title="+30 nap">+30n</Button>
                     </Col>
+                    {!reduced && (
                     <Col xs={18} md={4}>
                       <Form.Item label="Deviza" name="currency_code" style={{ marginBottom: 4 }}>
                         <Select showSearch optionFilterProp="label" size="small" style={{ width: '100%' }}>
@@ -1073,16 +1080,20 @@ const RFQDetail: React.FC = () => {
                         </Select>
                       </Form.Item>
                     </Col>
+                    )}
+                    {!reduced && (
                     <Col xs={6} md={2} style={{ paddingBottom: 4 }}>
                       <Button size="small" danger icon={<DeleteOutlined />} onClick={async () => {
                         try { await salesService.softDeleteQuoteRequest(id as any); message.success('Törölve'); navigate('/sales/rfqs'); }
                         catch { message.error('Nem sikerült törölni'); }
                       }} />
                     </Col>
+                    )}
                   </Row>
                 </div>
 
-                {/* ── Management (összecsukható) ─────────────────────────── */}
+                {/* ── Management (összecsukható) — butított módban rejtve ───── */}
+                {!reduced && (
                 <Collapse size="small" style={{ background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 8 }} ghost
                   items={[{
                     key: 'mgmt',
@@ -1145,6 +1156,7 @@ const RFQDetail: React.FC = () => {
                     )
                   }]}
                 />
+                )}
               </div>
             </Col>
 
@@ -1507,7 +1519,7 @@ const RFQDetail: React.FC = () => {
                     <Form.Item label="Cég" style={{ marginBottom: 4 }}>
                       <Space.Compact style={{ width: '100%' }}>
                         <Form.Item name="company_id" noStyle>
-                          <Select size="small" showSearch filterOption={filterOptionAccents} placeholder="Válassz céget" style={{ width: 'calc(100% - 24px)' }}
+                          <Select size="small" showSearch filterOption={filterOptionAccents} placeholder="Válassz céget" style={{ width: reduced ? '100%' : 'calc(100% - 24px)' }} disabled={reduced}
                             onFocus={async () => {
                               const list = await crmService.getCompanies({ is_customer: true, compact: true });
                               const loaded = ((list as any).results ?? list) || [];
@@ -1526,7 +1538,7 @@ const RFQDetail: React.FC = () => {
                             {(companies || []).map((c: any) => <Select.Option key={c.id} value={c.id} label={c.name}>{c.name}</Select.Option>)}
                           </Select>
                         </Form.Item>
-                        <Button size="small" icon={<PlusOutlined />} title="Új cég" onClick={() => { setSelectedCountry('Magyarország'); companyForm.resetFields(); companyForm.setFieldsValue({ country: 'Magyarország', is_customer: true, is_supplier: false }); setIsCompanyModalVisible(true); }} />
+                        {!reduced && <Button size="small" icon={<PlusOutlined />} title="Új cég" onClick={() => { setSelectedCountry('Magyarország'); companyForm.resetFields(); companyForm.setFieldsValue({ country: 'Magyarország', is_customer: true, is_supplier: false }); setIsCompanyModalVisible(true); }} />}
                       </Space.Compact>
                     </Form.Item>
                   </Col>
@@ -1534,7 +1546,7 @@ const RFQDetail: React.FC = () => {
                     <Form.Item label="Kapcsolattartók" style={{ marginBottom: 4 }}>
                       <Space.Compact style={{ width: '100%' }}>
                         <Form.Item name="contact_ids" noStyle>
-                          <Select size="small" mode="multiple" allowClear showSearch filterOption={filterOptionAccents} optionLabelProp="label" placeholder="Kapcsolattartók" style={{ width: 'calc(100% - 72px)' }}
+                          <Select size="small" mode="multiple" allowClear showSearch filterOption={filterOptionAccents} optionLabelProp="label" placeholder="Kapcsolattartók" style={{ width: reduced ? '100%' : 'calc(100% - 72px)' }} disabled={reduced}
                             value={Array.isArray(formBasic.getFieldValue('contact_ids')) ? formBasic.getFieldValue('contact_ids') : []}
                             options={(contacts || []).map((p: any, idx: number) => ({ value: getContactOptionValue(p, idx), label: contactOptionLabel(p, !formBasic.getFieldValue('company_id')) }))}
                             onFocus={async () => {
@@ -1582,9 +1594,11 @@ const RFQDetail: React.FC = () => {
                               }
                             }}
                           />
-                        </Form.Item>
-                        <Button size="small" icon={<PlusOutlined />} title="Új kapcsolattartó" onClick={() => { const cid = formBasic.getFieldValue('company_id'); let url = '/crm/contacts?action=create'; if (cid && cid !== 'private') { url += `&company=${cid}`; const co = companies.find((c: any) => c.id === cid); if (co?.name) url += `&company_name=${encodeURIComponent(co.name)}`; } window.open(url, '_blank'); }} />
+                          </Form.Item>
+                        {!reduced && <>
+                        <Button size="small" icon={<PlusOutlined />} title="Új kapcsolattartó" onClick={() => { const cid = formBasic.getFieldValue('company_id'); let url = '/crm/contacts?action=create'; if (cid && cid !== 'private') { url += `&company=${cid}`; const co = companies.find((c: any) => c.id === cid); if (co?.name) { url += `&company_name=${encodeURIComponent(co.name)}`; } } window.open(url, '_blank'); }} />
                         <Button size="small" onClick={async () => { const cid = formBasic.getFieldValue('company_id'); if (cid === 'private') { const l = await crmService.getPrivateContacts(); setContacts((l as any).results ?? l); message.success('Frissítve'); } else if (cid) { const l = await crmService.getContactsByCompany(cid); setContacts((l as any).results ?? l); message.success('Frissítve'); } else { message.warning('Először válassz céget'); } }}>↺</Button>
+                        </>}
                       </Space.Compact>
                     </Form.Item>
                   </Col>
@@ -1625,6 +1639,7 @@ const RFQDetail: React.FC = () => {
               onRefresh={refreshItems}
               quoteRequestId={id as any}
               currency={activeCurrency}
+              reduced={reduced}
               onEditItem={(item) => { setEditContext({ item }); setSelectorType(item.item_type); }}
               onWorkHours={async (item) => {
                 setWorkHoursItemId(item.id);
